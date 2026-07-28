@@ -1,0 +1,16 @@
+{
+  "name": "ace-fieldapp",
+  "private": true,
+  "version": "0.0.1",
+  "description": "ACE Group field survey app — mobile (Expo), office web (React) and sync backend, on a multi-tenant Supabase store.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "npm --workspaces --if-present run test"
+  }
+}
