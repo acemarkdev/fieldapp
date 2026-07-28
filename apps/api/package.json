@@ -1,0 +1,18 @@
+{
+  "name": "@ace/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsx src/mapItem.test.ts",
+    "demo": "tsx src/demo-sync.ts"
+  },
+  "dependencies": {
+    "@ace/shared": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
