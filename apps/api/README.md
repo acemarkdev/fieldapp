@@ -12,8 +12,25 @@ item name = full location code, so re-running updates the same item instead of d
 | `src/mapItem.ts`  | Survey item → column values, matched by title; normalises dropdown/status labels |
 | `src/syncItem.ts` | `upsertSurveyItem()` — create if new, update if it already exists |
 | `src/sampleItem.ts` | A fully-surveyed example item |
-| `src/demo-sync.ts`  | One-shot CLI demo |
+| `src/demo-sync.ts`  | One-shot CLI demo (sample item → Monday) |
 | `src/mapItem.test.ts` | Offline test — asserts the built values match the live board |
+| `src/supabase.ts` | Supabase client (service-role key, server-side only) |
+| `src/store.ts`    | Canonical-store access — jobs, survey items, teams |
+| `src/promote.ts`  | `promoteItem()` — read an item from Supabase, sync to Monday, mark synced |
+| `src/demo-supabase.ts` | Full slice: write to Supabase → promote to Monday |
+
+## Full slice: Supabase → Monday
+
+Needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings → API) and
+`MONDAY_API_TOKEN` in `.env`. Apply the schema + seed first (see repo README).
+
+```bash
+node --env-file=.env --import tsx apps/api/src/demo-supabase.ts
+```
+
+It links AXS.LAB to the **test** board, writes a surveyed item into Supabase, then promotes it
+to Monday and flips the stored item to `stage = synced`. Re-run it — it updates the same row and
+the same Monday item (idempotent on the full code).
 
 ## Verify the mapping (no token needed)
 
