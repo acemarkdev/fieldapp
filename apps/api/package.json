@@ -8,6 +8,8 @@
     "test": "tsx src/mapItem.test.ts",
     "demo": "tsx src/demo-sync.ts",
     "demo:supabase": "tsx src/demo-supabase.ts",
+    "seed": "tsx src/seed-items.ts",
+    "promote:all": "tsx src/promote-all.ts",
     "report": "tsx src/report.ts"
   },
   "dependencies": {
