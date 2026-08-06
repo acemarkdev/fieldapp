@@ -21,7 +21,11 @@ export async function promoteItem(itemId: string): Promise<PromoteResult> {
   const ratePounds = ratePennies != null ? ratePennies / 100 : null;
 
   const monday = new Monday();
-  const res = await upsertToMonday(monday, job.monday_board_id, { item, ratePounds });
+  const res = await upsertToMonday(monday, job.monday_board_id, {
+    item,
+    ratePounds,
+    teamName: team?.name ?? null, // sets the Fitters dropdown, matched by name
+  });
 
   await markItemSynced(itemId, res.itemId);
   return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id };

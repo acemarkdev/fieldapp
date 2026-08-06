@@ -27,7 +27,7 @@ const cols: MondayColumn[] = [
   { id: 'text_mm48en93', title: 'Coupled', type: 'text', settings: {} },
   { id: 'long_text_mm476bpn', title: 'Comments', type: 'long_text', settings: {} },
   { id: 'long_text_mm4mwg2f', title: 'Full Location Ref', type: 'long_text', settings: {} },
-  { id: 'dropdown_mm4wd0nr', title: 'Fitters', type: 'dropdown', settings: { labels: [{ id: 1, label: 'Team P01' }, { id: 2, label: 'Team P02' }] } },
+  { id: 'dropdown_mm4wd0nr', title: 'Fitters', type: 'dropdown', settings: { labels: [{ id: 1, name: 'Team P01' }, { id: 2, name: 'Team P02' }] } },
   { id: 'color_mm4ksrf6', title: 'Install Status', type: 'status', settings: { labels: { '0': 'Scheduled', '1': 'Installed no snag' } } },
   // Two read-only mirror columns ALSO titled "Install Status" — must be ignored.
   { id: 'lookup_mm495tn2', title: 'Install Status', type: 'mirror', settings: {} },

@@ -42,10 +42,12 @@ function byTitle(cols: MondayColumn[]): Map<string, MondayColumn> {
   return m;
 }
 
-// The allowed labels of a status/dropdown column (handles array or object shapes).
+// The allowed labels of a status/dropdown column.
+// Dropdown labels live under `name`, status labels under `label`, and some status
+// columns store them as an object map { "0": "Scheduled", ... } — handle all shapes.
 function labelList(col: MondayColumn): string[] {
   const s = col.settings?.labels;
-  if (Array.isArray(s)) return s.map((x: any) => (typeof x === 'string' ? x : x.label)).filter(Boolean);
+  if (Array.isArray(s)) return s.map((x: any) => (typeof x === 'string' ? x : (x.name ?? x.label))).filter(Boolean);
   if (s && typeof s === 'object') return Object.values(s).filter((v) => typeof v === 'string') as string[];
   return [];
 }

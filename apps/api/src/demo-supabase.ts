@@ -6,7 +6,7 @@
 // Run:  node --env-file=.env --import tsx apps/api/src/demo-supabase.ts [boardId]
 // Needs SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and MONDAY_API_TOKEN in .env.
 
-import { getJobByCode, setJobBoard, upsertSurveyItem } from './store';
+import { getJobByCode, setJobBoard, upsertSurveyItem, listTeams } from './store';
 import { promoteItem } from './promote';
 import { sampleSurveyItem } from './sampleItem';
 import { ACE_TENANT } from './supabase';
@@ -17,6 +17,10 @@ const TEST_BOARD = process.argv[2] ?? '18424137545';
 const job = await getJobByCode('AXS', 'LAB');
 await setJobBoard(job.id, TEST_BOARD);
 console.log(`1. Job ${job.client_code}.${job.job_code} linked to Monday board ${TEST_BOARD}`);
+
+// assign a fitter team — its default rate flows to Labour Cost, its name to the Fitters column
+const teams = await listTeams(job.tenant_id);
+const team = teams.find((t) => t.name === 'Team P01') ?? teams[0] ?? null;
 
 // 2 — write the surveyed item into Supabase
 const s = sampleSurveyItem();
@@ -30,7 +34,8 @@ const item = await upsertSurveyItem({
   open_in_out: s.open_in_out, add_ons: s.add_ons, coupled: s.coupled,
   design_code: s.design_code, comments: s.comments,
   install_status: 'scheduled',
-  rate_override_pennies: 8000, // £80.00 -> Labour Cost
+  team_id: team?.id ?? null,      // -> Monday Fitters column
+  rate_override_pennies: null,    // no override -> rate inherits the team's default (£80)
   stage: 'surveyed',
 });
 console.log(`2. Stored in Supabase: item ${item.id} — ${item.full_code}`);
@@ -38,5 +43,6 @@ console.log(`2. Stored in Supabase: item ${item.id} — ${item.full_code}`);
 // 3 — promote to Monday
 const res = await promoteItem(item.id);
 console.log(`3. ✓ ${res.action} on Monday board ${res.boardId} (item ${res.mondayItemId})`);
+console.log(`   Fitters: ${team?.name ?? '—'} · Labour Cost from team default`);
 console.log(`   https://monday.com/boards/${res.boardId}/pulses/${res.mondayItemId}`);
 console.log('\nSupabase → Monday round-trip complete. The item is now stage=synced in the store.');
