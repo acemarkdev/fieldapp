@@ -7,7 +7,8 @@
   "scripts": {
     "test": "tsx src/mapItem.test.ts",
     "demo": "tsx src/demo-sync.ts",
-    "demo:supabase": "tsx src/demo-supabase.ts"
+    "demo:supabase": "tsx src/demo-supabase.ts",
+    "report": "tsx src/report.ts"
   },
   "dependencies": {
     "@ace/shared": "*",

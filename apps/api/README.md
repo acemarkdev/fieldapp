@@ -18,6 +18,17 @@ item name = full location code, so re-running updates the same item instead of d
 | `src/store.ts`    | Canonical-store access — jobs, survey items, teams |
 | `src/promote.ts`  | `promoteItem()` — read an item from Supabase, sync to Monday, mark synced |
 | `src/demo-supabase.ts` | Full slice: write to Supabase → promote to Monday |
+| `src/report.ts`   | CLI report — list a job's items with stage, rate and Monday links |
+
+## Store report
+
+```bash
+node --env-file=.env --import tsx apps/api/src/report.ts AXS.LAB
+```
+
+Lists every survey item for the job from the canonical store, with its stage, effective fitting
+rate and (if synced) its Monday link, plus a labour-cost total. Needs `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` in `.env`.
 
 ## Full slice: Supabase → Monday
 

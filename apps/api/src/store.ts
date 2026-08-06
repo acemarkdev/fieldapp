@@ -44,6 +44,20 @@ export async function getTeam(id: string | null): Promise<FitterTeam | null> {
   return data as FitterTeam;
 }
 
+export async function listSurveyItems(jobId: string): Promise<SurveyItem[]> {
+  const { data, error } = await db()
+    .from('survey_items').select('*')
+    .eq('job_id', jobId).order('full_code', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as SurveyItem[];
+}
+
+export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
+  const { data, error } = await db().from('fitter_teams').select('*').eq('tenant_id', tenantId);
+  if (error) throw error;
+  return (data ?? []) as FitterTeam[];
+}
+
 export async function markItemSynced(id: string, mondayItemId: string): Promise<void> {
   const { error } = await db()
     .from('survey_items')
