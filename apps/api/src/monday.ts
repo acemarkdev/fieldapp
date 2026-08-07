@@ -69,6 +69,17 @@ export class Monday {
     return d.create_item.id;
   }
 
+  /** Duplicate an item on the same board (used for snags); returns the new item id. */
+  async duplicateItem(boardId: string, itemId: string, withUpdates = false): Promise<string> {
+    const d = await this.gql<{ duplicate_item: { id: string } }>(
+      `mutation ($b: ID!, $i: ID!, $u: Boolean) {
+         duplicate_item(board_id: $b, item_id: $i, with_updates: $u) { id }
+       }`,
+      { b: boardId, i: itemId, u: withUpdates },
+    );
+    return d.duplicate_item.id;
+  }
+
   async changeColumnValues(boardId: string, itemId: string, columnValues: Record<string, unknown>): Promise<void> {
     await this.gql(
       `mutation ($b: ID!, $i: ID!, $cv: JSON!) {
@@ -76,5 +87,21 @@ export class Monday {
        }`,
       { b: boardId, i: itemId, cv: JSON.stringify(columnValues) },
     );
+  }
+
+  /** Upload a file into a file column (e.g. Design Sketch). Uses Monday's multipart file endpoint. */
+  async addFileToColumn(itemId: string, columnId: string, bytes: Uint8Array, fileName: string, contentType = 'image/png'): Promise<string> {
+    const form = new FormData();
+    form.append('query',
+      `mutation ($file: File!) { add_file_to_column(item_id: ${itemId}, column_id: "${columnId}", file: $file) { id } }`);
+    form.append('variables[file]', new Blob([bytes], { type: contentType }), fileName);
+    const res = await fetch('https://api.monday.com/v2/file', {
+      method: 'POST',
+      headers: { Authorization: this.token },
+      body: form,
+    });
+    const json: any = await res.json();
+    if (json.errors) throw new Error('Monday file upload error: ' + JSON.stringify(json.errors));
+    return json.data.add_file_to_column.id;
   }
 }
