@@ -1,6 +1,6 @@
 // Canonical-store access — the survey item's home before (and after) it reaches Monday.
 import { db } from './supabase';
-import type { Job, SurveyItem, FitterTeam, Snag } from '@ace/shared';
+import type { Job, SurveyItem, FitterTeam, Snag, ItemPhoto } from '@ace/shared';
 
 export async function getJobByCode(clientCode: string, jobCode: string): Promise<Job> {
   const { data, error } = await db()
@@ -16,8 +16,12 @@ export async function getJob(id: string): Promise<Job> {
   return data as Job;
 }
 
-export async function setJobBoard(jobId: string, boardId: string | null): Promise<void> {
-  const { error } = await db().from('jobs').update({ monday_board_id: boardId }).eq('id', jobId);
+// slug: string sets it, null clears it, undefined leaves it unchanged.
+export async function setJobBoard(jobId: string, boardId: string | null, slug?: string | null): Promise<void> {
+  const patch: Record<string, unknown> = { monday_board_id: boardId };
+  if (boardId === null) patch.monday_account_slug = null;      // unlinking clears the slug too
+  else if (slug !== undefined) patch.monday_account_slug = slug;
+  const { error } = await db().from('jobs').update(patch).eq('id', jobId);
   if (error) throw error;
 }
 
@@ -29,6 +33,40 @@ export async function upsertSurveyItem(item: Partial<SurveyItem>): Promise<Surve
     .select().single();
   if (error) throw error;
   return data as SurveyItem;
+}
+
+// Insert a brand-new item (office "New item" form). Throws on duplicate full_code.
+export async function insertSurveyItem(fields: Partial<SurveyItem>): Promise<SurveyItem> {
+  const { data, error } = await db().from('survey_items').insert(fields).select().single();
+  if (error) throw error;
+  return data as SurveyItem;
+}
+
+export async function listItemPhotos(itemId: string): Promise<ItemPhoto[]> {
+  const { data, error } = await db().from('item_photos').select('*').eq('item_id', itemId).order('created_at');
+  if (error) throw error;
+  return (data ?? []) as ItemPhoto[];
+}
+
+// Short-lived signed URL for a private-bucket photo (so the browser can render it).
+export async function signedPhotoUrl(path: string, seconds = 3600): Promise<string | null> {
+  const { data, error } = await db().storage.from(PHOTO_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
+}
+
+// Return the subset of ids that belong to this tenant (guards bulk actions).
+export async function filterItemIdsByTenant(ids: string[], tenantId: string): Promise<string[]> {
+  const { data, error } = await db().from('survey_items').select('id').in('id', ids).eq('tenant_id', tenantId);
+  if (error) throw error;
+  return (data ?? []).map((r: any) => r.id as string);
+}
+
+// Apply one patch to many items at once (tenant-scoped). Returns how many rows changed.
+export async function bulkUpdateItems(ids: string[], patch: Record<string, unknown>, tenantId: string): Promise<number> {
+  const { data, error } = await db().from('survey_items').update(patch).in('id', ids).eq('tenant_id', tenantId).select('id');
+  if (error) throw error;
+  return (data ?? []).length;
 }
 
 export async function getSurveyItem(id: string): Promise<SurveyItem> {

@@ -15,9 +15,12 @@ A running backlog. Append as we go.
 - Live read-only web dashboard
 - **Office web app — Stage 1**: Supabase-Auth login, view jobs/items, edit rate/status/team, Sync-to-Monday
 - **Office web app — Stage 2**: teams & rates management (admin-gated CRUD); Monday-sync tab (link a job to its board from the UI, per-job synced/unsynced counts, batch Sync-all)
+- **Office web app — Stage 3a**: create new survey items from the desk (assembles the full code, inserts as 'surveyed'); item detail drawer (all fields + photos via signed URLs)
+- **Office web app — bulk select**: row checkboxes + select-all header; bulk bar to Sync selected, assign team, or set install status across many items (tenant-guarded)
+- **Monday links**: store per-job account slug so item links resolve to the right account; robust board-id parsing from a pasted board URL
 
 ## Next (near-term)
-- **Office web app — Stage 3**: item detail + photos + raise/log snags from the desk; user management (invite/deactivate, set roles)
+- **Office web app — Stage 3b**: raise/log snags from the desk (reuse the duplicate-item snag flow); user management (invite/deactivate, set roles)
 - **SSO login (Microsoft / Entra)** — Stage 2+. Foundation already in place (Supabase Auth). OAuth is free-tier; SAML is paid/enterprise. Microsoft is the natural fit (ACE/Axis are Microsoft 365). ~session-sized: provider config + a "Sign in with Microsoft" button; app_users linking by email is unchanged.
 - **Mobile app (Expo)**: the field front door — scan → survey → fit — items originate on a device, testable via Expo Go.
 

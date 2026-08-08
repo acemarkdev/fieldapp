@@ -10,10 +10,14 @@
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
 import { db } from './supabase';
-import { listJobs, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
-  getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard } from './store';
+import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
+  getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
+  insertSurveyItem, listItemPhotos, signedPhotoUrl,
+  filterItemIdsByTenant, bulkUpdateItems } from './store';
 import { promoteItem } from './promote';
-import { effectiveRatePennies, formatPennies } from '@ace/shared';
+import { effectiveRatePennies, formatPennies, assembleFullCode } from '@ace/shared';
+
+const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install' };
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -30,6 +34,24 @@ const send = (res: any, code: number, data: unknown, type = 'application/json') 
 const readJson = (req: any): Promise<any> => new Promise((resolve) => {
   let b = ''; req.on('data', (c: any) => (b += c)); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } });
 });
+
+// Pull a Monday board id + account slug from either a bare id or a full board URL.
+// Handles the trap where the account subdomain (e.g. "ace189144") contains digits.
+function parseMondayRef(input: unknown): { board: string | null; slug: string | null } {
+  const s = String(input ?? '').trim();
+  if (!s) return { board: null, slug: null };
+  const slug = (s.match(/https?:\/\/([a-z0-9-]+)\.monday\.com/i)?.[1]) ?? null;
+  let board = s.match(/\/boards\/(\d+)/)?.[1] ?? null;          // prefer the id right after /boards/
+  if (!board) {
+    if (/^\d{4,}$/.test(s)) board = s;                          // a bare board id
+    else board = (s.match(/\d{4,}/g) ?? []).sort((a, b) => b.length - a.length)[0] ?? null; // longest digit run
+  }
+  return { board, slug };
+}
+
+// Build a Monday item link that resolves to the correct account.
+const mondayItemUrl = (job: any, itemId: string) =>
+  `https://${job.monday_account_slug ? job.monday_account_slug + '.monday.com' : 'monday.com'}/boards/${job.monday_board_id}/pulses/${itemId}`;
 
 // Resolve the caller's app_users row from their bearer token.
 async function context(req: any): Promise<{ id: string; tenant_id: string; role: string; name: string } | null> {
@@ -49,7 +71,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
     const p = url.pathname;
 
-    if (p === '/') { send(res, 200, PAGE, 'text/html; charset=utf-8'); return; }
+    if (p === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(PAGE); return; }
 
     if (p === '/api/login' && req.method === 'POST') {
       const { email, password } = await readJson(req);
@@ -69,7 +91,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (p === '/api/items') {
+    if (p === '/api/items' && req.method === 'GET') {
       const code = url.searchParams.get('job') ?? 'AXS.LAB';
       const [c, j] = code.split('.');
       const job = await getJobByCode(c, j);
@@ -80,13 +102,90 @@ const server = createServer(async (req, res) => {
         install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
         effective_rate: formatPennies(effectiveRatePennies(it, teams)),
         synced: !!it.monday_item_id,
-        monday_url: it.monday_item_id && job.monday_board_id
-          ? `https://monday.com/boards/${job.monday_board_id}/pulses/${it.monday_item_id}` : null,
+        monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
       }));
       send(res, 200, {
         job: { code, name: job.name, board: job.monday_board_id },
         teams: teams.map((t) => ({ id: t.id, name: t.name })),
         items: rows, role: ctx.role,
+      });
+      return;
+    }
+
+    // Create a new survey item from the desk (populates a fresh board without the mobile app).
+    if (p === '/api/items' && req.method === 'POST') {
+      const b = await readJson(req);
+      const [c, j] = String(b.job ?? '').split('.');
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const room = String(b.room ?? '').trim().toUpperCase();
+      const item = String(b.item ?? '').trim().toUpperCase();
+      if (!room || !item) { send(res, 400, { error: 'Room and Item are required (they form the code).' }); return; }
+      const full_code = assembleFullCode({
+        client: job.client_code, job: job.job_code,
+        block: b.block, elevation: b.elevation, flat: b.flat, room, item, floor: b.floor,
+      });
+      const num = (v: any) => (v === '' || v == null ? null : Math.round(Number(v)));
+      const fields: Record<string, unknown> = {
+        tenant_id: ctx.tenant_id, job_id: job.id, stage: 'surveyed',
+        block: b.block || null, elevation: b.elevation || null, flat: b.flat || null,
+        room_code: room, item_code: item, floor: b.floor || null, full_code,
+        material: b.material || null, item_type: b.item_type || null, glass: b.glass || null,
+        glazing: b.glazing || null, width_mm: num(b.width_mm), height_mm: num(b.height_mm),
+        comments: b.comments || null, team_id: b.team_id || null,
+      };
+      try {
+        const created = await insertSurveyItem(fields);
+        send(res, 200, { ok: true, id: created.id, full_code });
+      } catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: `An item with code ${full_code} already exists.` }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
+      return;
+    }
+
+    // Bulk actions on many selected items (multi-line processing).
+    if (p === '/api/items/bulk' && req.method === 'POST') {
+      const { ids, action, value } = await readJson(req);
+      if (!Array.isArray(ids) || ids.length === 0) { send(res, 400, { error: 'No items selected.' }); return; }
+      const allowed = await filterItemIdsByTenant(ids, ctx.tenant_id);
+      if (allowed.length === 0) { send(res, 403, { error: 'forbidden' }); return; }
+
+      if (action === 'team') {
+        const n = await bulkUpdateItems(allowed, { team_id: value || null }, ctx.tenant_id);
+        send(res, 200, { ok: true, updated: n }); return;
+      }
+      if (action === 'status') {
+        const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
+        send(res, 200, { ok: true, updated: n }); return;
+      }
+      if (action === 'sync') {
+        let created = 0, updated = 0, failed = 0; const errors: string[] = [];
+        for (const id of allowed) {
+          try { const r = await promoteItem(id); r.action === 'created' ? created++ : updated++; }
+          catch (err: any) { failed++; if (errors.length < 3) errors.push(err?.message ?? String(err)); }
+        }
+        send(res, 200, { ok: true, total: allowed.length, created, updated, failed, errors }); return;
+      }
+      send(res, 400, { error: 'Unknown bulk action.' }); return;
+    }
+
+    // Full item detail + photos (read-only drawer).
+    if (p.startsWith('/api/item/') && p.endsWith('/detail') && req.method === 'GET') {
+      const id = p.split('/')[3];
+      const it: any = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const [job, team, photos] = await Promise.all([
+        getJob(it.job_id), getTeam(it.team_id), listItemPhotos(id),
+      ]);
+      const photoOut = await Promise.all(photos.map(async (ph) => ({
+        kind: PHOTO_KIND_LABEL[ph.kind] ?? ph.kind, url: await signedPhotoUrl(ph.storage_path),
+      })));
+      send(res, 200, {
+        item: it, team: team?.name ?? null,
+        effective_rate: formatPennies(effectiveRatePennies(it, team ? [team] : [])),
+        monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
+        photos: photoOut,
       });
       return;
     }
@@ -170,6 +269,7 @@ const server = createServer(async (req, res) => {
         const synced = items.filter((it) => it.monday_item_id).length;
         return {
           code: `${j.client_code}.${j.job_code}`, name: j.name, board: j.monday_board_id ?? null,
+          slug: j.monday_account_slug ?? null,
           total: items.length, synced, unsynced: items.length - synced,
         };
       }));
@@ -185,9 +285,9 @@ const server = createServer(async (req, res) => {
       const job = await getJobByCode(c, j);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const { board } = await readJson(req);
-      const digits = String(board ?? '').match(/(\d{5,})/); // id, or the number inside a /boards/NNN URL
-      await setJobBoard(job.id, digits ? digits[1] : null);
-      send(res, 200, { ok: true, board: digits ? digits[1] : null });
+      const { board: boardId, slug } = parseMondayRef(board);
+      await setJobBoard(job.id, boardId, slug);
+      send(res, 200, { ok: true, board: boardId, slug });
       return;
     }
 
@@ -263,6 +363,41 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   input.board:focus{outline:none;border-color:var(--magenta)}
   .syncall{background:var(--purple);color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:11px;font-weight:700;cursor:pointer}
   .syncall[disabled]{background:#cfcde0;cursor:not-allowed}
+  .titlerow{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  th.cbcell,td.cbcell{width:34px;text-align:center;padding-left:14px}
+  .rowcb,#selAll{width:15px;height:15px;cursor:pointer;accent-color:var(--magenta)}
+  .bulkbar{display:flex;align-items:center;gap:10px;background:var(--purple);color:#fff;border-radius:12px;padding:9px 14px;margin:14px 0 10px}
+  #bulkcount{font-size:12.5px;font-weight:700;margin-right:4px}
+  .bulk{font-size:12px;font-weight:600;border-radius:8px;padding:7px 12px;border:none;cursor:pointer}
+  .bulk.bsync{background:var(--magenta);color:#fff}
+  .bulk.bsel{background:#fff;color:var(--ink);border:1px solid #cfc9ea}
+  .bulk.bclear{background:rgba(255,255,255,.16);color:#fff;margin-left:auto}
+  .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
+  a.codelink{font-size:10.5px;color:var(--purple);cursor:pointer;text-decoration:none;border-bottom:1px dashed #cfcde0}
+  a.codelink:hover{color:var(--magenta);border-bottom-color:var(--magenta)}
+  .overlay{position:fixed;inset:0;background:rgba(31,26,61,.45);display:grid;place-items:center;z-index:20;padding:20px}
+  .sheet{background:#fff;border-radius:16px;width:640px;max-width:100%;max-height:calc(100vh - 60px);overflow:auto;box-shadow:0 30px 80px rgba(0,0,0,.3)}
+  .sheethead{display:flex;align-items:center;justify-content:space-between;padding:17px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:1}
+  .sheethead h3{color:var(--purple);font-size:17px}.sheethead h3 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+  .x{border:none;background:var(--soft);border-radius:8px;width:30px;height:30px;cursor:pointer;color:var(--muted);font-size:13px}
+  .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:13px;padding:20px 22px}
+  .field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}
+  .field label{font-size:11px;font-weight:700;color:var(--muted)}
+  .field input,.field select,.field textarea{border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;font-family:inherit;background:#fff}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--magenta)}
+  .codeprev{grid-column:1/-1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--purple);background:var(--soft);padding:11px 12px;border-radius:9px;word-break:break-all}
+  .groupt{grid-column:1/-1;font-size:10px;font-weight:800;letter-spacing:.05em;color:#9a97ad;margin-top:4px}
+  .foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 22px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#fff}
+  .foot .cancel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 15px;font-weight:600;font-size:13px;cursor:pointer;color:var(--muted)}
+  .foot .save{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 18px;font-weight:700;font-size:13px;cursor:pointer}
+  .ferr{grid-column:1/-1;color:#dc2626;font-size:12px;min-height:15px}
+  .dl{padding:6px 22px 20px}.drow{display:flex;padding:7px 0;border-top:1px solid #f2f0f8;font-size:13px}
+  .drow dt{width:150px;color:var(--muted);font-weight:600;flex:none}.drow dd{color:var(--ink)}
+  .drow dd .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+  .photos{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:4px 22px 22px}
+  .photos figure{margin:0}.photos img{width:100%;height:110px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+  .photos figcaption{font-size:10px;color:var(--muted);font-weight:700;margin-top:4px}
+  .empty{padding:0 22px 22px;color:var(--muted);font-size:13px}
   .layout{display:flex;min-height:calc(100vh - 56px)}
   aside{width:220px;background:#fff;border-right:1px solid var(--line);padding:16px 0}
   .slabel{font-size:10px;font-weight:700;color:#9a97ad;letter-spacing:.05em;padding:8px 22px}
@@ -308,8 +443,19 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="itemsView" class="layout">
     <aside><div class="slabel">JOBS</div><div id="jobs"></div></aside>
     <main>
-      <h2 id="title">—</h2><div class="sub" id="subtitle"></div>
+      <div class="titlerow">
+        <div><h2 id="title">—</h2><div class="sub" id="subtitle"></div></div>
+        <button class="newbtn" onclick="openCreate()">+ New item</button>
+      </div>
+      <div id="bulkbar" class="bulkbar" style="display:none">
+        <span id="bulkcount">0 selected</span>
+        <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
+        <select id="bulkTeam" class="bulk bsel" onchange="bulkApply('team',this)"><option value="">Assign team…</option></select>
+        <select id="bulkStatus" class="bulk bsel" onchange="bulkApply('status',this)"><option value="">Set status…</option></select>
+        <button class="bulk bclear" onclick="clearSel()">Clear</button>
+      </div>
       <div class="card2"><table><thead><tr>
+        <th class="cbcell"><input type="checkbox" id="selAll" onclick="toggleAll(this)"></th>
         <th>FULL CODE</th><th>ROOM</th><th>ITEM</th><th>STAGE</th><th>RATE (£)</th><th>INSTALL STATUS</th><th>TEAM</th><th>MONDAY</th>
       </tr></thead><tbody id="rows"></tbody></table></div>
     </main>
@@ -341,11 +487,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 </div>
+<div id="modal" class="overlay" style="display:none">
+  <div class="sheet">
+    <div class="sheethead"><h3 id="modalTitle">—</h3><button class="x" onclick="closeModal()">✕</button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 <script>
   var STAGE={scanned:'Scanned',in_survey:'In survey',surveyed:'Surveyed',synced:'Synced'};
   var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
-  var token=sessionStorage.getItem('ace_token')||''; var current='AXS.LAB'; var teams=[];
+  var token=sessionStorage.getItem('ace_token')||''; var current='AXS.LAB'; var teams=[]; var sel={};
   function tShow(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},1600);}
   async function api(path,opts){opts=opts||{};opts.headers=Object.assign({'content-type':'application/json',Authorization:'Bearer '+token},opts.headers||{});var r=await fetch(path,opts);if(r.status===401){logout();throw new Error('unauth')}return r;}
   async function login(){
@@ -366,6 +518,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function opt(v,l,sel){return '<option value="'+v+'"'+(v===sel?' selected':'')+'>'+l+'</option>';}
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams;
+    sel={}; // selection is per-view; reset on (re)load
+    document.getElementById('bulkTeam').innerHTML='<option value="">Assign team…</option>'+teams.map(function(t){return opt(t.id,t.name,'')}).join('');
+    document.getElementById('bulkStatus').innerHTML='<option value="">Set status…</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('');
     document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+data.job.name;
     document.getElementById('subtitle').textContent='Monday board: '+(data.job.board||'(not linked)')+' · edits save to the store; use Sync to push to Monday';
     var tb=document.getElementById('rows');tb.innerHTML='';
@@ -376,15 +531,46 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var rateVal=r.rate_override_pennies!=null?(r.rate_override_pennies/100):'';
       var rateInput='<input class="rate" type="number" placeholder="'+r.effective_rate.replace('£','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">';
       var monday=r.synced?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a>':'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>';
-      tr.innerHTML='<td class="mono" style="font-size:10.5px">'+(r.full_code||'')+'</td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
+      tr.innerHTML='<td class="cbcell"><input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)"></td>'+
+        '<td><a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
         '<td><span class="pill '+r.stage+'">'+(STAGE[r.stage]||r.stage)+'</span></td>'+
         '<td>'+rateInput+'</td><td>'+statusSel+'</td><td>'+teamSel+'</td><td>'+monday+'</td>';
       tb.appendChild(tr);
     });
+    document.getElementById('selAll').checked=false;
+    renderBar();
   }
   async function save(id,field,value){var b={};b[field]=value;await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(b)});tShow('Saved');}
   async function saveRate(id,value){await api('/api/item/'+id,{method:'PUT',body:JSON.stringify({rate_override_pennies:value===''?null:Math.round(Number(value)*100)})});tShow('Rate saved');}
   async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){tShow('Synced to Monday');loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
+
+  // ---- bulk selection / multi-line processing ----
+  function selectedIds(){return Object.keys(sel);}
+  function renderBar(){
+    var n=selectedIds().length;
+    document.getElementById('bulkbar').style.display=n?'flex':'none';
+    document.getElementById('bulkcount').textContent=n+' selected';
+  }
+  function toggleRow(id,cb){if(cb.checked)sel[id]=true;else delete sel[id];
+    var all=document.querySelectorAll('.rowcb'),on=document.querySelectorAll('.rowcb:checked');
+    document.getElementById('selAll').checked=all.length>0&&all.length===on.length;renderBar();}
+  function toggleAll(cb){document.querySelectorAll('.rowcb').forEach(function(x){x.checked=cb.checked;var id=x.getAttribute('data-id');if(cb.checked)sel[id]=true;else delete sel[id];});renderBar();}
+  function clearSel(){sel={};document.querySelectorAll('.rowcb').forEach(function(x){x.checked=false;});document.getElementById('selAll').checked=false;renderBar();}
+  async function bulkSync(){
+    var ids=selectedIds();if(!ids.length)return;
+    tShow('Syncing '+ids.length+' item(s)…');
+    try{var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:'sync'})})).json();
+      if(d.ok)tShow(d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));else tShow(d.error||'Bulk sync failed');
+    }catch(e){tShow('Bulk sync failed');}
+    loadItems();
+  }
+  async function bulkApply(action,selEl){
+    var value=selEl.value;if(!value){return;}
+    var ids=selectedIds();if(!ids.length){selEl.value='';return;}
+    var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
+    selEl.value='';
+    if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
+  }
 
   // ---- teams & rates ----
   var canManage=false;
@@ -437,9 +623,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var tb=document.getElementById('syncRows');tb.innerHTML='';
     data.jobs.forEach(function(jb){
       var tr=document.createElement('tr');
+      var bhost=(jb.slug?jb.slug+'.monday.com':'monday.com');
       var board=manage
         ? '<input class="board" placeholder="board id or URL" value="'+(jb.board||'')+'" onchange="saveBoard(\\''+jb.code+'\\',this.value)">'
-        : (jb.board?'<a class="mlink" target="_blank" href="https://monday.com/boards/'+jb.board+'">'+jb.board+' ↗</a>':'<span style="color:var(--muted)">not linked</span>');
+        : (jb.board?'<a class="mlink" target="_blank" href="https://'+bhost+'/boards/'+jb.board+'">'+jb.board+' ↗</a>':'<span style="color:var(--muted)">not linked</span>');
       var toSync=jb.unsynced>0?'<span class="count amber">'+jb.unsynced+'</span>':'<span class="count">0</span>';
       var canSync=jb.board&&jb.total>0;
       var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.code+'\\',this)">Sync all</button>';
@@ -458,5 +645,75 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }catch(e){tShow('Sync failed');}
     btn.textContent=old;btn.disabled=false;
   }
+
+  // ---- modal, create item, item detail ----
+  function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function openModal(title,html){document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
+  function closeModal(){document.getElementById('modal').style.display='none';}
+  function field(id,label,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" placeholder="'+(ph||'')+'"></div>';}
+  function openCreate(){
+    var topts='<option value="">— no team —</option>'+teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
+    var html='<div class="fgrid">'
+      +'<div class="codeprev" id="codePrev">'+current+'</div>'
+      +'<div class="groupt">LOCATION</div>'
+      +field('f_block','Block','e.g. B1')+field('f_elev','Elevation','e.g. E1')
+      +field('f_flat','Flat / plot','e.g. 21')+field('f_floor','Floor','e.g. F1')
+      +field('f_room','Room *','e.g. LR')+field('f_item','Item *','e.g. W02')
+      +'<div class="groupt">SPECIFICATION</div>'
+      +field('f_material','Material','uPVC / Alu / Timber')+field('f_type','Item type','Window / Door')
+      +field('f_glass','Glass','e.g. 4-20-4')+field('f_glazing','Glazing','Double / Triple')
+      +field('f_width','Width (mm)','','number')+field('f_height','Height inc cill (mm)','','number')
+      +'<div class="field"><label>Team</label><select id="f_team">'+topts+'</select></div>'
+      +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2"></textarea></div>'
+      +'<div class="ferr" id="createErr"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="submitCreate()">Create item</button></div>';
+    openModal('New survey item',html);
+    ['f_block','f_elev','f_flat','f_floor','f_room','f_item'].forEach(function(id){document.getElementById(id).addEventListener('input',calcCode);});
+    calcCode();
+  }
+  function calcCode(){
+    function g(id){return (document.getElementById(id).value||'').trim();}
+    var flat=g('f_flat');flat=flat?('F'+flat.replace(/\\D/g,'')):'';
+    var parts=[current].concat([g('f_block'),g('f_elev'),flat,g('f_room').toUpperCase(),g('f_item').toUpperCase(),g('f_floor')].filter(function(x){return x;}));
+    document.getElementById('codePrev').textContent=parts.join('.');
+  }
+  async function submitCreate(){
+    function g(id){return (document.getElementById(id).value||'').trim();}
+    var body={job:current,block:g('f_block'),elevation:g('f_elev'),flat:g('f_flat'),floor:g('f_floor'),room:g('f_room'),item:g('f_item'),
+      material:g('f_material'),item_type:g('f_type'),glass:g('f_glass'),glazing:g('f_glazing'),width_mm:g('f_width'),height_mm:g('f_height'),
+      comments:g('f_comments'),team_id:document.getElementById('f_team').value};
+    if(!body.room||!body.item){document.getElementById('createErr').textContent='Room and Item are required.';return;}
+    var r=await api('/api/items',{method:'POST',body:JSON.stringify(body)});var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Created '+d.full_code);loadItems();}
+    else document.getElementById('createErr').textContent=d.error||'Could not create item';
+  }
+  function istatLabel(v){var m=ISTATUS.filter(function(s){return s[0]===(v||'')});return (m[0]||['','—'])[1];}
+  async function openDetail(id){
+    openModal('Loading…','<div class="empty">Loading…</div>');
+    var d=await (await api('/api/item/'+id+'/detail')).json(); var it=d.item;
+    function row(k,v){return (v==null||v==='')?'':'<div class="drow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
+    var html='<dl class="dl">'
+      +row('Full code','<span class="mono">'+esc(it.full_code)+'</span>')
+      +row('Stage',esc(STAGE[it.stage]||it.stage))
+      +row('Room / Item',esc(it.room_code||'—')+' / '+esc(it.item_code||'—'))
+      +row('Block · Elev · Flat',[it.block,it.elevation,it.flat].map(function(x){return esc(x||'—');}).join(' · '))
+      +row('Floor',esc(it.floor))
+      +row('Material',esc(it.material))+row('Type',esc(it.item_type))
+      +row('Glass',esc(it.glass))+row('Glazing',esc(it.glazing))
+      +row('Size (mm)',(it.width_mm||it.height_mm)?(esc(it.width_mm||'?')+' × '+esc(it.height_mm||'?')):'')
+      +row('Design code',esc(it.design_code))
+      +row('Comments',esc(it.comments))
+      +row('Team',esc(d.team||'—'))+row('Fitting rate',esc(d.effective_rate))
+      +row('Install status',esc(istatLabel(it.install_status)))
+      +row('Install date',esc(it.actual_install_date))
+      +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open ↗</a>':'not synced')
+      +'</dl>';
+    if(d.photos&&d.photos.length){
+      html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
+    } else { html+='<div class="empty">No photos yet — these arrive from the mobile survey / install flow.</div>'; }
+    document.getElementById('modalTitle').innerHTML='Item <span class="mono">'+esc(it.full_code)+'</span>';
+    document.getElementById('modalBody').innerHTML=html;
+  }
+  document.getElementById('modal').addEventListener('click',function(e){if(e.target.id==='modal')closeModal();});
   if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';loadJobs().then(loadItems).catch(logout);}
 </script></body></html>`;

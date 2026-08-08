@@ -38,6 +38,7 @@ export interface Job {
   name: string;
   site_address: string | null;
   monday_board_id: string | null;
+  monday_account_slug: string | null;   // e.g. "ace189144" — makes item links resolve to the right account
   active: boolean;
   created_at: string;
 }
