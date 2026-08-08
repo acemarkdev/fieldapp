@@ -13,7 +13,9 @@
     "demo:snags": "tsx src/demo-snags.ts",
     "demo:install": "tsx src/demo-install.ts",
     "report": "tsx src/report.ts",
-    "dashboard": "tsx src/server.ts"
+    "dashboard": "tsx src/server.ts",
+    "create-admin": "tsx src/create-admin.ts",
+    "office": "tsx src/office.ts"
   },
   "dependencies": {
     "@ace/shared": "*",
