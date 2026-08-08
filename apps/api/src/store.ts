@@ -16,7 +16,7 @@ export async function getJob(id: string): Promise<Job> {
   return data as Job;
 }
 
-export async function setJobBoard(jobId: string, boardId: string): Promise<void> {
+export async function setJobBoard(jobId: string, boardId: string | null): Promise<void> {
   const { error } = await db().from('jobs').update({ monday_board_id: boardId }).eq('id', jobId);
   if (error) throw error;
 }

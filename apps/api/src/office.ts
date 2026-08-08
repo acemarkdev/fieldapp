@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
 import { db } from './supabase';
 import { listJobs, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
-  getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam } from './store';
+  getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard } from './store';
 import { promoteItem } from './promote';
 import { effectiveRatePennies, formatPennies } from '@ace/shared';
 
@@ -162,6 +162,52 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- Monday sync tab (office Stage 2) ----
+    if (p === '/api/sync' && req.method === 'GET') {
+      const jobs = await listJobs(ctx.tenant_id);
+      const rows = await Promise.all(jobs.map(async (j) => {
+        const items = await listSurveyItems(j.id);
+        const synced = items.filter((it) => it.monday_item_id).length;
+        return {
+          code: `${j.client_code}.${j.job_code}`, name: j.name, board: j.monday_board_id ?? null,
+          total: items.length, synced, unsynced: items.length - synced,
+        };
+      }));
+      send(res, 200, { jobs: rows, canManage: ctx.role === 'admin' });
+      return;
+    }
+
+    // Link / unlink a job's Monday board. Accepts a board id or a full board URL.
+    if (p.startsWith('/api/job/') && p.endsWith('/board') && req.method === 'PUT') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only admins can link boards' }); return; }
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.');
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const { board } = await readJson(req);
+      const digits = String(board ?? '').match(/(\d{5,})/); // id, or the number inside a /boards/NNN URL
+      await setJobBoard(job.id, digits ? digits[1] : null);
+      send(res, 200, { ok: true, board: digits ? digits[1] : null });
+      return;
+    }
+
+    // Batch-sync every item on a job to its board. Idempotent (create or update per item).
+    if (p.startsWith('/api/job/') && p.endsWith('/sync') && req.method === 'POST') {
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.');
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
+      const items = await listSurveyItems(job.id);
+      let created = 0, updated = 0, failed = 0; const errors: string[] = [];
+      for (const it of items) {
+        try { const r = await promoteItem(it.id); r.action === 'created' ? created++ : updated++; }
+        catch (err: any) { failed++; if (errors.length < 3) errors.push(`${it.full_code}: ${err?.message ?? err}`); }
+      }
+      send(res, 200, { ok: true, total: items.length, created, updated, failed, errors });
+      return;
+    }
+
     send(res, 404, { error: 'not found' });
   } catch (e: any) {
     send(res, 500, { error: e?.message ?? String(e) });
@@ -211,6 +257,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .del{background:#fff;color:#dc2626;border:1px solid #f1c4c4;border-radius:8px;padding:5px 11px;font-size:11px;font-weight:700;cursor:pointer}
   .del[disabled]{color:#c8c6d4;border-color:var(--line);cursor:not-allowed}
   .count{font-size:11px;font-weight:700;color:var(--muted);background:var(--soft);padding:3px 9px;border-radius:999px}
+  .count.green{background:var(--green-soft);color:var(--green)}.count.amber{background:var(--amber-soft);color:var(--amber)}
+  #syncView main{padding:22px 26px}
+  input.board{width:220px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
+  input.board:focus{outline:none;border-color:var(--magenta)}
+  .syncall{background:var(--purple);color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:11px;font-weight:700;cursor:pointer}
+  .syncall[disabled]{background:#cfcde0;cursor:not-allowed}
   .layout{display:flex;min-height:calc(100vh - 56px)}
   aside{width:220px;background:#fff;border-right:1px solid var(--line);padding:16px 0}
   .slabel{font-size:10px;font-weight:700;color:#9a97ad;letter-spacing:.05em;padding:8px 22px}
@@ -248,6 +300,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <nav class="nav">
       <button id="tabItems" class="tab on" onclick="showTab('items')">Items</button>
       <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
+      <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
@@ -275,6 +328,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2" style="margin-top:14px"><table><thead><tr>
         <th>TEAM</th><th>DEFAULT RATE (£)</th><th>ITEMS USING</th><th></th>
       </tr></thead><tbody id="teamRows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="syncView" style="display:none">
+    <main style="max-width:900px">
+      <h2>Monday sync</h2>
+      <div class="sub">Link each job to its Monday board, then push its items across. Matching is by item name (the full code), so re-syncing updates in place — it never duplicates. Board id is the number in the board's URL: monday.com/boards/<b>18424137545</b>.</div>
+      <div class="card2" style="margin-top:14px"><table><thead><tr>
+        <th>JOB</th><th>MONDAY BOARD</th><th>ITEMS</th><th>SYNCED</th><th>TO SYNC</th><th></th>
+      </tr></thead><tbody id="syncRows"></tbody></table></div>
     </main>
   </div>
 </div>
@@ -326,12 +389,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- teams & rates ----
   var canManage=false;
   function showTab(name){
-    var items=name==='items';
-    document.getElementById('itemsView').style.display=items?'flex':'none';
-    document.getElementById('teamsView').style.display=items?'none':'block';
-    document.getElementById('tabItems').classList.toggle('on',items);
-    document.getElementById('tabTeams').classList.toggle('on',!items);
-    if(!items)loadTeams();
+    document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
+    document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
+    document.getElementById('syncView').style.display=name==='sync'?'block':'none';
+    document.getElementById('tabItems').classList.toggle('on',name==='items');
+    document.getElementById('tabTeams').classList.toggle('on',name==='teams');
+    document.getElementById('tabSync').classList.toggle('on',name==='sync');
+    if(name==='teams')loadTeams();
+    if(name==='sync')loadSync();
   }
   async function loadTeams(){
     var data=await (await api('/api/teams')).json(); canManage=data.canManage;
@@ -364,6 +429,34 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!confirm('Delete this team?'))return;
     var r=await api('/api/teams/'+id,{method:'DELETE'});var d=await r.json();
     if(r.ok&&d.ok){tShow('Team deleted');loadTeams();}else tShow(d.error||'Could not delete');
+  }
+
+  // ---- Monday sync ----
+  async function loadSync(){
+    var data=await (await api('/api/sync')).json(); var manage=data.canManage;
+    var tb=document.getElementById('syncRows');tb.innerHTML='';
+    data.jobs.forEach(function(jb){
+      var tr=document.createElement('tr');
+      var board=manage
+        ? '<input class="board" placeholder="board id or URL" value="'+(jb.board||'')+'" onchange="saveBoard(\\''+jb.code+'\\',this.value)">'
+        : (jb.board?'<a class="mlink" target="_blank" href="https://monday.com/boards/'+jb.board+'">'+jb.board+' ↗</a>':'<span style="color:var(--muted)">not linked</span>');
+      var toSync=jb.unsynced>0?'<span class="count amber">'+jb.unsynced+'</span>':'<span class="count">0</span>';
+      var canSync=jb.board&&jb.total>0;
+      var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.code+'\\',this)">Sync all</button>';
+      tr.innerHTML='<td class="mono"><b>'+jb.code+'</b><div style="font-size:11px;color:var(--muted);font-weight:400">'+(jb.name||'')+'</div></td>'+
+        '<td>'+board+'</td><td>'+jb.total+'</td><td><span class="count green">'+jb.synced+'</span></td><td>'+toSync+'</td>'+
+        '<td style="text-align:right">'+btn+'</td>';
+      tb.appendChild(tr);
+    });
+  }
+  async function saveBoard(code,value){var d=await (await api('/api/job/'+encodeURIComponent(code)+'/board',{method:'PUT',body:JSON.stringify({board:value})})).json();if(d.ok){tShow(d.board?'Board linked':'Board unlinked');loadSync();}else tShow(d.error||'Failed');}
+  async function syncJob(code,btn){
+    btn.disabled=true;var old=btn.textContent;btn.textContent='Syncing…';tShow('Syncing '+code+'…');
+    try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/sync',{method:'POST'})).json();
+      if(d.ok){tShow(code+': '+d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));loadSync();}
+      else tShow(d.error||'Sync failed');
+    }catch(e){tShow('Sync failed');}
+    btn.textContent=old;btn.disabled=false;
   }
   if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';loadJobs().then(loadItems).catch(logout);}
 </script></body></html>`;

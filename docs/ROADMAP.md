@@ -14,9 +14,10 @@ A running backlog. Append as we go.
 - Store report CLI; seed + batch-promote
 - Live read-only web dashboard
 - **Office web app — Stage 1**: Supabase-Auth login, view jobs/items, edit rate/status/team, Sync-to-Monday
+- **Office web app — Stage 2**: teams & rates management (admin-gated CRUD); Monday-sync tab (link a job to its board from the UI, per-job synced/unsynced counts, batch Sync-all)
 
 ## Next (near-term)
-- **Office web app — Stage 2**: teams & rates management UI; Monday-sync tab (link a job to a board from the UI); item detail/snags view
+- **Office web app — Stage 3**: item detail + photos + raise/log snags from the desk; user management (invite/deactivate, set roles)
 - **SSO login (Microsoft / Entra)** — Stage 2+. Foundation already in place (Supabase Auth). OAuth is free-tier; SAML is paid/enterprise. Microsoft is the natural fit (ACE/Axis are Microsoft 365). ~session-sized: provider config + a "Sign in with Microsoft" button; app_users linking by email is unchanged.
 - **Mobile app (Expo)**: the field front door — scan → survey → fit — items originate on a device, testable via Expo Go.
 
