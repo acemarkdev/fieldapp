@@ -11,7 +11,9 @@
     "seed": "tsx src/seed-items.ts",
     "promote:all": "tsx src/promote-all.ts",
     "demo:snags": "tsx src/demo-snags.ts",
-    "report": "tsx src/report.ts"
+    "demo:install": "tsx src/demo-install.ts",
+    "report": "tsx src/report.ts",
+    "dashboard": "tsx src/server.ts"
   },
   "dependencies": {
     "@ace/shared": "*",

@@ -11,7 +11,7 @@ export interface SyncInputs {
   ratePounds?: number | null; // effective fitting rate, in pounds, for Labour Cost
 }
 
-const INSTALL_STATUS_LABEL: Record<InstallStatus, string> = {
+export const INSTALL_STATUS_LABEL: Record<InstallStatus, string> = {
   scheduled: 'Scheduled',
   installed_no_snag: 'Installed no snag',
   installed_snag: 'Installed + snag',

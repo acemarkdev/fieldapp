@@ -7,6 +7,7 @@ import { getJobByCode, setJobBoard, upsertSurveyItem, upsertSnag, ensurePhotoBuc
 import { promoteItem } from './promote';
 import { syncSnagsForItem } from './snags';
 import { sampleSurveyItem } from './sampleItem';
+import { placeholderPhotoBytes } from './placeholderPhoto';
 import { ACE_TENANT } from './supabase';
 
 const TEST_BOARD = process.argv[2] ?? '18424137545';
@@ -29,9 +30,8 @@ console.log(`1. Item on Monday: ${p.mondayItemId} (${item.full_code})`);
 
 // put a placeholder snag photo into Supabase Storage (stands in for a real fitter photo)
 await ensurePhotoBucket();
-const PNG_1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const photoPath = `snags/${item.id}-cill.png`;
-await uploadPhoto(photoPath, new Uint8Array(Buffer.from(PNG_1x1, 'base64')), 'image/png');
+await uploadPhoto(photoPath, placeholderPhotoBytes(), 'image/png');
 
 // a fitter raises two snags (stored in Supabase); the first carries the photo
 await upsertSnag({ tenant_id: ACE_TENANT, item_id: item.id, description: 'Cill damaged in transit', status: 'open', photo_path: photoPath });
