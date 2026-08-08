@@ -64,6 +64,33 @@ export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
   return (data ?? []) as FitterTeam[];
 }
 
+// ---- team management (office Stage 2) ----
+export async function createTeam(tenantId: string, name: string, ratePennies: number): Promise<FitterTeam> {
+  const { data, error } = await db().from('fitter_teams')
+    .insert({ tenant_id: tenantId, name, default_rate_pennies: ratePennies })
+    .select().single();
+  if (error) throw error;
+  return data as FitterTeam;
+}
+
+export async function updateTeam(id: string, patch: { name?: string; default_rate_pennies?: number }): Promise<void> {
+  const { error } = await db().from('fitter_teams').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+// How many survey items currently reference this team (used to block deletes that would orphan items).
+export async function countItemsUsingTeam(teamId: string): Promise<number> {
+  const { count, error } = await db().from('survey_items')
+    .select('id', { count: 'exact', head: true }).eq('team_id', teamId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function deleteTeam(id: string): Promise<void> {
+  const { error } = await db().from('fitter_teams').delete().eq('id', id);
+  if (error) throw error;
+}
+
 export async function markItemSynced(id: string, mondayItemId: string): Promise<void> {
   const { error } = await db()
     .from('survey_items')

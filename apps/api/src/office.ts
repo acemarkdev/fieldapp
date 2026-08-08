@@ -10,7 +10,8 @@
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
 import { db } from './supabase';
-import { listJobs, getJobByCode, listSurveyItems, listTeams, getSurveyItem } from './store';
+import { listJobs, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
+  getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam } from './store';
 import { promoteItem } from './promote';
 import { effectiveRatePennies, formatPennies } from '@ace/shared';
 
@@ -115,6 +116,52 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- teams & rates (office Stage 2) ----
+    if (p === '/api/teams' && req.method === 'GET') {
+      const teams = await listTeams(ctx.tenant_id);
+      const rows = await Promise.all(teams.map(async (t) => ({
+        id: t.id, name: t.name, default_rate_pennies: t.default_rate_pennies,
+        default_rate: formatPennies(t.default_rate_pennies), in_use: await countItemsUsingTeam(t.id),
+      })));
+      send(res, 200, { teams: rows, canManage: ctx.role === 'admin', role: ctx.role });
+      return;
+    }
+
+    if (p === '/api/teams' && req.method === 'POST') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only admins can manage teams' }); return; }
+      const { name, rate_pennies } = await readJson(req);
+      if (!name || !String(name).trim()) { send(res, 400, { error: 'Team name is required' }); return; }
+      const pennies = Math.round(Number(rate_pennies));
+      if (!Number.isFinite(pennies) || pennies < 0) { send(res, 400, { error: 'Rate must be a positive number' }); return; }
+      const t = await createTeam(ctx.tenant_id, String(name).trim(), pennies);
+      send(res, 200, { ok: true, id: t.id });
+      return;
+    }
+
+    if (p.startsWith('/api/teams/') && (req.method === 'PUT' || req.method === 'DELETE')) {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only admins can manage teams' }); return; }
+      const id = p.split('/').pop()!;
+      const team = await getTeam(id);
+      if (!team || team.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+
+      if (req.method === 'PUT') {
+        const body = await readJson(req);
+        const patch: { name?: string; default_rate_pennies?: number } = {};
+        if ('name' in body) { if (!String(body.name).trim()) { send(res, 400, { error: 'Team name is required' }); return; } patch.name = String(body.name).trim(); }
+        if ('rate_pennies' in body) { const v = Math.round(Number(body.rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Rate must be a positive number' }); return; } patch.default_rate_pennies = v; }
+        await updateTeam(id, patch);
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      // DELETE — block if any items still reference this team.
+      const inUse = await countItemsUsingTeam(id);
+      if (inUse > 0) { send(res, 409, { error: `Can't delete — ${inUse} item${inUse === 1 ? '' : 's'} still assigned to this team. Reassign them first.` }); return; }
+      await deleteTeam(id);
+      send(res, 200, { ok: true });
+      return;
+    }
+
     send(res, 404, { error: 'not found' });
   } catch (e: any) {
     send(res, 500, { error: e?.message ?? String(e) });
@@ -146,7 +193,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   /* app */
   header{height:56px;background:var(--purple);color:#fff;display:flex;align-items:center;padding:0 22px;gap:12px}
   .brand{font-weight:800;font-size:17px}.brand b{color:#ff8fc8}.brand span{font-weight:500;font-size:12px;color:#cfc9ea}
+  .nav{display:flex;gap:4px;margin-left:26px}
+  .tab{background:transparent;border:none;color:#cfc9ea;font-size:13px;font-weight:600;padding:8px 14px;border-radius:9px;cursor:pointer}
+  .tab:hover{background:rgba(255,255,255,.1);color:#fff}
+  .tab.on{background:rgba(255,255,255,.16);color:#fff}
   .who{margin-left:auto;font-size:12px;color:#cfc9ea}.who button{margin-left:12px;background:rgba(255,255,255,.15);border:none;color:#fff;padding:6px 12px;border-radius:9px;font-size:12px;cursor:pointer}
+  #teamsView main{padding:22px 26px}
+  .addrow{display:flex;gap:10px;align-items:center;margin-top:16px}
+  .tinput{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px}
+  .tinput:focus{outline:none;border-color:var(--magenta)}
+  .pfx{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;padding-left:10px;background:#fff}
+  .pfx span{color:var(--muted);font-size:13px}.pfx .rate2{border:none;width:90px;padding-left:6px}.pfx .rate2:focus{outline:none}
+  .add{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer}
+  input.trate{width:88px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px}
+  input.tname{width:170px;border:1px solid transparent;border-radius:8px;padding:6px 8px;font-size:12.5px;font-weight:600;background:transparent}
+  input.tname:hover,input.tname:focus{border-color:var(--line);background:#fff;outline:none}
+  .del{background:#fff;color:#dc2626;border:1px solid #f1c4c4;border-radius:8px;padding:5px 11px;font-size:11px;font-weight:700;cursor:pointer}
+  .del[disabled]{color:#c8c6d4;border-color:var(--line);cursor:not-allowed}
+  .count{font-size:11px;font-weight:700;color:var(--muted);background:var(--soft);padding:3px 9px;border-radius:999px}
   .layout{display:flex;min-height:calc(100vh - 56px)}
   aside{width:220px;background:#fff;border-right:1px solid var(--line);padding:16px 0}
   .slabel{font-size:10px;font-weight:700;color:#9a97ad;letter-spacing:.05em;padding:8px 22px}
@@ -181,15 +245,36 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <div id="appView" style="display:none">
   <header>
     <div class="brand">ACE<b>GROUP</b> <span>· Office</span></div>
+    <nav class="nav">
+      <button id="tabItems" class="tab on" onclick="showTab('items')">Items</button>
+      <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
+    </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
-  <div class="layout">
+
+  <div id="itemsView" class="layout">
     <aside><div class="slabel">JOBS</div><div id="jobs"></div></aside>
     <main>
       <h2 id="title">—</h2><div class="sub" id="subtitle"></div>
       <div class="card2"><table><thead><tr>
         <th>FULL CODE</th><th>ROOM</th><th>ITEM</th><th>STAGE</th><th>RATE (£)</th><th>INSTALL STATUS</th><th>TEAM</th><th>MONDAY</th>
       </tr></thead><tbody id="rows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="teamsView" style="display:none">
+    <main style="max-width:760px">
+      <h2>Fitter teams &amp; rates</h2>
+      <div class="sub">Each team has a default fitting rate. Items inherit their team's rate unless a per-item override is set. The rate flows to Monday's <b>Labour Cost</b> column when an item is synced.</div>
+      <div id="addTeam" class="addrow" style="display:none">
+        <input id="newTeamName" class="tinput" placeholder="Team name (e.g. Team P03)">
+        <div class="pfx"><span>£</span><input id="newTeamRate" class="tinput rate2" type="number" min="0" step="1" placeholder="80"></div>
+        <button class="add" onclick="addTeam()">Add team</button>
+      </div>
+      <div id="teamsNote" class="sub" style="display:none">You're signed in as <b id="roleName"></b>. Only admins can add or edit teams.</div>
+      <div class="card2" style="margin-top:14px"><table><thead><tr>
+        <th>TEAM</th><th>DEFAULT RATE (£)</th><th>ITEMS USING</th><th></th>
+      </tr></thead><tbody id="teamRows"></tbody></table></div>
     </main>
   </div>
 </div>
@@ -237,5 +322,48 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function save(id,field,value){var b={};b[field]=value;await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(b)});tShow('Saved');}
   async function saveRate(id,value){await api('/api/item/'+id,{method:'PUT',body:JSON.stringify({rate_override_pennies:value===''?null:Math.round(Number(value)*100)})});tShow('Rate saved');}
   async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){tShow('Synced to Monday');loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
+
+  // ---- teams & rates ----
+  var canManage=false;
+  function showTab(name){
+    var items=name==='items';
+    document.getElementById('itemsView').style.display=items?'flex':'none';
+    document.getElementById('teamsView').style.display=items?'none':'block';
+    document.getElementById('tabItems').classList.toggle('on',items);
+    document.getElementById('tabTeams').classList.toggle('on',!items);
+    if(!items)loadTeams();
+  }
+  async function loadTeams(){
+    var data=await (await api('/api/teams')).json(); canManage=data.canManage;
+    document.getElementById('addTeam').style.display=canManage?'flex':'none';
+    document.getElementById('teamsNote').style.display=canManage?'none':'block';
+    document.getElementById('roleName').textContent=data.role||'user';
+    var tb=document.getElementById('teamRows');tb.innerHTML='';
+    data.teams.forEach(function(t){
+      var tr=document.createElement('tr');
+      var name=canManage?'<input class="tname" value="'+(t.name||'').replace(/"/g,'&quot;')+'" onchange="saveTeamName(\\''+t.id+'\\',this.value)">':'<b>'+(t.name||'')+'</b>';
+      var rate=canManage?'<input class="trate" type="number" min="0" step="1" value="'+(t.default_rate_pennies/100)+'" onchange="saveTeamRate(\\''+t.id+'\\',this.value)">':t.default_rate;
+      var del=canManage?'<button class="del" '+(t.in_use>0?'disabled title="Reassign its items first"':'')+' onclick="delTeam(\\''+t.id+'\\','+t.in_use+')">Delete</button>':'';
+      tr.innerHTML='<td>'+name+'</td><td>'+rate+'</td><td><span class="count">'+t.in_use+'</span></td><td style="text-align:right">'+del+'</td>';
+      tb.appendChild(tr);
+    });
+  }
+  async function addTeam(){
+    var name=document.getElementById('newTeamName').value.trim();
+    var pounds=document.getElementById('newTeamRate').value;
+    if(!name){tShow('Enter a team name');return;}
+    if(pounds===''||Number(pounds)<0){tShow('Enter a valid rate');return;}
+    var d=await (await api('/api/teams',{method:'POST',body:JSON.stringify({name:name,rate_pennies:Math.round(Number(pounds)*100)})})).json();
+    if(d.ok){document.getElementById('newTeamName').value='';document.getElementById('newTeamRate').value='';tShow('Team added');loadTeams();}
+    else tShow(d.error||'Could not add team');
+  }
+  async function saveTeamName(id,value){if(!value.trim()){tShow('Name required');loadTeams();return;}var d=await (await api('/api/teams/'+id,{method:'PUT',body:JSON.stringify({name:value.trim()})})).json();tShow(d.ok?'Saved':(d.error||'Failed'));}
+  async function saveTeamRate(id,value){if(value===''||Number(value)<0){tShow('Invalid rate');loadTeams();return;}var d=await (await api('/api/teams/'+id,{method:'PUT',body:JSON.stringify({rate_pennies:Math.round(Number(value)*100)})})).json();tShow(d.ok?'Rate saved':(d.error||'Failed'));}
+  async function delTeam(id,inUse){
+    if(inUse>0){tShow('Reassign its '+inUse+' item(s) first');return;}
+    if(!confirm('Delete this team?'))return;
+    var r=await api('/api/teams/'+id,{method:'DELETE'});var d=await r.json();
+    if(r.ok&&d.ok){tShow('Team deleted');loadTeams();}else tShow(d.error||'Could not delete');
+  }
   if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';loadJobs().then(loadItems).catch(logout);}
 </script></body></html>`;
