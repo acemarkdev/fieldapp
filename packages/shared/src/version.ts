@@ -1,11 +1,19 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.6.2';
+export const APP_VERSION = '0.8.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.8.0', date: '2026-08-09', changes: [
+    'Dashboard cards are clickable — jump to a filtered Items view (incl. a new "All jobs" view)',
+    'Items tab now has filter chips: synced, not synced, installed, snags, open snags',
+    'Dashboard shows an install-status breakdown (scheduled / installed / snag / misfit / delayed)',
+  ] },
+  { version: '0.7.0', date: '2026-08-09', changes: [
+    'New Dashboard tab (default view): totals + per-job progress for synced, installed, snags, and labour',
+  ] },
   { version: '0.6.2', date: '2026-08-09', changes: [
     'Microsoft SSO now shows the account picker, so you can switch users after signing out',
   ] },

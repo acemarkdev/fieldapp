@@ -5,6 +5,14 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.8.0 — 2026-08-09
+- Dashboard cards clickable → filtered Items view (plus a new "All jobs" view)
+- Items tab filter chips: synced / not synced / installed / snags / open snags
+- Dashboard install-status breakdown (scheduled / installed / snag / misfit / delayed)
+
+## 0.7.0 — 2026-08-09
+- New Dashboard tab (default view): totals + per-job progress bars for synced, installed, snags, and rolled-up labour
+
 ## 0.6.2 — 2026-08-09
 - Microsoft SSO now shows the account picker (prompt=select_account), so you can switch users after signing out
 
