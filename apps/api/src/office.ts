@@ -13,9 +13,15 @@ import { db } from './supabase';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
-  filterItemIdsByTenant, bulkUpdateItems } from './store';
+  filterItemIdsByTenant, bulkUpdateItems,
+  listAppUsers, getAppUser, updateAppUser,
+  listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket } from './store';
+import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
-import { effectiveRatePennies, formatPennies, assembleFullCode } from '@ace/shared';
+
+const ROLES = ['admin', 'office', 'surveyor', 'scanner', 'fitter'];
+const genPassword = () => 'ACE-' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
+import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG } from '@ace/shared';
 
 const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install' };
 
@@ -28,7 +34,9 @@ function authClient() {
 }
 
 const send = (res: any, code: number, data: unknown, type = 'application/json') => {
-  res.writeHead(code, { 'content-type': type });
+  const headers: Record<string, string> = { 'content-type': type };
+  if (type === 'application/json') headers['cache-control'] = 'no-store'; // never cache API data
+  res.writeHead(code, headers);
   res.end(type === 'application/json' ? JSON.stringify(data) : (data as string));
 };
 const readJson = (req: any): Promise<any> => new Promise((resolve) => {
@@ -59,9 +67,18 @@ async function context(req: any): Promise<{ id: string; tenant_id: string; role:
   const token = h.startsWith('Bearer ') ? h.slice(7) : '';
   if (!token) return null;
   const { data } = await authClient().auth.getUser(token);
-  if (!data?.user) return null;
-  const { data: u } = await db().from('app_users')
-    .select('id,tenant_id,role,name,active').eq('auth_user_id', data.user.id).maybeSingle();
+  const user = data?.user;
+  if (!user) return null;
+  const cols = 'id,tenant_id,role,name,active,email';
+  // First try the linked auth id (password logins), then fall back to email (SSO / first login).
+  let { data: rows } = await db().from('app_users').select(cols).eq('auth_user_id', user.id).order('created_at').limit(1);
+  let u: any = rows && rows[0];
+  if (!u && user.email) {
+    const email = user.email.toLowerCase();
+    const byEmail = await db().from('app_users').select(cols).eq('email', email).order('created_at').limit(1);
+    u = byEmail.data && byEmail.data[0];
+    if (u) await db().from('app_users').update({ auth_user_id: user.id }).eq('id', u.id); // link this identity (e.g. Microsoft SSO)
+  }
   if (!u || !u.active) return null;
   return u as any;
 }
@@ -71,7 +88,16 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
     const p = url.pathname;
 
-    if (p === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(PAGE); return; }
+    if (p === '/') {
+      const html = PAGE
+        .replaceAll('__APP_VERSION__', APP_VERSION)
+        .replace('__CHANGELOG_JSON__', () => JSON.stringify(CHANGELOG))
+        .replaceAll('__SUPABASE_URL__', () => process.env.SUPABASE_URL ?? '')
+        .replaceAll('__SUPABASE_ANON_KEY__', () => process.env.SUPABASE_ANON_KEY ?? '')
+        .replaceAll('__SSO_ENABLED__', () => (process.env.AZURE_SSO_ENABLED === 'true' ? 'true' : 'false'));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(html); return;
+    }
 
     if (p === '/api/login' && req.method === 'POST') {
       const { email, password } = await readJson(req);
@@ -84,6 +110,8 @@ const server = createServer(async (req, res) => {
 
     const ctx = await context(req);
     if (!ctx) { send(res, 401, { error: 'Not authenticated' }); return; }
+
+    if (p === '/api/me') { send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role }); return; }
 
     if (p === '/api/jobs') {
       const jobs = await listJobs(ctx.tenant_id);
@@ -99,6 +127,7 @@ const server = createServer(async (req, res) => {
       const [items, teams] = await Promise.all([listSurveyItems(job.id), listTeams(job.tenant_id)]);
       const rows = items.map((it) => ({
         id: it.id, full_code: it.full_code, room: it.room_code, item: it.item_code, stage: it.stage,
+        kind: (it as any).kind ?? 'item', snag_comment: (it as any).snag_comment ?? null,
         install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
         effective_rate: formatPennies(effectiveRatePennies(it, teams)),
         synced: !!it.monday_item_id,
@@ -175,18 +204,56 @@ const server = createServer(async (req, res) => {
       const id = p.split('/')[3];
       const it: any = await getSurveyItem(id);
       if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      const [job, team, photos] = await Promise.all([
-        getJob(it.job_id), getTeam(it.team_id), listItemPhotos(id),
+      const [job, team, photos, childSnags, allTeams] = await Promise.all([
+        getJob(it.job_id), getTeam(it.team_id), listItemPhotos(id), listChildSnags(id), listTeams(it.tenant_id),
       ]);
       const photoOut = await Promise.all(photos.map(async (ph) => ({
         kind: PHOTO_KIND_LABEL[ph.kind] ?? ph.kind, url: await signedPhotoUrl(ph.storage_path),
       })));
+      const snagOut = childSnags.map((s) => ({
+        id: s.id, full_code: s.full_code, comment: (s as any).snag_comment ?? s.comments,
+        rate: formatPennies(effectiveRatePennies(s, allTeams)),
+        team: allTeams.find((t) => t.id === s.team_id)?.name ?? null,
+        status: s.install_status, synced: !!s.monday_item_id,
+        monday_url: s.monday_item_id && job.monday_board_id ? mondayItemUrl(job, s.monday_item_id) : null,
+      }));
       send(res, 200, {
-        item: it, team: team?.name ?? null,
+        item: it, team: team?.name ?? null, teams: allTeams.map((t) => ({ id: t.id, name: t.name })),
         effective_rate: formatPennies(effectiveRatePennies(it, team ? [team] : [])),
         monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
-        photos: photoOut,
+        photos: photoOut, snags: snagOut, is_snag: (it as any).kind === 'snag',
       });
+      return;
+    }
+
+    // Raise a snag as its own item (own labour cost + team), optionally with a defect photo.
+    if (p.startsWith('/api/item/') && p.endsWith('/snags') && req.method === 'POST') {
+      const id = p.split('/')[3];
+      const it: any = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (it.kind === 'snag') { send(res, 400, { error: "You can't raise a snag against a snag." }); return; }
+      const b = await readJson(req);
+      const description = String(b.description ?? '').trim();
+      if (!description) { send(res, 400, { error: 'A snag description is required.' }); return; }
+      const rate_override_pennies = (b.rate_pennies === '' || b.rate_pennies == null) ? null : Math.round(Number(b.rate_pennies));
+      const team_id = b.team_id || null;
+      const snag = await createSnagItem(id, { comment: description, rate_override_pennies, team_id });
+      if (b.photo) {
+        try {
+          const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.photo));
+          if (m) {
+            const bytes = Buffer.from(m[2], 'base64');
+            if (bytes.length <= 6 * 1024 * 1024) {
+              const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+              const path = `snags/${snag.id}/${Date.now()}.${ext}`;
+              await ensurePhotoBucket();
+              await uploadPhoto(path, bytes, m[1]);
+              await addItemPhoto(it.tenant_id, snag.id, 'sketch', path); // -> Design Sketch on sync
+            }
+          }
+        } catch { /* photo is best-effort; the snag item is created regardless */ }
+      }
+      send(res, 200, { ok: true, id: snag.id, full_code: snag.full_code });
       return;
     }
 
@@ -308,6 +375,70 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- user management (office Stage 3, admin only) ----
+    if (p === '/api/users' && req.method === 'GET') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      const users = await listAppUsers(ctx.tenant_id);
+      send(res, 200, {
+        me: ctx.id, roles: ROLES,
+        users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, has_login: !!u.auth_user_id })),
+      });
+      return;
+    }
+
+    if (p === '/api/users' && req.method === 'POST') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      const b = await readJson(req);
+      const email = String(b.email ?? '').trim().toLowerCase();
+      const name = String(b.name ?? '').trim();
+      const role = String(b.role ?? '').trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { send(res, 400, { error: 'A valid email is required.' }); return; }
+      if (!name) { send(res, 400, { error: 'Name is required.' }); return; }
+      if (!ROLES.includes(role)) { send(res, 400, { error: 'Pick a valid role.' }); return; }
+      const password = String(b.password ?? '').trim() || genPassword();
+      if (password.length < 8) { send(res, 400, { error: 'Password must be at least 8 characters.' }); return; }
+      try {
+        const r = await inviteUser(ctx.tenant_id, email, name, role, password);
+        send(res, 200, { ok: true, created: r.created, email, password });
+      } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+
+    if (p.startsWith('/api/users/') && p.endsWith('/reset') && req.method === 'POST') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      const id = p.split('/')[3];
+      const u = await getAppUser(id);
+      if (!u || u.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const password = genPassword();
+      await resetUserPassword(u.email, password);
+      send(res, 200, { ok: true, email: u.email, password });
+      return;
+    }
+
+    if (p.startsWith('/api/users/') && req.method === 'PUT') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      const id = p.split('/').pop()!;
+      const u = await getAppUser(id);
+      if (!u || u.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const patch: Record<string, unknown> = {};
+      if ('name' in b) { if (!String(b.name).trim()) { send(res, 400, { error: 'Name is required.' }); return; } patch.name = String(b.name).trim(); }
+      if ('email' in b) {
+        const email = String(b.email).trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { send(res, 400, { error: 'A valid email is required.' }); return; }
+        if (u.auth_user_id) { try { await updateAuthEmail(u.auth_user_id, email); } catch (err: any) { send(res, 400, { error: 'Login email update failed: ' + (err?.message ?? err) }); return; } }
+        patch.email = email;
+      }
+      if ('role' in b) { if (!ROLES.includes(String(b.role))) { send(res, 400, { error: 'Invalid role.' }); return; }
+        if (id === ctx.id && b.role !== 'admin') { send(res, 400, { error: "You can't remove your own admin role." }); return; }
+        patch.role = b.role; }
+      if ('active' in b) { if (id === ctx.id && b.active === false) { send(res, 400, { error: "You can't deactivate yourself." }); return; }
+        patch.active = !!b.active; }
+      await updateAppUser(id, patch as any, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+
     send(res, 404, { error: 'not found' });
   } catch (e: any) {
     send(res, 500, { error: e?.message ?? String(e) });
@@ -336,9 +467,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .card input{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:14px}
   .card button{width:100%;margin-top:16px;background:var(--magenta);color:#fff;border:none;border-radius:11px;padding:12px;font-weight:700;font-size:14px;cursor:pointer}
   .err{color:#dc2626;font-size:12px;margin-top:10px;min-height:16px}
+  .ordiv{display:flex;align-items:center;gap:10px;color:#a9a4c4;font-size:11px;margin:14px 0 12px}
+  .ordiv:before,.ordiv:after{content:"";flex:1;height:1px;background:var(--line)}
+  .msbtn{width:100%;display:flex;align-items:center;justify-content:center;gap:9px;background:#fff;color:#2f2f2f;border:1px solid #d7d5e4;border-radius:11px;padding:11px;font-weight:600;font-size:14px;cursor:pointer}
+  .msbtn:hover{background:#faf9fe}
   /* app */
   header{height:56px;background:var(--purple);color:#fff;display:flex;align-items:center;padding:0 22px;gap:12px}
   .brand{font-weight:800;font-size:17px}.brand b{color:#ff8fc8}.brand span{font-weight:500;font-size:12px;color:#cfc9ea}
+  .verchip{margin-left:12px;background:rgba(255,255,255,.14);border:none;color:#cfc9ea;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer}
+  .verchip:hover{background:rgba(255,255,255,.24);color:#fff}
+  .loginver{text-align:center;color:#a9a4c4;font-size:11px;margin-top:14px}
   .nav{display:flex;gap:4px;margin-left:26px}
   .tab{background:transparent;border:none;color:#cfc9ea;font-size:13px;font-weight:600;padding:8px 14px;border-radius:9px;cursor:pointer}
   .tab:hover{background:rgba(255,255,255,.1);color:#fff}
@@ -373,6 +511,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .bulk.bsel{background:#fff;color:var(--ink);border:1px solid #cfc9ea}
   .bulk.bclear{background:rgba(255,255,255,.16);color:#fff;margin-left:auto}
   .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
+  .snagtag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:var(--magenta);padding:2px 5px;border-radius:5px;vertical-align:middle}
   a.codelink{font-size:10.5px;color:var(--purple);cursor:pointer;text-decoration:none;border-bottom:1px dashed #cfcde0}
   a.codelink:hover{color:var(--magenta);border-bottom-color:var(--magenta)}
   .overlay{position:fixed;inset:0;background:rgba(31,26,61,.45);display:grid;place-items:center;z-index:20;padding:20px}
@@ -426,16 +565,26 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <label>Email</label><input id="email" type="email" value="milosz@acegroup-uk.com">
   <label>Password</label><input id="password" type="password">
   <button onclick="login()">Sign in</button>
+  <div id="ssoWrap" style="display:none">
+    <div class="ordiv"><span>or</span></div>
+    <button class="msbtn" onclick="loginMicrosoft()">
+      <svg width="16" height="16" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      Sign in with Microsoft
+    </button>
+  </div>
   <div class="err" id="loginErr"></div>
+  <div class="loginver">v__APP_VERSION__</div>
 </div></div>
 
 <div id="appView" style="display:none">
   <header>
     <div class="brand">ACE<b>GROUP</b> <span>· Office</span></div>
+    <button class="verchip" onclick="showChangelog()" title="What's new">v__APP_VERSION__</button>
     <nav class="nav">
       <button id="tabItems" class="tab on" onclick="showTab('items')">Items</button>
       <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
       <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
+      <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
@@ -486,6 +635,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </tr></thead><tbody id="syncRows"></tbody></table></div>
     </main>
   </div>
+
+  <div id="usersView" style="display:none">
+    <main style="max-width:860px">
+      <h2>Users</h2>
+      <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>.</div>
+      <div class="addrow" style="flex-wrap:wrap">
+        <input id="nuName" class="tinput" placeholder="Full name">
+        <input id="nuEmail" class="tinput" type="email" placeholder="email@company.com" style="width:210px">
+        <select id="nuRole" class="tinput"></select>
+        <input id="nuPass" class="tinput" placeholder="password (blank = auto)" style="width:180px">
+        <button class="add" onclick="addUser()">Add user</button>
+      </div>
+      <div class="ferr" id="userErr" style="padding:6px 2px 0"></div>
+      <div class="card2" style="margin-top:14px"><table><thead><tr>
+        <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>LOGIN</th><th>STATUS</th><th></th>
+      </tr></thead><tbody id="userRows"></tbody></table></div>
+    </main>
+  </div>
 </div>
 <div id="modal" class="overlay" style="display:none">
   <div class="sheet">
@@ -498,6 +665,29 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var STAGE={scanned:'Scanned',in_survey:'In survey',surveyed:'Surveyed',synced:'Synced'};
   var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
   var token=sessionStorage.getItem('ace_token')||''; var current='AXS.LAB'; var teams=[]; var sel={};
+  var myRole=sessionStorage.getItem('ace_role')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
+  var CHANGELOG=__CHANGELOG_JSON__;
+  var SSO_ENABLED=__SSO_ENABLED__; var SUPA_URL='__SUPABASE_URL__'; var SUPA_ANON='__SUPABASE_ANON_KEY__';
+  function loginMicrosoft(){
+    var redirect=window.location.origin+'/';
+    window.location.href=SUPA_URL+'/auth/v1/authorize?provider=azure'
+      +'&redirect_to='+encodeURIComponent(redirect)
+      +'&scopes='+encodeURIComponent('openid profile email')
+      +'&prompt=select_account'   // force the Microsoft account picker (don't silently reuse the last account)
+      +'&apikey='+encodeURIComponent(SUPA_ANON);
+  }
+  async function bootstrapSession(){
+    var r=await fetch('/api/me',{headers:{Authorization:'Bearer '+token}});
+    if(r.ok){var me=await r.json();myRole=me.role||'';sessionStorage.setItem('ace_token',token);sessionStorage.setItem('ace_role',myRole);document.getElementById('whoName').textContent=me.name||'';showApp();}
+    else{logout();document.getElementById('loginErr').textContent='No ACE account for this email — ask an admin to add you first.';}
+  }
+  function showChangelog(){
+    var html='<div style="padding:16px 22px 20px">'+CHANGELOG.map(function(e){
+      return '<div style="margin-bottom:15px"><div style="font-weight:800;color:var(--purple);font-size:14px">v'+esc(e.version)+' <span style="color:var(--muted);font-weight:500;font-size:12px">'+esc(e.date)+'</span></div>'
+        +'<ul style="margin:6px 0 0 18px;padding:0;font-size:13px">'+e.changes.map(function(c){return '<li style="margin:3px 0">'+esc(c)+'</li>';}).join('')+'</ul></div>';
+    }).join('')+'</div>';
+    openModal('What\\'s new',html);
+  }
   function tShow(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},1600);}
   async function api(path,opts){opts=opts||{};opts.headers=Object.assign({'content-type':'application/json',Authorization:'Bearer '+token},opts.headers||{});var r=await fetch(path,opts);if(r.status===401){logout();throw new Error('unauth')}return r;}
   async function login(){
@@ -505,11 +695,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
     var d=await r.json();
     if(!r.ok){document.getElementById('loginErr').textContent=d.error||'Login failed';return;}
-    token=d.token; sessionStorage.setItem('ace_token',token); document.getElementById('whoName').textContent=d.name;
+    token=d.token; myRole=d.role||''; sessionStorage.setItem('ace_token',token); sessionStorage.setItem('ace_role',myRole);
+    document.getElementById('whoName').textContent=d.name;
     showApp();
   }
-  function logout(){token='';sessionStorage.removeItem('ace_token');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
-  async function showApp(){document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';await loadJobs();await loadItems();}
+  function logout(){token='';myRole='';sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
+  async function showApp(){document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();await loadJobs();await loadItems();}
   async function loadJobs(){
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
     jobs.forEach(function(j){var d=document.createElement('div');d.className='job'+(j.code===current?' on':'');d.textContent=j.code;
@@ -531,8 +722,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var rateVal=r.rate_override_pennies!=null?(r.rate_override_pennies/100):'';
       var rateInput='<input class="rate" type="number" placeholder="'+r.effective_rate.replace('£','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">';
       var monday=r.synced?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a>':'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>';
+      var snagTag=r.kind==='snag'?'<span class="snagtag">SNAG</span> ':'';
       tr.innerHTML='<td class="cbcell"><input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)"></td>'+
-        '<td><a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
+        '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
         '<td><span class="pill '+r.stage+'">'+(STAGE[r.stage]||r.stage)+'</span></td>'+
         '<td>'+rateInput+'</td><td>'+statusSel+'</td><td>'+teamSel+'</td><td>'+monday+'</td>';
       tb.appendChild(tr);
@@ -578,12 +770,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
     document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
     document.getElementById('syncView').style.display=name==='sync'?'block':'none';
+    document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
+    document.getElementById('tabUsers').classList.toggle('on',name==='users');
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
+    if(name==='users')loadUsers();
   }
+  function applyRole(){document.getElementById('tabUsers').style.display=(myRole==='admin')?'block':'none';}
   async function loadTeams(){
     var data=await (await api('/api/teams')).json(); canManage=data.canManage;
     document.getElementById('addTeam').style.display=canManage?'flex':'none';
@@ -645,6 +841,58 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }catch(e){tShow('Sync failed');}
     btn.textContent=old;btn.disabled=false;
   }
+
+  // ---- user management (admin only) ----
+  var myId='';
+  async function loadUsers(){
+    var data=await (await api('/api/users')).json();
+    var tb=document.getElementById('userRows');
+    if(data.error){tb.innerHTML='<tr><td colspan="6" style="padding:16px;color:var(--muted)">'+esc(data.error)+'</td></tr>';return;}
+    myId=data.me;
+    var nr=document.getElementById('nuRole');
+    if(!nr.options.length)nr.innerHTML=USER_ROLES.map(function(r){return '<option value="'+r+'"'+(r==='surveyor'?' selected':'')+'>'+r+'</option>';}).join('');
+    tb.innerHTML='';
+    data.users.forEach(function(u){
+      var self=u.id===myId;
+      var attr=function(s){return esc(s).replace(/"/g,'&quot;');};
+      var nameInput='<input class="tname" value="'+attr(u.name)+'" onchange="saveUserField(\\''+u.id+'\\',\\'name\\',this.value)">';
+      var emailInput='<input class="tname" style="width:205px" value="'+attr(u.email)+'" onchange="saveUserField(\\''+u.id+'\\',\\'email\\',this.value)">';
+      var roleSel='<select class="sel" '+(self?'disabled':'')+' onchange="saveUserField(\\''+u.id+'\\',\\'role\\',this.value)">'+USER_ROLES.map(function(r){return opt(r,r,u.role)}).join('')+'</select>';
+      var login=u.has_login?'<span class="count green">yes</span>':'<span class="count">no</span>';
+      var status=u.active?'<span class="count green">active</span>':'<span class="count amber">inactive</span>';
+      var actions;
+      if(self){actions='<span style="color:var(--muted);font-size:11px">you</span>';}
+      else{
+        actions='<button class="del" style="color:var(--purple);border-color:#cfc9ea" onclick="resetPw(\\''+u.id+'\\')">Reset password</button> '
+          +(u.active?'<button class="del" onclick="toggleUserActive(\\''+u.id+'\\',false)">Deactivate</button>'
+                    :'<button class="add" style="padding:5px 11px;font-size:11px" onclick="toggleUserActive(\\''+u.id+'\\',true)">Reactivate</button>');
+      }
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td>'+nameInput+'</td><td>'+emailInput+'</td><td>'+roleSel+'</td><td>'+login+'</td><td>'+status+'</td><td style="text-align:right;white-space:nowrap">'+actions+'</td>';
+      tb.appendChild(tr);
+    });
+  }
+  async function addUser(){
+    var name=document.getElementById('nuName').value.trim(), email=document.getElementById('nuEmail').value.trim();
+    var role=document.getElementById('nuRole').value, pass=document.getElementById('nuPass').value.trim();
+    var errEl=document.getElementById('userErr');errEl.textContent='';
+    if(!name||!email){errEl.textContent='Name and email are required.';return;}
+    var d=await (await api('/api/users',{method:'POST',body:JSON.stringify({name:name,email:email,role:role,password:pass})})).json();
+    if(d.ok){document.getElementById('nuName').value='';document.getElementById('nuEmail').value='';document.getElementById('nuPass').value='';showCreds(d.email,d.password,false);loadUsers();}
+    else{errEl.textContent=d.error||'Could not add user';tShow('Could not add user');}
+  }
+  async function saveUserField(id,field,value){var b={};b[field]=value;var d=await (await api('/api/users/'+id,{method:'PUT',body:JSON.stringify(b)})).json();if(d.ok)tShow('Saved');else{tShow(d.error||'Update failed');loadUsers();}}
+  async function toggleUserActive(id,active){var d=await (await api('/api/users/'+id,{method:'PUT',body:JSON.stringify({active:active})})).json();if(d.ok){tShow(active?'Reactivated':'Deactivated');loadUsers();}else tShow(d.error||'Failed');}
+  async function resetPw(id){if(!confirm('Reset this user\\'s password?'))return;var d=await (await api('/api/users/'+id+'/reset',{method:'POST'})).json();if(d.ok)showCreds(d.email,d.password,true);else tShow(d.error||'Failed');}
+  function showCreds(email,password,isReset){
+    var html='<div style="padding:20px 22px">'
+      +'<p style="font-size:13px;color:var(--muted);margin-bottom:14px">'+(isReset?'Password reset. ':'Login created. ')+'Share these securely — the password is shown only once.</p>'
+      +'<div class="drow"><dt>Email</dt><dd class="mono">'+esc(email)+'</dd></div>'
+      +'<div class="drow"><dt>Password</dt><dd class="mono"><b>'+esc(password)+'</b></dd></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="copyCreds(\\''+esc(email)+'\\',\\''+esc(password)+'\\')">Copy</button><button class="save" onclick="closeModal()">Done</button></div>';
+    openModal(isReset?'New password':'Login created',html);
+  }
+  function copyCreds(email,password){if(navigator.clipboard)navigator.clipboard.writeText(email+'  '+password);tShow('Copied');}
 
   // ---- modal, create item, item detail ----
   function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -711,9 +959,55 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(d.photos&&d.photos.length){
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
     } else { html+='<div class="empty">No photos yet — these arrive from the mobile survey / install flow.</div>'; }
-    document.getElementById('modalTitle').innerHTML='Item <span class="mono">'+esc(it.full_code)+'</span>';
+    if(!d.is_snag){
+      html+='<div class="groupt" style="padding:10px 22px 0">SNAGS (remedial items)</div>';
+      if(d.snags&&d.snags.length){
+        html+='<div style="padding:2px 22px 0">'+d.snags.map(function(s){
+          var st=s.synced?'<span class="count green">synced</span>':'<span class="count amber">not synced</span>';
+          var link=s.monday_url?' · <a class="mlink" target="_blank" href="'+s.monday_url+'">Monday ↗</a>':'';
+          return '<div style="padding:10px 0;border-top:1px solid #f2f0f8">'
+            +'<a class="codelink mono" style="font-size:11px;word-break:break-all" onclick="openDetail(\\''+s.id+'\\')">'+esc(s.full_code)+'</a>'
+            +'<div style="font-size:13px;margin-top:4px">'+esc(s.comment||'')+'</div>'
+            +'<div style="font-size:11px;color:var(--muted);margin-top:4px">'+st+' · rate '+esc(s.rate)+' · '+esc(s.team||'no team')+link+'</div>'
+            +'</div>';
+        }).join('')+'</div>';
+      } else { html+='<div class="empty">No snags yet.</div>'; }
+      var topts='<option value="">— team to fit (optional) —</option>'+(d.teams||[]).map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
+      html+='<div style="padding:2px 22px 22px">'
+        +'<textarea id="snagDesc" rows="2" placeholder="Describe the snag…" style="width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;font-family:inherit"></textarea>'
+        +'<div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">'
+        +'<span style="font-size:12px;color:var(--muted)">£</span><input id="snagRate" type="number" min="0" step="1" placeholder="labour (optional)" style="width:150px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px">'
+        +'<select id="snagTeam" class="sel">'+topts+'</select>'
+        +'<input type="file" id="snagPhoto" accept="image/*" style="font-size:12px">'
+        +'<button class="save" onclick="logSnag(\\''+it.id+'\\')">Raise snag</button>'
+        +'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:6px">Creates a separate item ('+esc(it.full_code)+'-S…) you can cost, assign a team, sync and fit like any other.</div>'
+        +'</div>';
+    } else {
+      html+='<div class="empty">This is a snag item — set its team and labour cost above, then sync and fit it like any item.</div>';
+    }
+    document.getElementById('modalTitle').innerHTML=(d.is_snag?'Snag ':'Item ')+'<span class="mono">'+esc(it.full_code)+'</span>';
     document.getElementById('modalBody').innerHTML=html;
   }
+  function fileToDataUrl(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result)};r.onerror=rej;r.readAsDataURL(file);});}
+  async function logSnag(id){
+    var desc=(document.getElementById('snagDesc').value||'').trim(); if(!desc){tShow('Enter a snag comment');return;}
+    var rate=document.getElementById('snagRate').value, team=document.getElementById('snagTeam').value;
+    var f=document.getElementById('snagPhoto').files[0]; var photo=null;
+    if(f){ if(f.size>4*1024*1024){tShow('Photo too large (max 4MB)');return;} photo=await fileToDataUrl(f); }
+    tShow('Raising snag…');
+    var body={description:desc,rate_pennies:(rate===''?null:Math.round(Number(rate)*100)),team_id:team,photo:photo};
+    var d=await (await api('/api/item/'+id+'/snags',{method:'POST',body:JSON.stringify(body)})).json();
+    if(d.ok){tShow('Snag created: '+d.full_code);openDetail(id);loadItems();}
+    else tShow(d.error||'Could not create snag');
+  }
   document.getElementById('modal').addEventListener('click',function(e){if(e.target.id==='modal')closeModal();});
-  if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';loadJobs().then(loadItems).catch(logout);}
+  if(SSO_ENABLED){var w=document.getElementById('ssoWrap');if(w)w.style.display='block';}
+  // Returning from Microsoft OAuth: Supabase puts the session in the URL hash.
+  if(window.location.hash.indexOf('access_token=')>=0){
+    var hp=new URLSearchParams(window.location.hash.slice(1));
+    var at=hp.get('access_token');
+    history.replaceState(null,'',window.location.pathname);
+    if(at){token=at;bootstrapSession();}
+  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).catch(logout);}
 </script></body></html>`;

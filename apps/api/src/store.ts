@@ -42,6 +42,44 @@ export async function insertSurveyItem(fields: Partial<SurveyItem>): Promise<Sur
   return data as SurveyItem;
 }
 
+// Snag items (kind='snag') raised against a parent item.
+export async function listChildSnags(parentId: string): Promise<SurveyItem[]> {
+  const { data, error } = await db().from('survey_items').select('*')
+    .eq('parent_item_id', parentId).order('full_code');
+  if (error) throw error;
+  return (data ?? []) as SurveyItem[];
+}
+
+// Create a snag as its own survey item: copies the parent's location + spec, gets a
+// "-S<n>" code suffix, install_status 'snag', and its own optional team / rate.
+export async function createSnagItem(
+  parentId: string,
+  opts: { comment: string; rate_override_pennies?: number | null; team_id?: string | null },
+): Promise<SurveyItem> {
+  const parent = await getSurveyItem(parentId);
+  const kids = await listChildSnags(parentId);
+  const taken = new Set(kids.map((k) => k.full_code));
+  let n = 1; while (taken.has(`${parent.full_code}-S${n}`)) n++;
+  const full_code = `${parent.full_code}-S${n}`;
+  const row: Record<string, unknown> = {
+    tenant_id: parent.tenant_id, job_id: parent.job_id, kind: 'snag', parent_item_id: parentId,
+    block: parent.block, elevation: parent.elevation, flat: parent.flat, room_code: parent.room_code,
+    item_code: parent.item_code, floor: parent.floor, full_code,
+    material: parent.material, item_type: parent.item_type, glass: parent.glass,
+    safety_glass: parent.safety_glass, glazing: parent.glazing, width_mm: parent.width_mm, height_mm: parent.height_mm,
+    stage: 'surveyed', install_status: 'snag', snag_comment: opts.comment, comments: opts.comment,
+    team_id: opts.team_id ?? null, rate_override_pennies: opts.rate_override_pennies ?? null,
+  };
+  const { data, error } = await db().from('survey_items').insert(row).select().single();
+  if (error) throw error;
+  return data as SurveyItem;
+}
+
+export async function addItemPhoto(tenantId: string, itemId: string, kind: string, storagePath: string): Promise<void> {
+  const { error } = await db().from('item_photos').insert({ tenant_id: tenantId, item_id: itemId, kind, storage_path: storagePath });
+  if (error) throw error;
+}
+
 export async function listItemPhotos(itemId: string): Promise<ItemPhoto[]> {
   const { data, error } = await db().from('item_photos').select('*').eq('item_id', itemId).order('created_at');
   if (error) throw error;
@@ -100,6 +138,31 @@ export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
   const { data, error } = await db().from('fitter_teams').select('*').eq('tenant_id', tenantId);
   if (error) throw error;
   return (data ?? []) as FitterTeam[];
+}
+
+// ---- user management (office Stage 3) ----
+export interface AppUserRow {
+  id: string; tenant_id: string; auth_user_id: string | null;
+  name: string; email: string; role: string; active: boolean;
+}
+
+export async function listAppUsers(tenantId: string): Promise<AppUserRow[]> {
+  const { data, error } = await db().from('app_users')
+    .select('id,tenant_id,auth_user_id,name,email,role,active').eq('tenant_id', tenantId).order('name');
+  if (error) throw error;
+  return (data ?? []) as AppUserRow[];
+}
+
+export async function getAppUser(id: string): Promise<AppUserRow | null> {
+  const { data, error } = await db().from('app_users')
+    .select('id,tenant_id,auth_user_id,name,email,role,active').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as AppUserRow | null;
+}
+
+export async function updateAppUser(id: string, patch: Partial<Pick<AppUserRow, 'name' | 'email' | 'role' | 'active'>>, tenantId: string): Promise<void> {
+  const { error } = await db().from('app_users').update(patch).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
 }
 
 // ---- team management (office Stage 2) ----

@@ -18,14 +18,20 @@ export async function upsertSurveyItem(
   const fullCode = inputs.item.full_code;
   if (!fullCode) throw new Error('Item has no full_code — cannot sync.');
 
+  // Snag items show the defect text in their Monday name (the code stays the Full Location Ref).
+  const snagComment = (inputs.item as any).snag_comment;
+  const itemName = ((inputs.item as any).kind === 'snag' && snagComment)
+    ? `${fullCode} — ${snagComment}`.slice(0, 255)
+    : fullCode;
+
   const cols = await monday.getColumns(boardId);
   const columnValues = buildColumnValues(cols, inputs);
 
-  const existingId = await monday.findItemIdByName(boardId, fullCode);
+  const existingId = await monday.findItemIdByName(boardId, itemName);
   if (existingId) {
     await monday.changeColumnValues(boardId, existingId, columnValues);
     return { itemId: existingId, action: 'updated', fullCode };
   }
-  const itemId = await monday.createItem(boardId, fullCode, columnValues);
+  const itemId = await monday.createItem(boardId, itemName, columnValues);
   return { itemId, action: 'created', fullCode };
 }

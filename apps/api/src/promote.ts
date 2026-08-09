@@ -2,7 +2,7 @@
 // job's Monday board, then record the Monday id and flip the item's stage to 'synced'.
 import { Monday } from './monday';
 import { upsertSurveyItem as upsertToMonday } from './syncItem';
-import { getSurveyItem, getJob, getTeam, markItemSynced } from './store';
+import { getSurveyItem, getJob, getTeam, markItemSynced, listItemPhotos, downloadPhoto, setJobBoard } from './store';
 import { effectiveRatePennies } from '@ace/shared';
 
 export interface PromoteResult {
@@ -28,5 +28,28 @@ export async function promoteItem(itemId: string): Promise<PromoteResult> {
   });
 
   await markItemSynced(itemId, res.itemId);
+
+  // Backfill the job's Monday account slug (once) so item links resolve to the right account.
+  if (!(job as any).monday_account_slug) {
+    try { const slug = await monday.getAccountSlug(); if (slug) await setJobBoard(job.id, job.monday_board_id, slug); }
+    catch { /* best-effort */ }
+  }
+
+  // Push any 'sketch' photos (e.g. a snag's defect photo) to the board's Design Sketch column.
+  try {
+    const sketches = (await listItemPhotos(itemId)).filter((p) => p.kind === 'sketch');
+    if (sketches.length) {
+      const cols = await monday.getColumns(job.monday_board_id);
+      const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+      const sketchCol = cols.find((c) => norm(c.title) === 'design sketch' && c.type === 'file');
+      if (sketchCol) {
+        for (const ph of sketches) {
+          const bytes = await downloadPhoto(ph.storage_path);
+          await monday.addFileToColumn(res.itemId, sketchCol.id, bytes, ph.storage_path.split('/').pop() ?? 'sketch.png');
+        }
+      }
+    }
+  } catch { /* fail-soft: the item is synced; photo is best-effort */ }
+
   return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id };
 }

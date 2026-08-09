@@ -18,9 +18,13 @@ A running backlog. Append as we go.
 - **Office web app — Stage 3a**: create new survey items from the desk (assembles the full code, inserts as 'surveyed'); item detail drawer (all fields + photos via signed URLs)
 - **Office web app — bulk select**: row checkboxes + select-all header; bulk bar to Sync selected, assign team, or set install status across many items (tenant-guarded)
 - **Monday links**: store per-job account slug so item links resolve to the right account; robust board-id parsing from a pasted board URL
+- **Office web app — user management**: admin-only Users tab — invite (create app_users row + Supabase login), set role, activate/deactivate, reset password; self-lockout guards
+- **Office web app — snags from the desk**: raise a snag from the item detail drawer (comment + optional labour cost + team + photo)
+- **Microsoft SSO**: optional "Sign in with Microsoft" on the office login (Supabase Azure OAuth, implicit flow, no browser deps), gated by `AZURE_SSO_ENABLED`; server links the identity to `app_users` by email. Setup: `docs/sso-setup.md`.
+- **Versioning**: `APP_VERSION` + `CHANGELOG` in `packages/shared/src/version.ts` and `CHANGELOG.md`; office header shows a version chip that opens a "What's new" list. Current: **v0.5.0**.
+- **Snags are first-class items** (`survey_items.kind='snag'`, `parent_item_id`, `-S<n>` code): a snag carries its own labour cost + fitter team, appears in the items list with a SNAG badge, and syncs to Monday through the normal promote path (Install Status = Snag, its own Labour Cost/Fitters, photo → Design Sketch). The mobile app will use the same model.
 
 ## Next (near-term)
-- **Office web app — Stage 3b**: raise/log snags from the desk (reuse the duplicate-item snag flow); user management (invite/deactivate, set roles)
 - **SSO login (Microsoft / Entra)** — Stage 2+. Foundation already in place (Supabase Auth). OAuth is free-tier; SAML is paid/enterprise. Microsoft is the natural fit (ACE/Axis are Microsoft 365). ~session-sized: provider config + a "Sign in with Microsoft" button; app_users linking by email is unchanged.
 - **Mobile app (Expo)**: the field front door — scan → survey → fit — items originate on a device, testable via Expo Go.
 
@@ -36,3 +40,4 @@ A running backlog. Append as we go.
 - Field-level ownership: the app owns survey/install/snag fields; the office owns commercial fields in Monday.
 - Monday column matching is by **title**, never hard-coded id (survives board duplication).
 - Money stored as integer pennies. Secrets (service key, Monday token) are server-side only.
+- A snag is a first-class item (own labour cost + team + lifecycle), not a child record — matching how Monday already models it as a peer item. The legacy `snags` table + `syncSnagsForItem` (duplicate-item approach) are superseded by this and remain only for the old CLI demos.

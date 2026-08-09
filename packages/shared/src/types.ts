@@ -106,6 +106,11 @@ export interface SurveyItem {
   rate_override_pennies: number | null;  // null = inherit team default
   install_status: InstallStatus | null;
 
+  // snags-as-items
+  kind: 'item' | 'snag';
+  parent_item_id: string | null;   // set on snag items -> the original item
+  snag_comment: string | null;
+
   // integration
   monday_item_id: string | null;
 

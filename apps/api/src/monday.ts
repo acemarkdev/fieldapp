@@ -32,6 +32,12 @@ export class Monday {
     return json.data as T;
   }
 
+  /** The token's Monday account slug (e.g. "ace189144") — the subdomain in board/item URLs. */
+  async getAccountSlug(): Promise<string | null> {
+    const d = await this.gql<{ account: { slug: string | null } }>(`query { account { slug } }`);
+    return d.account?.slug ?? null;
+  }
+
   /** Board columns, with settings parsed — used to match survey fields by title. */
   async getColumns(boardId: string): Promise<MondayColumn[]> {
     const d = await this.gql<{ boards: { columns: any[] }[] }>(
