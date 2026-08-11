@@ -9,7 +9,7 @@
 
 import { createServer } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
-import { db } from './supabase';
+import { db, ACE_TENANT } from './supabase';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
@@ -61,6 +61,42 @@ function parseMondayRef(input: unknown): { board: string | null; slug: string | 
 const mondayItemUrl = (job: any, itemId: string) =>
   `https://${job.monday_account_slug ? job.monday_account_slug + '.monday.com' : 'monday.com'}/boards/${job.monday_board_id}/pulses/${itemId}`;
 
+// Dashboard figures for a tenant (shared by the authed dashboard tab and the /live wallboard).
+async function dashboardData(tenantId: string) {
+  const jobs = await listJobs(tenantId);
+  const teams = await listTeams(tenantId);
+  const INSTALLED = new Set(['installed_no_snag', 'installed_snag']);
+  const STATUS_ORDER: [string, string][] = [
+    ['scheduled', 'Scheduled'], ['installed_no_snag', 'Installed'], ['installed_snag', 'Installed + snag'],
+    ['snag', 'Snag'], ['misfit', 'MisFit'], ['delayed', 'Delayed'], ['none', 'No status'],
+  ];
+  const statusCounts: Record<string, number> = {};
+  const perJob = await Promise.all(jobs.map(async (j) => {
+    const items = await listSurveyItems(j.id);
+    const snags = items.filter((it) => (it as any).kind === 'snag');
+    const synced = items.filter((it) => it.monday_item_id).length;
+    const installed = items.filter((it) => it.install_status && INSTALLED.has(it.install_status)).length;
+    const openSnags = snags.filter((it) => !(it.install_status && INSTALLED.has(it.install_status))).length;
+    const labourP = items.reduce((s, it) => s + (effectiveRatePennies(it, teams) ?? 0), 0);
+    for (const it of items) statusCounts[it.install_status ?? 'none'] = (statusCounts[it.install_status ?? 'none'] ?? 0) + 1;
+    return {
+      code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
+      items: items.length, windows: items.length - snags.length, snags: snags.length,
+      synced, installed, openSnags, labour: formatPennies(labourP), labourP,
+    };
+  }));
+  const t = perJob.reduce((a, j) => ({
+    items: a.items + j.items, synced: a.synced + j.synced, installed: a.installed + j.installed,
+    snags: a.snags + j.snags, openSnags: a.openSnags + j.openSnags, labourP: a.labourP + j.labourP,
+  }), { items: 0, synced: 0, installed: 0, snags: 0, openSnags: 0, labourP: 0 });
+  const breakdown = STATUS_ORDER.map(([key, label]) => ({ key, label, count: statusCounts[key] ?? 0 })).filter((s) => s.count > 0);
+  return {
+    totals: { jobs: jobs.length, items: t.items, synced: t.synced, installed: t.installed,
+      snags: t.snags, openSnags: t.openSnags, labour: formatPennies(t.labourP) },
+    breakdown, jobs: perJob,
+  };
+}
+
 // One item row for the Items table (shared by single-job and All-jobs views).
 const itemRow = (it: any, job: any, teams: any[]) => ({
   id: it.id, full_code: it.full_code, room: it.room_code, item: it.item_code, stage: it.stage,
@@ -109,6 +145,16 @@ const server = createServer(async (req, res) => {
       res.end(html); return;
     }
 
+    // Standalone auto-refreshing wallboard (pin it as a browser tab). Key-gated, no login.
+    if (p === '/live') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(LIVE_PAGE); return; }
+    if (p === '/api/live') {
+      const want = process.env.LIVE_KEY ?? '';
+      if (!want) { send(res, 503, { error: 'Live view is off — set LIVE_KEY in .env to enable it.' }); return; }
+      if ((url.searchParams.get('key') ?? '') !== want) { send(res, 401, { error: 'Bad or missing key.' }); return; }
+      send(res, 200, await dashboardData(ACE_TENANT));
+      return;
+    }
+
     if (p === '/api/login' && req.method === 'POST') {
       const { email, password } = await readJson(req);
       const { data, error } = await authClient().auth.signInWithPassword({ email, password });
@@ -123,43 +169,7 @@ const server = createServer(async (req, res) => {
 
     if (p === '/api/me') { send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role }); return; }
 
-    if (p === '/api/dashboard') {
-      const jobs = await listJobs(ctx.tenant_id);
-      const teams = await listTeams(ctx.tenant_id);
-      const INSTALLED = new Set(['installed_no_snag', 'installed_snag']);
-      const STATUS_ORDER: [string, string][] = [
-        ['scheduled', 'Scheduled'], ['installed_no_snag', 'Installed'], ['installed_snag', 'Installed + snag'],
-        ['snag', 'Snag'], ['misfit', 'MisFit'], ['delayed', 'Delayed'], ['none', 'No status'],
-      ];
-      const statusCounts: Record<string, number> = {};
-      const perJob = await Promise.all(jobs.map(async (j) => {
-        const items = await listSurveyItems(j.id);
-        const snags = items.filter((it) => (it as any).kind === 'snag');
-        const synced = items.filter((it) => it.monday_item_id).length;
-        const installed = items.filter((it) => it.install_status && INSTALLED.has(it.install_status)).length;
-        const openSnags = snags.filter((it) => !(it.install_status && INSTALLED.has(it.install_status))).length;
-        const labourP = items.reduce((s, it) => s + (effectiveRatePennies(it, teams) ?? 0), 0);
-        for (const it of items) statusCounts[it.install_status ?? 'none'] = (statusCounts[it.install_status ?? 'none'] ?? 0) + 1;
-        return {
-          code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
-          items: items.length, windows: items.length - snags.length, snags: snags.length,
-          synced, installed, openSnags, labour: formatPennies(labourP), labourP,
-        };
-      }));
-      const t = perJob.reduce((a, j) => ({
-        items: a.items + j.items, synced: a.synced + j.synced, installed: a.installed + j.installed,
-        snags: a.snags + j.snags, openSnags: a.openSnags + j.openSnags, labourP: a.labourP + j.labourP,
-      }), { items: 0, synced: 0, installed: 0, snags: 0, openSnags: 0, labourP: 0 });
-      const breakdown = STATUS_ORDER
-        .map(([key, label]) => ({ key, label, count: statusCounts[key] ?? 0 }))
-        .filter((s) => s.count > 0);
-      send(res, 200, {
-        totals: { jobs: jobs.length, items: t.items, synced: t.synced, installed: t.installed,
-          snags: t.snags, openSnags: t.openSnags, labour: formatPennies(t.labourP) },
-        breakdown, jobs: perJob,
-      });
-      return;
-    }
+    if (p === '/api/dashboard') { send(res, 200, await dashboardData(ctx.tenant_id)); return; }
 
     if (p === '/api/jobs') {
       const jobs = await listJobs(ctx.tenant_id);
@@ -1161,4 +1171,90 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
   } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab('dashboard');}).catch(logout);}
+</script></body></html>`;
+
+// ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----
+const LIVE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ACE — Live</title>
+<style>
+  :root{--bg:#1b1533;--card:#251c47;--line:#3a2f63;--ink:#f4f3f9;--muted:#a9a4c4;--magenta:#e6187e;--green:#22c55e;--amber:#f59e0b}
+  *{box-sizing:border-box;margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  body{background:var(--bg);color:var(--ink);min-height:100vh}
+  .wrap{max-width:1240px;margin:0 auto;padding:26px 30px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+  .brand{font-weight:800;font-size:24px}.brand b{color:#ff8fc8}.brand span{font-weight:500;font-size:14px;color:var(--muted)}
+  .live{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--green);margin-left:6px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(34,197,94,.7);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 10px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+  .upd{margin-left:auto;font-size:12px;color:var(--muted)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px}
+  .stat .v{font-size:40px;font-weight:800;line-height:1}
+  .stat .l{font-size:13px;color:var(--muted);font-weight:600;margin-top:8px}
+  .stat .s{font-size:12px;color:#8f8ab0;margin-top:3px}
+  .stat.warn .v{color:var(--amber)}
+  .cols{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-top:18px}
+  @media(max-width:820px){.cols{grid-template-columns:1fr}}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+  .panel h3{font-size:12px;letter-spacing:.06em;color:var(--muted);font-weight:800;margin-bottom:6px}
+  .jrow{padding:12px 0;border-top:1px solid var(--line)}.jrow:first-of-type{border-top:none}
+  .jtop{display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px}
+  .jcode{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700}
+  .jname{color:var(--muted);font-weight:500}
+  .jmeta{font-size:12px;color:var(--muted)}
+  .barrow{display:flex;align-items:center;gap:10px;margin-top:6px}
+  .barlabel{font-size:11px;color:var(--muted);width:74px}
+  .bartrack{flex:1;height:9px;background:#160f2b;border-radius:999px;overflow:hidden}
+  .barfill{height:100%;background:var(--magenta);border-radius:999px;transition:width .5s}
+  .barfill.green{background:var(--green)}
+  .barpct{font-size:12px;font-weight:700;width:40px;text-align:right}
+  .warnpill{color:var(--amber);font-weight:700;font-size:12px;margin-top:6px}
+  .msg{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px;text-align:center;color:var(--muted);margin-top:30px}
+  .msg code{color:#ff8fc8}
+</style></head><body>
+<div class="wrap">
+  <header>
+    <div class="brand">ACE<b>GROUP</b> <span>· Live</span></div>
+    <div class="live"><span class="dot"></span>LIVE</div>
+    <div class="upd" id="upd">—</div>
+  </header>
+  <div id="content"></div>
+</div>
+<script>
+  var KEY=new URLSearchParams(location.search).get('key')||'';
+  function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function pct(n,t){return t?Math.round(n/t*100):0;}
+  function bar(label,p,cls){return '<div class="barrow"><span class="barlabel">'+label+'</span><div class="bartrack"><div class="barfill '+(cls||'')+'" style="width:'+p+'%"></div></div><span class="barpct">'+p+'%</span></div>';}
+  function stat(v,l,s,warn){return '<div class="stat'+(warn?' warn':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';}
+  function render(d){
+    var t=d.totals;
+    var cards='<div class="stats">'
+      +stat(t.jobs,'Jobs')+stat(t.items,'Items')
+      +stat(t.synced,'Synced',pct(t.synced,t.items)+'% of items')
+      +stat(t.installed,'Installed',pct(t.installed,t.items)+'% of items')
+      +stat(t.openSnags,'Open snags',t.snags+' raised',t.openSnags>0)
+      +stat(t.labour,'Labour')+'</div>';
+    var jobs='<div class="panel"><h3>BY JOB</h3>'+(d.jobs.length?d.jobs.map(function(j){
+      return '<div class="jrow"><div class="jtop"><div><span class="jcode">'+esc(j.code)+'</span> <span class="jname">'+esc(j.name)+'</span></div>'
+        +'<div class="jmeta">'+j.items+' items · '+j.snags+' snags · '+esc(j.labour)+'</div></div>'
+        +bar('Synced',pct(j.synced,j.items),'')+bar('Installed',pct(j.installed,j.items),'green')
+        +(j.openSnags?'<div class="warnpill">⚠ '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+'</div>':'')+'</div>';
+    }).join(''):'<div style="color:var(--muted);padding:8px 0">No jobs yet.</div>')+'</div>';
+    var bd=d.breakdown||[];
+    var brk='<div class="panel"><h3>INSTALL STATUS</h3>'+(bd.length?bd.map(function(s){
+      return '<div class="barrow"><span class="barlabel" style="width:120px">'+esc(s.label)+'</span><div class="bartrack"><div class="barfill" style="width:'+pct(s.count,t.items)+'%"></div></div><span class="barpct">'+s.count+'</span></div>';
+    }).join(''):'<div style="color:var(--muted);padding:8px 0">No items yet.</div>')+'</div>';
+    document.getElementById('content').innerHTML=cards+'<div class="cols">'+jobs+brk+'</div>';
+  }
+  function showMsg(html){document.getElementById('content').innerHTML='<div class="msg">'+html+'</div>';}
+  async function load(){
+    if(!KEY){showMsg('Add your live key to the URL: <code>?key=YOUR_LIVE_KEY</code>');return;}
+    try{
+      var r=await fetch('/api/live?key='+encodeURIComponent(KEY));
+      if(!r.ok){var e=await r.json().catch(function(){return{};});showMsg(esc(e.error||('Error '+r.status)));return;}
+      render(await r.json());
+      var n=new Date();document.getElementById('upd').textContent='updated '+n.toLocaleTimeString()+' · refreshes every 30s';
+    }catch(err){showMsg('Can\\'t reach the office server. Is it running?');}
+  }
+  load(); setInterval(load, 30000);
 </script></body></html>`;

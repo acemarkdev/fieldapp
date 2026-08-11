@@ -20,6 +20,7 @@ A running backlog. Append as we go.
 - **Monday links**: store per-job account slug so item links resolve to the right account; robust board-id parsing from a pasted board URL
 - **Office web app — user management**: admin-only Users tab — invite (create app_users row + Supabase login), set role, activate/deactivate, reset password; self-lockout guards
 - **Office web app — snags from the desk**: raise a snag from the item detail drawer (comment + optional labour cost + team + photo)
+- **Live wallboard** (`/live`): standalone dark, auto-refreshing (30s) status page, key-gated via `LIVE_KEY`, pinnable as a browser tab; shares the dashboard figures. (A Monday-backed Cowork artifact version is still an option for remote/pin-in-Claude viewing.)
 - **Microsoft SSO**: optional "Sign in with Microsoft" on the office login (Supabase Azure OAuth, implicit flow, no browser deps), gated by `AZURE_SSO_ENABLED`; server links the identity to `app_users` by email. Setup: `docs/sso-setup.md`.
 - **Versioning**: `APP_VERSION` + `CHANGELOG` in `packages/shared/src/version.ts` and `CHANGELOG.md`; office header shows a version chip that opens a "What's new" list. Current: **v0.5.0**.
 - **Snags are first-class items** (`survey_items.kind='snag'`, `parent_item_id`, `-S<n>` code): a snag carries its own labour cost + fitter team, appears in the items list with a SNAG badge, and syncs to Monday through the normal promote path (Install Status = Snag, its own Labour Cost/Fitters, photo → Design Sketch). The mobile app will use the same model.

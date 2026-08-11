@@ -5,6 +5,9 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.9.0 — 2026-08-10
+- Live wallboard at `/live` — standalone auto-refreshing status page, pin it as a browser tab (set `LIVE_KEY` in .env, then open `/live?key=...`)
+
 ## 0.8.0 — 2026-08-09
 - Dashboard cards clickable → filtered Items view (plus a new "All jobs" view)
 - Items tab filter chips: synced / not synced / installed / snags / open snags
