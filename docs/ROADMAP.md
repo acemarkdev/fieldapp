@@ -27,7 +27,7 @@ A running backlog. Append as we go.
 
 ## Next (near-term)
 - **SSO login (Microsoft / Entra)** — Stage 2+. Foundation already in place (Supabase Auth). OAuth is free-tier; SAML is paid/enterprise. Microsoft is the natural fit (ACE/Axis are Microsoft 365). ~session-sized: provider config + a "Sign in with Microsoft" button; app_users linking by email is unchanged.
-- **Mobile app (Expo)** — *started (v0.1.0)*: `apps/mobile` scaffolded and runnable in Expo Go — sign in (Supabase Auth, session persists), jobs list, per-job items list (stage / install status / snag badge, pull-to-refresh). Reads Supabase directly with the anon key; RLS scopes to the user's tenant. Next: item detail, then the **scan → survey → fit** capture flow, photos, offline queue.
+- **Mobile app (Expo)** — *v0.2.0, running on device (SDK 54)*: `apps/mobile` in Expo Go — sign in (Supabase Auth, session persists), jobs list, per-job items list, and an **item detail** screen where a fitter taps to set **install status** (writes back to Supabase, stamps the install date). Reads/writes Supabase directly with the anon key; RLS scopes to the user's tenant. Next: the **scan → survey → fit** capture flow (items originate on device), photos, offline queue.
 
 ## Later
 - **Photo segment recognition** (Phase 3+) — auto-detect window segments to pre-fill the config picker. Spec: `docs/window-segment-recognition.md`. Its training data is the survey photos we're already capturing.

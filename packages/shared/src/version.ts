@@ -1,11 +1,20 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.9.0';
+export const APP_VERSION = '0.10.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.10.1', date: '2026-08-12', changes: [
+    'A page refresh now returns you to the tab you were on (and the same job/filter), instead of jumping to the Dashboard',
+  ] },
+  { version: '0.10.0', date: '2026-08-12', changes: [
+    '"Needs re-sync" flag: synced items that change (e.g. a phone status update) show a "changed" tag + amber Re-sync, a "Needs re-sync" filter, and a dashboard card',
+  ] },
+  { version: '0.9.1', date: '2026-08-12', changes: [
+    'Re-sync button on already-synced items — push later changes (e.g. a status update from the phone) to Monday; updates the existing item in place, never duplicates',
+  ] },
   { version: '0.9.0', date: '2026-08-10', changes: [
     'Live wallboard at /live — a standalone auto-refreshing status page you can pin as a browser tab',
   ] },

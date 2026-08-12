@@ -195,7 +195,7 @@ export async function deleteTeam(id: string): Promise<void> {
 export async function markItemSynced(id: string, mondayItemId: string): Promise<void> {
   const { error } = await db()
     .from('survey_items')
-    .update({ monday_item_id: mondayItemId, stage: 'synced' })
+    .update({ monday_item_id: mondayItemId, stage: 'synced', needs_resync: false })
     .eq('id', id);
   if (error) throw error;
 }

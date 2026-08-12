@@ -5,6 +5,15 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.10.1 — 2026-08-12
+- A page refresh returns you to the tab you were on (and same job/filter), instead of jumping to the Dashboard
+
+## 0.10.0 — 2026-08-12
+- "Needs re-sync" flag: a synced item that changes (phone status update, office edit) shows a "changed" tag + amber Re-sync button, a "Needs re-sync" filter chip, and a dashboard card. Cleared on re-sync. (Requires migration 0005.)
+
+## 0.9.1 — 2026-08-12
+- Re-sync button on already-synced items — push later changes (e.g. a phone status update) to Monday; updates the existing item in place, never duplicates
+
 ## 0.9.0 — 2026-08-10
 - Live wallboard at `/live` — standalone auto-refreshing status page, pin it as a browser tab (set `LIVE_KEY` in .env, then open `/live?key=...`)
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { supabase, configured } from '../lib/supabase';
 import { C } from '../lib/theme';
+import { APP_VERSION } from '../lib/version';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -42,6 +43,7 @@ export default function LoginScreen() {
           {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Sign in</Text>}
         </TouchableOpacity>
         {!!error && <Text style={s.error}>{error}</Text>}
+        <Text style={s.ver}>v{APP_VERSION}</Text>
       </View>
     </KeyboardAvoidingView>
   );
@@ -58,4 +60,5 @@ const s = StyleSheet.create({
   btn: { backgroundColor: C.magenta, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   btnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
   error: { color: '#dc2626', fontSize: 13, marginTop: 12, textAlign: 'center' },
+  ver: { color: '#a9a4c4', fontSize: 12, marginTop: 16, textAlign: 'center' },
 });

@@ -77,22 +77,23 @@ async function dashboardData(tenantId: string) {
     const synced = items.filter((it) => it.monday_item_id).length;
     const installed = items.filter((it) => it.install_status && INSTALLED.has(it.install_status)).length;
     const openSnags = snags.filter((it) => !(it.install_status && INSTALLED.has(it.install_status))).length;
+    const dirty = items.filter((it) => it.monday_item_id && (it as any).needs_resync).length;
     const labourP = items.reduce((s, it) => s + (effectiveRatePennies(it, teams) ?? 0), 0);
     for (const it of items) statusCounts[it.install_status ?? 'none'] = (statusCounts[it.install_status ?? 'none'] ?? 0) + 1;
     return {
       code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
       items: items.length, windows: items.length - snags.length, snags: snags.length,
-      synced, installed, openSnags, labour: formatPennies(labourP), labourP,
+      synced, installed, openSnags, dirty, labour: formatPennies(labourP), labourP,
     };
   }));
   const t = perJob.reduce((a, j) => ({
     items: a.items + j.items, synced: a.synced + j.synced, installed: a.installed + j.installed,
-    snags: a.snags + j.snags, openSnags: a.openSnags + j.openSnags, labourP: a.labourP + j.labourP,
-  }), { items: 0, synced: 0, installed: 0, snags: 0, openSnags: 0, labourP: 0 });
+    snags: a.snags + j.snags, openSnags: a.openSnags + j.openSnags, dirty: a.dirty + j.dirty, labourP: a.labourP + j.labourP,
+  }), { items: 0, synced: 0, installed: 0, snags: 0, openSnags: 0, dirty: 0, labourP: 0 });
   const breakdown = STATUS_ORDER.map(([key, label]) => ({ key, label, count: statusCounts[key] ?? 0 })).filter((s) => s.count > 0);
   return {
     totals: { jobs: jobs.length, items: t.items, synced: t.synced, installed: t.installed,
-      snags: t.snags, openSnags: t.openSnags, labour: formatPennies(t.labourP) },
+      snags: t.snags, openSnags: t.openSnags, dirty: t.dirty, labour: formatPennies(t.labourP) },
     breakdown, jobs: perJob,
   };
 }
@@ -104,6 +105,7 @@ const itemRow = (it: any, job: any, teams: any[]) => ({
   install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
   effective_rate: formatPennies(effectiveRatePennies(it, teams)),
   synced: !!it.monday_item_id,
+  dirty: !!it.monday_item_id && !!it.needs_resync,
   monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
 });
 
@@ -640,6 +642,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   input.rate{width:74px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px}
   select.sel{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;background:#fff}
   .sync{background:var(--purple);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer}
+  .resync{background:#fff;color:var(--purple);border:1px solid #cfc9ea;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px}
+  .resync:hover{border-color:var(--magenta);color:var(--magenta)}
+  .resync.dirty{background:var(--amber-soft);color:var(--amber);border-color:#f3d19a}
+  .chgtag{font-size:9px;font-weight:800;color:var(--amber);background:var(--amber-soft);padding:2px 6px;border-radius:5px;margin-left:5px;letter-spacing:.03em}
   a.mlink{color:var(--magenta);font-weight:600;font-size:11px;text-decoration:none}a.mlink:hover{text-decoration:underline}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:11px 18px;border-radius:12px;opacity:0;transition:.25s;z-index:9}
   .toast.show{opacity:1;transform:translateX(-50%)}
@@ -697,6 +703,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="chip" data-f="synced" onclick="setFilter('synced')">Synced</button>
         <button class="chip" data-f="unsynced" onclick="setFilter('unsynced')">Not synced</button>
         <button class="chip" data-f="installed" onclick="setFilter('installed')">Installed</button>
+        <button class="chip" data-f="dirty" onclick="setFilter('dirty')">Needs re-sync</button>
         <button class="chip" data-f="snags" onclick="setFilter('snags')">Snags</button>
         <button class="chip" data-f="open_snags" onclick="setFilter('open_snags')">Open snags</button>
         <span id="itemCount" class="itemcount"></span>
@@ -769,8 +776,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <script>
   var STAGE={scanned:'Scanned',in_survey:'In survey',surveyed:'Surveyed',synced:'Synced'};
   var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
-  var token=sessionStorage.getItem('ace_token')||''; var current='AXS.LAB'; var teams=[]; var sel={};
-  var itemsData=null; var itemFilter='all';
+  var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
+  var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
+  var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
+  function restoreTab(){var t=sessionStorage.getItem('ace_tab')||'dashboard';if(t==='users'&&myRole!=='admin')t='dashboard';return t;}
   var myRole=sessionStorage.getItem('ace_role')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
   var CHANGELOG=__CHANGELOG_JSON__;
   var SSO_ENABLED=__SSO_ENABLED__; var SUPA_URL='__SUPABASE_URL__'; var SUPA_ANON='__SUPABASE_ANON_KEY__';
@@ -806,7 +815,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     showApp();
   }
   function logout(){token='';myRole='';sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
-  async function showApp(){document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();await loadJobs();await loadItems();showTab('dashboard');}
+  async function showApp(){document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();await loadJobs();await loadItems();showTab(restoreTab());}
   async function loadJobs(){
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
@@ -830,6 +839,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       case 'synced':return !!r.synced;
       case 'unsynced':return !r.synced;
       case 'installed':return !!INSTALLED_SET[r.install_status];
+      case 'dirty':return !!r.dirty;
       case 'open_snags':return r.kind==='snag' && !INSTALLED_SET[r.install_status];
       case 'snags':return r.kind==='snag';
       default:return true;
@@ -838,6 +848,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function setFilter(f){itemFilter=f;renderItems();}
   function renderItems(){
     sel={};
+    sessionStorage.setItem('ace_job',current); sessionStorage.setItem('ace_filter',itemFilter);
     document.querySelectorAll('#itemFilters .chip').forEach(function(c){c.classList.toggle('on',c.getAttribute('data-f')===itemFilter);});
     var rows=(itemsData?itemsData.items:[]).filter(matchFilter);
     var tb=document.getElementById('rows');tb.innerHTML='';
@@ -847,7 +858,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var teamSel='<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','—',r.team_id||'')+teams.map(function(t){return opt(t.id,t.name,r.team_id||'')}).join('')+'</select>';
       var rateVal=r.rate_override_pennies!=null?(r.rate_override_pennies/100):'';
       var rateInput='<input class="rate" type="number" placeholder="'+r.effective_rate.replace('£','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">';
-      var monday=r.synced?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a>':'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>';
+      var monday=r.synced
+        ?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a> <button class="resync'+(r.dirty?' dirty':'')+'" onclick="syncItem(\\''+r.id+'\\')">Re-sync</button>'+(r.dirty?' <span class="chgtag">changed</span>':'')
+        :'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>';
       var snagTag=r.kind==='snag'?'<span class="snagtag">SNAG</span> ':'';
       tr.innerHTML='<td class="cbcell"><input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)"></td>'+
         '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
@@ -899,6 +912,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- teams & rates ----
   var canManage=false;
   function showTab(name){
+    sessionStorage.setItem('ace_tab',name);
     document.getElementById('dashView').style.display=name==='dashboard'?'block':'none';
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
     document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
@@ -925,6 +939,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       card('Synced',t.synced,pct(t.synced,t.items)+'% of items',"openItemsFiltered('ALL','synced')")+
       card('Installed',t.installed,pct(t.installed,t.items)+'% of items',"openItemsFiltered('ALL','installed')")+
       card('Open snags',t.openSnags,t.snags+' raised',"openItemsFiltered('ALL','open_snags')")+
+      card('Needs re-sync',t.dirty,t.dirty?'changed since sync':'all up to date',"openItemsFiltered('ALL','dirty')")+
       card('Labour',t.labour);
     var bd=d.breakdown||[];
     var bdHtml=bd.length?bd.map(function(s){var p=pct(s.count,t.items);return '<div class="barrow"><span class="barlabel" style="width:120px">'+esc(s.label)+'</span><div class="bartrack"><div class="barfill" style="width:'+p+'%"></div></div><span class="barpct">'+s.count+'</span></div>';}).join(''):'<div style="color:var(--muted);font-size:13px">No items yet.</div>';
@@ -1170,7 +1185,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token');
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab('dashboard');}).catch(logout);}
+  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab(restoreTab());}).catch(logout);}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----

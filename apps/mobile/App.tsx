@@ -6,11 +6,14 @@ import { C } from './src/lib/theme';
 import LoginScreen from './src/screens/LoginScreen';
 import JobsScreen, { Job } from './src/screens/JobsScreen';
 import ItemsScreen from './src/screens/ItemsScreen';
+import ItemDetailScreen from './src/screens/ItemDetailScreen';
+import { APP_VERSION } from './src/lib/version';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
+  const [itemId, setItemId] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
@@ -30,15 +33,17 @@ export default function App() {
     <SafeAreaView style={s.fill}>
       <StatusBar barStyle="light-content" />
       <View style={s.topbar}>
-        <Text style={s.brand}>ACE<Text style={s.brandB}>GROUP</Text> <Text style={s.field}>Field</Text></Text>
+        <Text style={s.brand}>ACE<Text style={s.brandB}>GROUP</Text> <Text style={s.field}>Field · v{APP_VERSION}</Text></Text>
         <TouchableOpacity onPress={() => supabase.auth.signOut()}>
           <Text style={s.signout}>Sign out</Text>
         </TouchableOpacity>
       </View>
       <View style={s.fill}>
-        {job
-          ? <ItemsScreen job={job} onBack={() => setJob(null)} />
-          : <JobsScreen onOpen={setJob} />}
+        {!job
+          ? <JobsScreen onOpen={setJob} />
+          : itemId
+            ? <ItemDetailScreen id={itemId} onBack={() => setItemId(null)} onChanged={() => {}} />
+            : <ItemsScreen job={job} onBack={() => { setJob(null); setItemId(null); }} onOpen={setItemId} />}
       </View>
     </SafeAreaView>
   );

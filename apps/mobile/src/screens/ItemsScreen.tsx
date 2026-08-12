@@ -9,7 +9,7 @@ interface Item {
   stage: string; install_status: string | null; kind: string | null; monday_item_id: string | null;
 }
 
-export default function ItemsScreen({ job, onBack }: { job: Job; onBack: () => void }) {
+export default function ItemsScreen({ job, onBack, onOpen }: { job: Job; onBack: () => void; onOpen: (id: string) => void }) {
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -50,7 +50,7 @@ export default function ItemsScreen({ job, onBack }: { job: Job; onBack: () => v
             const isSnag = item.kind === 'snag';
             const st = item.install_status ? INSTALL_LABEL[item.install_status] ?? item.install_status : null;
             return (
-              <View style={[s.card, isSnag && s.cardSnag]}>
+              <TouchableOpacity style={[s.card, isSnag && s.cardSnag]} onPress={() => onOpen(item.id)} activeOpacity={0.7}>
                 <View style={s.cardTop}>
                   <Text style={s.code}>{item.full_code}</Text>
                   {isSnag && <Text style={s.snag}>SNAG</Text>}
@@ -64,7 +64,7 @@ export default function ItemsScreen({ job, onBack }: { job: Job; onBack: () => v
                     : <Text style={[s.tag, s.tagGrey]}>local</Text>}
                   {st && <Text style={[s.tag, s.tagAmber]}>{st}</Text>}
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           }}
         />
