@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "ACE Field",
+    "slug": "ace-field",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "acefield",
+    "userInterfaceStyle": "light",
+    "splash": { "backgroundColor": "#3a2b72" },
+    "assetBundlePatterns": ["**/*"],
+    "ios": { "supportsTablet": true },
+    "android": { "package": "uk.co.acegroup.field" },
+    "web": { "bundler": "metro" }
+  }
+}
