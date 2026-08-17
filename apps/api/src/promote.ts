@@ -2,13 +2,15 @@
 // job's Monday board, then record the Monday id and flip the item's stage to 'synced'.
 import { Monday } from './monday';
 import { upsertSurveyItem as upsertToMonday } from './syncItem';
-import { getSurveyItem, getJob, getTeam, markItemSynced, listItemPhotos, downloadPhoto, setJobBoard } from './store';
+import { getSurveyItem, getJob, getTeam, markItemSynced, listItemPhotos, downloadPhoto, setJobBoard, markPhotoPushed } from './store';
 import { effectiveRatePennies } from '@ace/shared';
 
 export interface PromoteResult {
   mondayItemId: string;
   action: 'created' | 'updated';
   boardId: string;
+  photosPushed?: number;
+  photoError?: string;
 }
 
 export async function promoteItem(itemId: string): Promise<PromoteResult> {
@@ -35,21 +37,30 @@ export async function promoteItem(itemId: string): Promise<PromoteResult> {
     catch { /* best-effort */ }
   }
 
-  // Push any 'sketch' photos (e.g. a snag's defect photo) to the board's Design Sketch column.
+  // Push field photos (survey shots + snag sketches) to the board's Design Sketch column,
+  // once each — the monday_pushed flag stops re-syncs from piling up duplicate files.
+  let photosPushed = 0; let photoError: string | undefined;
   try {
-    const sketches = (await listItemPhotos(itemId)).filter((p) => p.kind === 'sketch');
-    if (sketches.length) {
+    const pending = (await listItemPhotos(itemId)).filter((p) => ['sketch', 'survey'].includes(p.kind) && !p.monday_pushed);
+    if (pending.length) {
       const cols = await monday.getColumns(job.monday_board_id);
       const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
       const sketchCol = cols.find((c) => norm(c.title) === 'design sketch' && c.type === 'file');
-      if (sketchCol) {
-        for (const ph of sketches) {
+      if (!sketchCol) {
+        photoError = `No "Design Sketch" file column on board ${job.monday_board_id}.`;
+      } else {
+        for (const ph of pending) {
           const bytes = await downloadPhoto(ph.storage_path);
-          await monday.addFileToColumn(res.itemId, sketchCol.id, bytes, ph.storage_path.split('/').pop() ?? 'sketch.png');
+          await monday.addFileToColumn(res.itemId, sketchCol.id, bytes, ph.storage_path.split('/').pop() ?? 'photo.jpg');
+          await markPhotoPushed(ph.id);
+          photosPushed++;
         }
       }
     }
-  } catch { /* fail-soft: the item is synced; photo is best-effort */ }
+  } catch (e: any) {
+    photoError = e?.message ?? String(e);
+    console.warn(`[promote] photo push failed for ${itemId}: ${photoError}`);
+  }
 
-  return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id };
+  return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id, photosPushed, photoError };
 }

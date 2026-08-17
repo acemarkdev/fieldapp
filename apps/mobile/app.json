@@ -2,7 +2,7 @@
   "expo": {
     "name": "ACE Field",
     "slug": "ace-field",
-    "version": "0.2.1",
+    "version": "0.14.3",
     "orientation": "portrait",
     "scheme": "acefield",
     "userInterfaceStyle": "light",
@@ -10,6 +10,12 @@
     "assetBundlePatterns": ["**/*"],
     "ios": { "supportsTablet": true },
     "android": { "package": "uk.co.acegroup.field" },
-    "web": { "bundler": "metro" }
+    "web": { "bundler": "metro" },
+    "plugins": [
+      ["expo-image-picker", {
+        "photosPermission": "ACE Field needs access to your photos to attach survey images.",
+        "cameraPermission": "ACE Field needs the camera to take survey photos."
+      }]
+    ]
   }
 }

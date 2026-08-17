@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
-import { supabase, configured } from '../lib/supabase';
+import { supabase, configured, ssoEnabled } from '../lib/supabase';
+import { signInWithMicrosoft } from '../lib/auth';
 import { C } from '../lib/theme';
 import { APP_VERSION } from '../lib/version';
 
@@ -8,6 +9,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ssoBusy, setSsoBusy] = useState(false);
   const [error, setError] = useState('');
 
   async function signIn() {
@@ -18,6 +20,16 @@ export default function LoginScreen() {
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);
     if (error) setError('Invalid email or password.');
+    // On success, App's auth listener swaps to the main screens.
+  }
+
+  async function signInMicrosoft() {
+    setError('');
+    if (!configured) { setError('App not configured — set EXPO_PUBLIC_SUPABASE_URL and _ANON_KEY.'); return; }
+    setSsoBusy(true);
+    const { error } = await signInWithMicrosoft();
+    setSsoBusy(false);
+    if (error) setError(error);
     // On success, App's auth listener swaps to the main screens.
   }
 
@@ -39,9 +51,21 @@ export default function LoginScreen() {
           value={password} onChangeText={setPassword}
         />
 
-        <TouchableOpacity style={s.btn} onPress={signIn} disabled={busy} activeOpacity={0.85}>
+        <TouchableOpacity style={s.btn} onPress={signIn} disabled={busy || ssoBusy} activeOpacity={0.85}>
           {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Sign in</Text>}
         </TouchableOpacity>
+
+        {ssoEnabled && (
+          <>
+            <View style={s.divRow}>
+              <View style={s.divLine} /><Text style={s.divText}>or</Text><View style={s.divLine} />
+            </View>
+            <TouchableOpacity style={s.ssoBtn} onPress={signInMicrosoft} disabled={busy || ssoBusy} activeOpacity={0.85}>
+              {ssoBusy ? <ActivityIndicator color={C.purple} /> : <Text style={s.ssoText}>Sign in with Microsoft</Text>}
+            </TouchableOpacity>
+          </>
+        )}
+
         {!!error && <Text style={s.error}>{error}</Text>}
         <Text style={s.ver}>v{APP_VERSION}</Text>
       </View>
@@ -59,6 +83,11 @@ const s = StyleSheet.create({
   input: { borderWidth: 1, borderColor: C.line, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 12, fontSize: 15, color: C.ink },
   btn: { backgroundColor: C.magenta, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   btnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  divRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
+  divLine: { flex: 1, height: 1, backgroundColor: C.line },
+  divText: { marginHorizontal: 10, color: C.muted, fontSize: 12, fontWeight: '600' },
+  ssoBtn: { borderWidth: 1, borderColor: C.line, borderRadius: 12, paddingVertical: 13, alignItems: 'center', backgroundColor: '#fff' },
+  ssoText: { color: C.purple, fontWeight: '800', fontSize: 15 },
   error: { color: '#dc2626', fontSize: 13, marginTop: 12, textAlign: 'center' },
   ver: { color: '#a9a4c4', fontSize: 12, marginTop: 16, textAlign: 'center' },
 });

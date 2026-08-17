@@ -18,10 +18,14 @@ import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyIt
   listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket } from './store';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
+import { recogniseItemPhoto } from './recognise';
 
 const ROLES = ['admin', 'office', 'surveyor', 'scanner', 'fitter'];
 const genPassword = () => 'ACE-' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
-import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG } from '@ace/shared';
+import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG,
+  CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL } from '@ace/shared';
+
+const ROLE_MATRIX = { caps: CAPABILITIES, roles: SHARED_ROLES, labels: ROLE_LABEL, matrix: ROLE_CAPS };
 
 const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install' };
 
@@ -140,6 +144,7 @@ const server = createServer(async (req, res) => {
       const html = PAGE
         .replaceAll('__APP_VERSION__', APP_VERSION)
         .replace('__CHANGELOG_JSON__', () => JSON.stringify(CHANGELOG))
+        .replace('__ROLE_MATRIX_JSON__', () => JSON.stringify(ROLE_MATRIX))
         .replaceAll('__SUPABASE_URL__', () => process.env.SUPABASE_URL ?? '')
         .replaceAll('__SUPABASE_ANON_KEY__', () => process.env.SUPABASE_ANON_KEY ?? '')
         .replaceAll('__SSO_ENABLED__', () => (process.env.AZURE_SSO_ENABLED === 'true' ? 'true' : 'false'));
@@ -259,6 +264,16 @@ const server = createServer(async (req, res) => {
       send(res, 400, { error: 'Unknown bulk action.' }); return;
     }
 
+    // Phase A recognition assist: analyse an item's photo with the vision model.
+    if (p.startsWith('/api/recognise/') && req.method === 'POST') {
+      const id = p.split('/').pop()!;
+      const it = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      try { const recognition = await recogniseItemPhoto(id); send(res, 200, { ok: true, recognition }); }
+      catch (e: any) { send(res, 200, { ok: false, error: e?.message ?? String(e) }); }
+      return;
+    }
+
     // Full item detail + photos (read-only drawer).
     if (p.startsWith('/api/item/') && p.endsWith('/detail') && req.method === 'GET') {
       const id = p.split('/')[3];
@@ -338,7 +353,7 @@ const server = createServer(async (req, res) => {
       const item = await getSurveyItem(id);
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const r = await promoteItem(id);
-      send(res, 200, { ok: true, action: r.action, mondayItemId: r.mondayItemId });
+      send(res, 200, { ok: true, action: r.action, mondayItemId: r.mondayItemId, photosPushed: r.photosPushed, photoError: r.photoError });
       return;
     }
 
@@ -470,7 +485,7 @@ const server = createServer(async (req, res) => {
       const u = await getAppUser(id);
       if (!u || u.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const password = genPassword();
-      await resetUserPassword(u.email, password);
+      await resetUserPassword(u.email, password, u.auth_user_id);
       send(res, 200, { ok: true, email: u.email, password });
       return;
     }
@@ -590,6 +605,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .titlerow{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
   th.cbcell,td.cbcell{width:34px;text-align:center;padding-left:14px}
   .rowcb,#selAll{width:15px;height:15px;cursor:pointer;accent-color:var(--magenta)}
+  .ro{color:var(--muted);font-size:13px}
   .bulkbar{display:flex;align-items:center;gap:10px;background:var(--purple);color:#fff;border-radius:12px;padding:9px 14px;margin:14px 0 10px}
   #bulkcount{font-size:12.5px;font-weight:700;margin-right:4px}
   .bulk{font-size:12px;font-weight:600;border-radius:8px;padding:7px 12px;border:none;cursor:pointer}
@@ -676,6 +692,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
       <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
       <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
+      <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
@@ -749,7 +766,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
 
   <div id="usersView" style="display:none">
-    <main style="max-width:860px">
+    <main style="max-width:1080px">
       <h2>Users</h2>
       <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>.</div>
       <div class="addrow" style="flex-wrap:wrap">
@@ -760,9 +777,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="add" onclick="addUser()">Add user</button>
       </div>
       <div class="ferr" id="userErr" style="padding:6px 2px 0"></div>
-      <div class="card2" style="margin-top:14px"><table><thead><tr>
+      <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="min-width:900px"><thead><tr>
         <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>LOGIN</th><th>STATUS</th><th></th>
       </tr></thead><tbody id="userRows"></tbody></table></div>
+    </main>
+  </div>
+  <div id="rolesView" style="display:none">
+    <main style="max-width:920px">
+      <h2>Roles &amp; access</h2>
+      <div class="sub">What each role can do. This matrix is the single source of truth used by the office app, the mobile app, and the database. To change it, edit <code>packages/shared/src/permissions.ts</code>. Assign a role to someone in the <a href="#" onclick="showTab('users');return false">Users</a> tab.</div>
+      <div class="card2" style="margin-top:14px;overflow:auto"><table id="rolesTable"><thead id="rolesHead"></thead><tbody id="rolesBody"></tbody></table></div>
+      <div class="sub" style="margin-top:12px"><b>Data scope:</b> a <b>fitter</b> sees only items that are ready to fit; every other role sees all items in the tenant.</div>
     </main>
   </div>
 </div>
@@ -776,10 +801,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <script>
   var STAGE={scanned:'Scanned',in_survey:'In survey',surveyed:'Surveyed',synced:'Synced'};
   var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
+  var ISTATUS_LABEL={};ISTATUS.forEach(function(s){ISTATUS_LABEL[s[0]]=s[1];});
+  function teamName(id){for(var i=0;i<teams.length;i++){if(teams[i].id===id)return teams[i].name;}return '—';}
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  function restoreTab(){var t=sessionStorage.getItem('ace_tab')||'dashboard';if(t==='users'&&myRole!=='admin')t='dashboard';return t;}
+  function restoreTab(){
+    var t=sessionStorage.getItem('ace_tab')||'dashboard';
+    var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync'};
+    if((t==='users'||t==='roles')&&myRole!=='admin')t='items';
+    else if(need[t]&&!canCap(need[t]))t='items';
+    return t;
+  }
   var myRole=sessionStorage.getItem('ace_role')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
   var CHANGELOG=__CHANGELOG_JSON__;
   var SSO_ENABLED=__SSO_ENABLED__; var SUPA_URL='__SUPABASE_URL__'; var SUPA_ANON='__SUPABASE_ANON_KEY__';
@@ -851,18 +884,27 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sessionStorage.setItem('ace_job',current); sessionStorage.setItem('ace_filter',itemFilter);
     document.querySelectorAll('#itemFilters .chip').forEach(function(c){c.classList.toggle('on',c.getAttribute('data-f')===itemFilter);});
     var rows=(itemsData?itemsData.items:[]).filter(matchFilter);
+    var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');
+    var canSelect=canEdit||canFit||canSync;
     var tb=document.getElementById('rows');tb.innerHTML='';
     rows.forEach(function(r){
       var tr=document.createElement('tr');
-      var statusSel='<select class="sel" onchange="save(\\''+r.id+'\\',\\'install_status\\',this.value)">'+ISTATUS.map(function(s){return opt(s[0],s[1],r.install_status||'')}).join('')+'</select>';
-      var teamSel='<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','—',r.team_id||'')+teams.map(function(t){return opt(t.id,t.name,r.team_id||'')}).join('')+'</select>';
+      var curStatus=r.install_status?(ISTATUS_LABEL[r.install_status]||r.install_status):'—';
+      var statusSel=(canFit||canEdit)
+        ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'install_status\\',this.value)">'+ISTATUS.map(function(s){return opt(s[0],s[1],r.install_status||'')}).join('')+'</select>'
+        :'<span class="ro">'+curStatus+'</span>';
+      var teamSel=canEdit
+        ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','—',r.team_id||'')+teams.map(function(t){return opt(t.id,t.name,r.team_id||'')}).join('')+'</select>'
+        :'<span class="ro">'+teamName(r.team_id)+'</span>';
       var rateVal=r.rate_override_pennies!=null?(r.rate_override_pennies/100):'';
-      var rateInput='<input class="rate" type="number" placeholder="'+r.effective_rate.replace('£','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">';
+      var rateInput=canEdit
+        ?'<input class="rate" type="number" placeholder="'+r.effective_rate.replace('£','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">'
+        :'<span class="ro">'+r.effective_rate+'</span>';
       var monday=r.synced
-        ?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a> <button class="resync'+(r.dirty?' dirty':'')+'" onclick="syncItem(\\''+r.id+'\\')">Re-sync</button>'+(r.dirty?' <span class="chgtag">changed</span>':'')
-        :'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>';
+        ?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a>'+(canSync?' <button class="resync'+(r.dirty?' dirty':'')+'" onclick="syncItem(\\''+r.id+'\\')">Re-sync</button>'+(r.dirty?' <span class="chgtag">changed</span>':''):'')
+        :(canSync?'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>':'<span class="ro">not synced</span>');
       var snagTag=r.kind==='snag'?'<span class="snagtag">SNAG</span> ':'';
-      tr.innerHTML='<td class="cbcell"><input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)"></td>'+
+      tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
         '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
         '<td><span class="pill '+r.stage+'">'+(STAGE[r.stage]||r.stage)+'</span></td>'+
         '<td>'+rateInput+'</td><td>'+statusSel+'</td><td>'+teamSel+'</td><td>'+monday+'</td>';
@@ -879,7 +921,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function save(id,field,value){var b={};b[field]=value;await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(b)});tShow('Saved');}
   async function saveRate(id,value){await api('/api/item/'+id,{method:'PUT',body:JSON.stringify({rate_override_pennies:value===''?null:Math.round(Number(value)*100)})});tShow('Rate saved');}
-  async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){tShow('Synced to Monday');loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
+  async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' · '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'');tShow(d.photoError?('Synced · photo issue: '+d.photoError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
 
   // ---- bulk selection / multi-line processing ----
   function selectedIds(){return Object.keys(sel);}
@@ -918,15 +960,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
     document.getElementById('syncView').style.display=name==='sync'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
+    document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
+    document.getElementById('tabRoles').classList.toggle('on',name==='roles');
     if(name==='dashboard')loadDashboard();
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
     if(name==='users')loadUsers();
+    if(name==='roles')loadRoles();
+  }
+  var ROLE_MATRIX=__ROLE_MATRIX_JSON__;
+  function canCap(cap){if(myRole==='admin')return true;return (ROLE_MATRIX.matrix[myRole]||[]).indexOf(cap)>=0;}
+  function loadRoles(){
+    var m=ROLE_MATRIX;
+    var head='<tr><th style="text-align:left">CAPABILITY</th>'+m.roles.map(function(r){return '<th>'+esc(m.labels[r]||r)+'</th>';}).join('')+'</tr>';
+    document.getElementById('rolesHead').innerHTML=head;
+    var body=m.caps.map(function(c){
+      var cells=m.roles.map(function(r){
+        var ok=(r==='admin')||(m.matrix[r]||[]).indexOf(c.key)>=0;
+        return '<td style="text-align:center;font-size:15px">'+(ok?'<span style="color:var(--green,#16a34a)">✓</span>':'<span style="color:var(--muted);opacity:.4">–</span>')+'</td>';
+      }).join('');
+      return '<tr><td style="text-align:left"><b>'+esc(c.label)+'</b><div style="color:var(--muted);font-size:12px">'+esc(c.desc)+'</div></td>'+cells+'</tr>';
+    }).join('');
+    document.getElementById('rolesBody').innerHTML=body;
   }
   function bar(label,pct,cls){return '<div class="barrow"><span class="barlabel">'+label+'</span><div class="bartrack"><div class="barfill '+(cls||'')+'" style="width:'+pct+'%"></div></div><span class="barpct">'+pct+'%</span></div>';}
   async function loadDashboard(){
@@ -955,7 +1015,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       jc.appendChild(el);
     });
   }
-  function applyRole(){document.getElementById('tabUsers').style.display=(myRole==='admin')?'block':'none';}
+  function applyRole(){
+    var isAdmin=(myRole==='admin');
+    function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
+    show('tabUsers',isAdmin);
+    show('tabRoles',isAdmin);
+    show('tabDash',canCap('dashboard.view'));
+    show('tabTeams',canCap('teams.manage'));
+    show('tabSync',canCap('monday.sync'));
+    var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
+  }
   async function loadTeams(){
     var data=await (await api('/api/teams')).json(); canManage=data.canManage;
     document.getElementById('addTeam').style.display=canManage?'flex':'none';

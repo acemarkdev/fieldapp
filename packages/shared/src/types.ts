@@ -127,6 +127,7 @@ export interface ItemPhoto {
   taken_at: string | null;
   gps_lat: number | null;
   gps_lng: number | null;
+  monday_pushed?: boolean;
   created_at: string;
 }
 

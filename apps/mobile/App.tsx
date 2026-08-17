@@ -7,19 +7,34 @@ import LoginScreen from './src/screens/LoginScreen';
 import JobsScreen, { Job } from './src/screens/JobsScreen';
 import ItemsScreen from './src/screens/ItemsScreen';
 import ItemDetailScreen from './src/screens/ItemDetailScreen';
+import NewItemScreen from './src/screens/NewItemScreen';
+import NewJobScreen from './src/screens/NewJobScreen';
 import { APP_VERSION } from './src/lib/version';
+import type { Pending } from './src/lib/offline';
+import { can } from './src/lib/permissions';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [itemId, setItemId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [editingPending, setEditingPending] = useState<Pending | null>(null);
+  const [creatingJob, setCreatingJob] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // Load the signed-in user's role so we can hide actions they aren't allowed to use.
+  useEffect(() => {
+    if (!session) { setRole(null); return; }
+    supabase.from('app_users').select('role').eq('auth_user_id', session.user.id).maybeSingle()
+      .then(({ data }) => setRole((data as { role?: string } | null)?.role ?? null));
+  }, [session]);
 
   if (!ready) {
     return <View style={[s.fill, s.center]}><ActivityIndicator color={C.magenta} /></View>;
@@ -40,10 +55,16 @@ export default function App() {
       </View>
       <View style={s.fill}>
         {!job
-          ? <JobsScreen onOpen={setJob} />
-          : itemId
-            ? <ItemDetailScreen id={itemId} onBack={() => setItemId(null)} onChanged={() => {}} />
-            : <ItemsScreen job={job} onBack={() => { setJob(null); setItemId(null); }} onOpen={setItemId} />}
+          ? (creatingJob
+              ? <NewJobScreen onCancel={() => setCreatingJob(false)} onDone={() => setCreatingJob(false)} />
+              : <JobsScreen onOpen={setJob} onNew={() => setCreatingJob(true)} canNewJob={can(role, 'jobs.manage')} />)
+          : editingPending
+            ? <NewItemScreen key={editingPending.localId} job={job} editing={editingPending} onCancel={() => setEditingPending(null)} onDone={() => setEditingPending(null)} />
+            : creating
+              ? <NewItemScreen job={job} onCancel={() => setCreating(false)} onDone={() => setCreating(false)} />
+              : itemId
+                ? <ItemDetailScreen id={itemId} role={role} onBack={() => setItemId(null)} onChanged={() => {}} />
+                : <ItemsScreen job={job} role={role} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); }} onOpen={setItemId} onNew={() => setCreating(true)} onEditPending={setEditingPending} />}
       </View>
     </SafeAreaView>
   );

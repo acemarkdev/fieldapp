@@ -15,7 +15,8 @@
     "report": "tsx src/report.ts",
     "dashboard": "tsx src/server.ts",
     "create-admin": "tsx src/create-admin.ts",
-    "office": "tsx src/office.ts"
+    "office": "tsx src/office.ts",
+    "recognise": "tsx src/recognise-demo.ts"
   },
   "dependencies": {
     "@ace/shared": "*",

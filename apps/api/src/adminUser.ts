@@ -52,11 +52,41 @@ export async function updateAuthEmail(authUserId: string, email: string): Promis
   await db().auth.admin.updateUserById(authUserId, { email, email_confirm: true });
 }
 
-// Reset a user's login password (admin API). Returns nothing; caller shares the new password.
-export async function resetUserPassword(email: string, password: string): Promise<void> {
+// Find an auth user's id by email, paging through all users (listUsers only returns
+// one page at a time, so a single call can miss the user once there are >50 of them).
+async function findAuthUserIdByEmail(email: string): Promise<string | null> {
   const admin = db().auth.admin;
-  const list = await admin.listUsers();
-  const found = list.data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-  if (!found) { await admin.createUser({ email, password, email_confirm: true }); return; }
-  await admin.updateUserById(found.id, { password });
+  const target = email.trim().toLowerCase();
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error('Could not list logins: ' + error.message);
+    const users = data?.users ?? [];
+    const found = users.find((u) => u.email?.toLowerCase() === target);
+    if (found) return found.id;
+    if (users.length < 200) break; // reached the last page
+  }
+  return null;
+}
+
+// Reset a user's login password (admin API). Throws if the password could NOT be applied,
+// so the caller never hands out a password that isn't actually live.
+// `authUserId` is the app_users.auth_user_id when known — the reliable way to target the login.
+export async function resetUserPassword(email: string, password: string, authUserId?: string | null): Promise<void> {
+  const admin = db().auth.admin;
+
+  // Prefer the linked auth id; fall back to searching by email across all pages.
+  let userId = authUserId ?? null;
+  if (!userId) userId = await findAuthUserIdByEmail(email);
+
+  if (userId) {
+    const { error } = await admin.updateUserById(userId, { password });
+    if (error) throw new Error('Could not set the new password: ' + error.message);
+    return;
+  }
+
+  // No auth login exists yet for this person — create one and link it to their app_users row.
+  const { data, error } = await admin.createUser({ email, password, email_confirm: true });
+  if (error || !data?.user) throw new Error('Could not create a login: ' + (error?.message ?? 'unknown error'));
+  const link = await db().from('app_users').update({ auth_user_id: data.user.id }).eq('email', email);
+  if (link.error) throw new Error('Password set but linking the account failed: ' + link.error.message);
 }

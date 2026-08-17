@@ -80,6 +80,11 @@ export async function addItemPhoto(tenantId: string, itemId: string, kind: strin
   if (error) throw error;
 }
 
+export async function markPhotoPushed(id: string): Promise<void> {
+  const { error } = await db().from('item_photos').update({ monday_pushed: true }).eq('id', id);
+  if (error) throw error;
+}
+
 export async function listItemPhotos(itemId: string): Promise<ItemPhoto[]> {
   const { data, error } = await db().from('item_photos').select('*').eq('item_id', itemId).order('created_at');
   if (error) throw error;
