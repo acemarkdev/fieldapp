@@ -14,8 +14,14 @@ const GLAZINGS = ['Single', 'Double', 'Triple'];
 const digits = (v: string) => (v || '').replace(/\D/g, '');
 const num = (v: string) => (v.trim() === '' ? null : Math.round(Number(v)) || null);
 
-export default function NewItemScreen({ job, onDone, onCancel, editing }: { job: Job; onDone: () => void; onCancel: () => void; editing?: Pending }) {
-  const p: any = editing?.payload ?? {};
+export default function NewItemScreen({ job, onDone, onCancel, editing, existingItem, role }: { job: Job; onDone: () => void; onCancel: () => void; editing?: Pending; existingItem?: any; role?: string | null }) {
+  // `existingItem` = a real survey_items row already in the database (surveyor adding the spec to
+  // a scanned item). `editing` = a not-yet-synced item still in the local queue. Both prefill the
+  // form the same way because the row and the queued payload share field names.
+  const p: any = existingItem ?? editing?.payload ?? {};
+  // Scanners do the first pass: capture each item's location/identity only (stage 'scanned');
+  // the surveyor fills in the spec later. Scan mode hides the spec/team and adds "save & next".
+  const scanMode = role === 'scanner';
   const eElev = digits(p.elevation || '');
   const eWd = (p.item_code || '').charAt(0);
   // location (raw, surveyor-friendly; the app adds the B/E/F prefixes and builds the code)
@@ -46,6 +52,7 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
   const [shots, setShots] = useState<{ uri: string; base64: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [justSaved, setJustSaved] = useState('');
 
   // derived, code-ready values (stored identically to the office form so codes match)
   const block = digits(blockN) ? 'B' + digits(blockN) : '';
@@ -78,8 +85,8 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
     setShots((prev) => [...prev, { uri: res.assets![0].uri, base64: res.assets![0].base64! }]);
   }
 
-  async function save() {
-    setError('');
+  async function save(next = false) {
+    setError(''); setJustSaved('');
     if (!block) { setError('Block is required.'); return; }
     if (!elevation) { setError('Elevation is required.'); return; }
     if (!roomCode) { setError('Room is required (it forms the code).'); return; }
@@ -87,12 +94,29 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
     if (!floor) { setError('Floor is required.'); return; }
     setSaving(true);
     const payload = {
-      tenant_id: job.tenant_id, job_id: job.id, kind: 'item', stage: 'surveyed',
+      tenant_id: job.tenant_id, job_id: job.id, kind: 'item', stage: scanMode ? 'scanned' : 'surveyed',
       block: block || null, elevation: elevation || null, flat: flatDigits || null, floor: floor || null,
       room_code: roomCode, item_code: itemCode, full_code: code, item_type: itemType || null,
-      material: material || null, glass: glass || null, glazing: glazing || null,
-      width_mm: num(spec.width || ''), height_mm: num(spec.height || ''), comments: spec.comments || null, team_id: teamId,
+      // In scan mode we deliberately leave the spec empty — the surveyor fills it in later.
+      material: scanMode ? null : (material || null), glass: scanMode ? null : (glass || null), glazing: scanMode ? null : (glazing || null),
+      width_mm: scanMode ? null : num(spec.width || ''), height_mm: scanMode ? null : num(spec.height || ''),
+      comments: scanMode ? null : (spec.comments || null), team_id: scanMode ? null : teamId,
     };
+    if (existingItem) {
+      // Surveyor completing the spec on a real, already-saved item — update it directly (online).
+      const { tenant_id, job_id, kind, ...fields } = payload as any;
+      const { error: upErr } = await supabase.from('survey_items').update({ ...fields, stage: 'surveyed' }).eq('id', existingItem.id);
+      if (upErr) {
+        setSaving(false);
+        setError(/network|fetch|Failed to fetch/i.test(upErr.message) ? 'You appear to be offline. Editing a saved item needs a connection.' : upErr.message);
+        return;
+      }
+      for (const shot of shots) await enqueuePhoto({ tenant_id: job.tenant_id, itemId: existingItem.id, itemFullCode: code }, shot.base64);
+      await flushAll();
+      setSaving(false);
+      onDone();
+      return;
+    }
     if (editing) {
       await updatePending(editing.localId, { localId: editing.localId, job_id: job.id, full_code: code, payload });
       await repointPendingPhotos(editing.full_code, code); // keep any queued photos attached
@@ -103,7 +127,14 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
     for (const shot of shots) await enqueuePhoto({ tenant_id: job.tenant_id, itemFullCode: code }, shot.base64);
     await flushAll();
     setSaving(false);
-    onDone();
+    if (next && !editing) {
+      // Fast sequential scanning: keep the location, bump the item number, clear photos, stay put.
+      setJustSaved(code);
+      setShots([]);
+      setItemN(String((Number(itemNum) || 0) + 1));
+    } else {
+      onDone();
+    }
   }
 
   function del() {
@@ -119,7 +150,7 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
         <TouchableOpacity onPress={onCancel} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Text style={s.back}>‹ Cancel</Text>
         </TouchableOpacity>
-        <Text style={s.htitle}>{editing ? 'Edit item' : 'New item'} · {job.client_code}.{job.job_code}</Text>
+        <Text style={s.htitle}>{existingItem ? 'Add details' : editing ? (scanMode ? 'Edit scan' : 'Edit item') : (scanMode ? 'Scan item' : 'New item')} · {job.client_code}.{job.job_code}</Text>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
@@ -168,6 +199,9 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
           )}
         </View>
 
+        {scanMode && <Text style={s.scanNote}>Scan pass: capture the location only. The surveyor adds material, glass and sizes later.</Text>}
+
+        {!scanMode && (<>
         <Text style={s.group}>SPECIFICATION</Text>
 
         <View style={s.field}>
@@ -196,6 +230,7 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
         <Field label="Width (mm)" ph="900" v={spec.width} on={specSet('width')} kb="numeric" />
         <Field label="Height inc cill (mm)" ph="1050" v={spec.height} on={specSet('height')} kb="numeric" />
         <Field label="Comments" v={spec.comments} on={specSet('comments')} multiline />
+        </>)}
 
         <Text style={s.group}>PHOTOS (optional)</Text>
         <View style={s.photoBar}>
@@ -213,16 +248,31 @@ export default function NewItemScreen({ job, onDone, onCancel, editing }: { job:
           </ScrollView>
         )}
 
+        {!scanMode && (<>
         <Text style={s.group}>TEAM (optional)</Text>
         <View style={s.chips}>
           <Pill label="— none —" on={teamId === null} onPress={() => setTeamId(null)} />
           {teams.map((t) => <Pill key={t.id} label={t.name} on={teamId === t.id} onPress={() => setTeamId(t.id)} />)}
         </View>
+        </>)}
 
+        {!!justSaved && <Text style={s.saved}>Saved {justSaved} ✓ — ready for the next.</Text>}
         {!!error && <Text style={s.error}>{error}</Text>}
-        <TouchableOpacity style={[s.save, saving && { opacity: 0.6 }]} onPress={save} disabled={saving} activeOpacity={0.85}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveText}>{editing ? 'Save changes' : 'Create item'}</Text>}
-        </TouchableOpacity>
+
+        {scanMode && !editing ? (
+          <>
+            <TouchableOpacity style={[s.save, saving && { opacity: 0.6 }]} onPress={() => save(true)} disabled={saving} activeOpacity={0.85}>
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveText}>Save &amp; scan next</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.delBtn} onPress={() => save(false)} disabled={saving} activeOpacity={0.8}>
+              <Text style={[s.delBtnText, { color: C.purple }]}>Save &amp; done</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity style={[s.save, saving && { opacity: 0.6 }]} onPress={() => save(false)} disabled={saving} activeOpacity={0.85}>
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveText}>{existingItem ? 'Save details' : editing ? 'Save changes' : 'Create item'}</Text>}
+          </TouchableOpacity>
+        )}
         {!!editing && (
           <TouchableOpacity style={s.delBtn} onPress={del} activeOpacity={0.8}>
             <Text style={s.delBtnText}>Delete item</Text>
@@ -354,6 +404,8 @@ const s = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '700', color: C.muted },
   chipTextOn: { color: '#fff' },
   error: { color: '#dc2626', fontSize: 13, marginTop: 16 },
+  scanNote: { fontSize: 12.5, color: C.muted, backgroundColor: C.soft, borderRadius: 10, padding: 11, marginTop: 14, fontWeight: '600' },
+  saved: { color: C.green, fontSize: 13, fontWeight: '800', marginTop: 16 },
   save: { backgroundColor: C.magenta, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginTop: 20 },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 15 },
   delBtn: { borderWidth: 1, borderColor: '#f1c4c4', borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginTop: 10 },

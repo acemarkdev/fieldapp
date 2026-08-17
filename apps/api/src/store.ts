@@ -148,26 +148,36 @@ export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
 // ---- user management (office Stage 3) ----
 export interface AppUserRow {
   id: string; tenant_id: string; auth_user_id: string | null;
-  name: string; email: string; role: string; active: boolean;
+  name: string; email: string; role: string; active: boolean; team_id: string | null;
 }
 
 export async function listAppUsers(tenantId: string): Promise<AppUserRow[]> {
   const { data, error } = await db().from('app_users')
-    .select('id,tenant_id,auth_user_id,name,email,role,active').eq('tenant_id', tenantId).order('name');
+    .select('id,tenant_id,auth_user_id,name,email,role,active,team_id').eq('tenant_id', tenantId).order('name');
   if (error) throw error;
   return (data ?? []) as AppUserRow[];
 }
 
 export async function getAppUser(id: string): Promise<AppUserRow | null> {
   const { data, error } = await db().from('app_users')
-    .select('id,tenant_id,auth_user_id,name,email,role,active').eq('id', id).maybeSingle();
+    .select('id,tenant_id,auth_user_id,name,email,role,active,team_id').eq('id', id).maybeSingle();
   if (error) throw error;
   return (data ?? null) as AppUserRow | null;
 }
 
-export async function updateAppUser(id: string, patch: Partial<Pick<AppUserRow, 'name' | 'email' | 'role' | 'active'>>, tenantId: string): Promise<void> {
+export async function updateAppUser(id: string, patch: Partial<Pick<AppUserRow, 'name' | 'email' | 'role' | 'active' | 'team_id'>>, tenantId: string): Promise<void> {
   const { error } = await db().from('app_users').update(patch).eq('id', id).eq('tenant_id', tenantId);
   if (error) throw error;
+}
+
+// Set an item's team from the Monday pull WITHOUT re-flagging it for re-sync (we just read
+// this value from Monday, so it doesn't need pushing back). Two steps: set the team (which the
+// flag_resync trigger marks dirty), then clear the flag (a no-op update that the trigger ignores).
+export async function setItemTeamFromMonday(id: string, teamId: string | null, tenantId: string): Promise<void> {
+  const a = await db().from('survey_items').update({ team_id: teamId }).eq('id', id).eq('tenant_id', tenantId);
+  if (a.error) throw a.error;
+  const b = await db().from('survey_items').update({ needs_resync: false }).eq('id', id).eq('tenant_id', tenantId);
+  if (b.error) throw b.error;
 }
 
 // ---- team management (office Stage 2) ----

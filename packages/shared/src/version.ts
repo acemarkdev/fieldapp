@@ -1,11 +1,26 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.14.3';
+export const APP_VERSION = '0.18.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.18.0', date: '2026-08-17', changes: [
+    'Surveyor: add the spec to a scanned item on the phone. Opening an item now shows an "Add survey details" button (surveyor/office) that reopens it in the full form \u2014 fill material, glazing, glass, sizes, team \u2014 and Save details updates the item and moves it to stage "surveyed". Completes the two-pass field flow (scanner creates, surveyor details). Also clearer item tags: "on Monday" vs "saved \u00b7 not on Monday" (the old "local" wording wrongly implied device-only \u2014 items are in the database and visible on any device once saved).',
+  ] },
+  { version: '0.17.0', date: '2026-08-17', changes: [
+    'Scanner mode (mobile). A scanner now gets a streamlined "Scan item" form \u2014 capture each item\'s location/identity only (block, elevation, flat, room, item, floor + optional photo), saved at stage "scanned"; the spec is left blank for the surveyor to fill later. A "Save & scan next" button keeps the location and bumps the item number for fast sequential scanning. The full survey form (with spec) still shows for surveyors/office. Next: let surveyors add the spec to an existing scanned item on the phone.',
+  ] },
+  { version: '0.16.1', date: '2026-08-17', changes: [
+    'Fix: a fitter marking an item Installed was blocked with "fitters may only update the install status" \u2014 because installing also stamps the install date, which the fitter-guard trigger hadn\'t whitelisted. Migration 0009 lets fitters set the install date (and after-photo) alongside the status. Apply 0009_fitter_guard_install_date.sql in Supabase.',
+  ] },
+  { version: '0.16.0', date: '2026-08-17', changes: [
+    'Fitter team view. A fitter login is now assigned to a team (office Users tab \u2192 Team column), and on the phone a fitter sees only their team\'s ready-to-fit items. Team\u2192item assignment stays mastered in Monday: the Sync tab has a new "Pull fitters" button that reads the Monday Fitters column back into the app and sets each item\'s team (no re-sync loop). Requires migration 0008 (app_users.team_id).',
+  ] },
+  { version: '0.15.0', date: '2026-08-17', changes: [
+    'Role checks in the office server (defence in depth). Every mutating office API now verifies the caller\'s role against the capability matrix, not just the UI — so even a direct API call is refused (the office server uses the service-role key and bypasses the database rules, so this closes that gap). This completes role enforcement across all three layers: database (RLS), office server, and both UIs. Note: managing teams and linking/pushing Monday boards is now allowed for office (not admin-only), matching the matrix.',
+  ] },
   { version: '0.14.3', date: '2026-08-17', changes: [
     'Fix mobile SSO redirect: after the Microsoft login, Safari showed \'can\'t open the page\' because the app was returning to a custom acefield:// URL that Expo Go can\'t open. It now lets Expo pick the right redirect per environment (exp:// in Expo Go, acefield:// in a dev/standalone build) and parses the returned tokens robustly. Add the exp:// redirect (or exp://*) to Supabase Redirect URLs for Expo Go testing.',
   ] },

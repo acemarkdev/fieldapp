@@ -5,6 +5,25 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.18.0 — 2026-08-17
+- **Surveyor adds the spec on the phone (two-pass flow completed).** Opening an item now shows an **Add survey details** button for surveyors/office; it reopens the item in the full survey form pre-filled with its location, where you set material, glazing, glass, sizes and team. **Save details** updates the item (direct DB update, online) and moves it to stage **surveyed**. So: scanner creates the skeleton → surveyor fills the spec → office syncs to Monday.
+- **Clearer item tags.** The mobile item list now shows **on Monday** (green) vs **saved · not on Monday** (grey), replacing the ambiguous "local"/"synced". "local" wrongly implied device-only — once an item is saved it's in the database and visible to anyone on any device; the grey tag only means it hasn't been pushed to Monday yet.
+
+## 0.17.0 — 2026-08-17
+- **Scanner mode (mobile).** When a **scanner** adds an item, the form is now a streamlined **Scan item**: location/identity only (block, elevation, flat, room, item, floor + optional photo), saved at stage `scanned` with the spec left blank for the surveyor. A **Save & scan next** button keeps the location and increments the item number so a scanner can rattle through many items quickly. Surveyors/office still see the full survey form (with material/glass/sizes/team). The items-list button reads **+ Scan** for scanners. Next step: surveyor adds the spec to an existing scanned item on the phone.
+
+## 0.16.1 — 2026-08-17
+- Fix: fitter couldn't mark an item **Installed** — the save failed with "fitters may only update the install status, not the item specification". Marking Installed also stamps `actual_install_date`, which the fitter-guard trigger from 0007 didn't allow. **Migration 0009** whitelists `actual_install_date` (and `after_photo_path`) so a fitter can complete an install. Apply `0009_fitter_guard_install_date.sql` in Supabase.
+
+## 0.16.0 — 2026-08-17
+- Fitter team view (mobile) + team pull-back from Monday.
+  - Office **Users** tab has a new **Team** column — assign each fitter login to one team (migration 0008 adds `app_users.team_id`).
+  - Office **Sync** tab has a new **Pull fitters** button per job: reads the Monday **Fitters** column for every synced item and sets that item's team in the app, matching by team name. Monday stays the master for scheduling; this is a one-way read-back that doesn't re-flag items for re-sync.
+  - Mobile: a **fitter** now sees only their **team's** ready-to-fit items (was: all ready-to-fit). If they have no team yet, a clear notice tells them to ask the office.
+
+## 0.15.0 — 2026-08-17
+- Role checks in the office server (action E — defence in depth). Every mutating office endpoint now calls a role guard against the shared capability matrix: create item → items.create; edit rate/team → items.edit; set install status → items.fit (or items.edit); raise snag → snags.raise; sync/promote/link board → monday.sync; manage teams → teams.manage. Since the office server uses the service-role key (bypasses RLS), this is what actually stops a wrong-role API call, not just a hidden button. Roles are now enforced in all three layers: database RLS (0.13.0), office server (this), and both UIs (0.14.0). Also: teams management and Monday board link/sync are now permitted for `office` too (previously admin-only), matching the matrix.
+
 ## 0.14.3 — 2026-08-17
 - Fix mobile SSO redirect. After the Microsoft login, Safari showed "can't open the page" because the app returned to a custom `acefield://` URL that Expo Go can't open. `ssoRedirectUri()` no longer forces a scheme — Expo now picks `exp://` in Expo Go and `acefield://` in a dev/standalone build — and the returned code/tokens are parsed with a scheme-agnostic helper. For Expo Go testing, add the `exp://` redirect (or `exp://*`) to Supabase → Authentication → Redirect URLs.
 

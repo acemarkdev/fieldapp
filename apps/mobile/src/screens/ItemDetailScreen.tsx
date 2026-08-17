@@ -32,9 +32,10 @@ interface Full {
   team_id: string | null; rate_override_pennies: number | null; monday_item_id: string | null;
 }
 
-export default function ItemDetailScreen({ id, role, onBack, onChanged }: { id: string; role?: string | null; onBack: () => void; onChanged: () => void }) {
+export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditItem }: { id: string; role?: string | null; onBack: () => void; onChanged: () => void; onEditItem?: (row: any) => void }) {
   const canFit = can(role, 'items.fit');   // only these roles may change install status
   const canAddPhoto = can(role, 'photos.add');
+  const canEditSpec = can(role, 'items.edit'); // surveyor/office may fill in the spec
   const [item, setItem] = useState<Full | null>(null);
   const [team, setTeam] = useState<{ name: string; default_rate_pennies: number } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +121,11 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged }: { id: 
     <View style={{ flex: 1 }}>
       <Header code={item.full_code} snag={isSnag} onBack={onBack} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        {canEditSpec && onEditItem && !isSnag && (
+          <TouchableOpacity style={s.editBtn} onPress={() => onEditItem(item)} activeOpacity={0.85}>
+            <Text style={s.editBtnText}>{(item.material || item.glass || item.width_mm) ? 'Edit details' : 'Add survey details ›'}</Text>
+          </TouchableOpacity>
+        )}
         <Section title="INSTALL STATUS">
           {canFit ? (
             <View style={s.opts}>
@@ -234,6 +240,8 @@ const s = StyleSheet.create({
   htitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   htitle: { color: '#fff', fontSize: 17, fontWeight: '800', flexShrink: 1 },
   snag: { fontSize: 10, fontWeight: '800', color: '#fff', backgroundColor: C.magenta, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, overflow: 'hidden' },
+  editBtn: { backgroundColor: C.magenta, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 16 },
+  editBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
   section: { marginBottom: 16 },
   sectionTitle: { fontSize: 11, fontWeight: '800', color: '#9a97ad', letterSpacing: 0.5, marginBottom: 7 },
   card: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.line, borderRadius: 14, paddingHorizontal: 14 },

@@ -65,6 +65,31 @@ export class Monday {
     return hit ? hit.id : null;
   }
 
+  /** Read one column's text for every item on a board (paged). Used to pull the Fitters
+   *  (team) assignment back from Monday. Returns each item's id, name (= full code) and the
+   *  column's display text (e.g. "Team P01"), or null when unset. */
+  async getColumnTextForItems(boardId: string, columnId: string): Promise<{ id: string; name: string; text: string | null }[]> {
+    const out: { id: string; name: string; text: string | null }[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 50; page++) {
+      const d: any = cursor
+        ? await this.gql(
+            `query ($c: String!, $col: [String!]) { next_items_page(cursor: $c, limit: 200) { cursor items { id name column_values(ids: $col) { text } } } }`,
+            { c: cursor, col: [columnId] },
+          )
+        : await this.gql(
+            `query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 200) { cursor items { id name column_values(ids: $col) { text } } } } }`,
+            { b: [boardId], col: [columnId] },
+          );
+      const pageData = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) out.push({ id: i.id, name: i.name, text: i.column_values?.[0]?.text ?? null });
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
   async createItem(boardId: string, name: string, columnValues: Record<string, unknown>): Promise<string> {
     const d = await this.gql<{ create_item: { id: string } }>(
       `mutation ($b: ID!, $n: String!, $cv: JSON!) {

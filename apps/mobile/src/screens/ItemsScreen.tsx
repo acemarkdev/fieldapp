@@ -9,13 +9,14 @@ import type { Job } from './JobsScreen';
 interface Item {
   id: string; full_code: string | null; room_code: string | null; item_code: string | null;
   stage: string; install_status: string | null; kind: string | null; monday_item_id: string | null;
+  team_id: string | null;
 }
 
-export default function ItemsScreen({ job, role, onBack, onOpen, onNew, onEditPending }: {
-  job: Job; role?: string | null; onBack: () => void; onOpen: (id: string) => void; onNew: () => void; onEditPending: (p: Pending) => void;
+export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, onEditPending }: {
+  job: Job; role?: string | null; teamId?: string | null; onBack: () => void; onOpen: (id: string) => void; onNew: () => void; onEditPending: (p: Pending) => void;
 }) {
   const canCreate = can(role, 'items.create');
-  const fitterView = isFitter(role); // fitters see only items that are ready to fit
+  const fitterView = isFitter(role); // fitters see only their team's ready-to-fit items
   const [items, setItems] = useState<Item[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +28,7 @@ export default function ItemsScreen({ job, role, onBack, onOpen, onNew, onEditPe
     try {
       const { data, error } = await supabase
         .from('survey_items')
-        .select('id,full_code,room_code,item_code,stage,install_status,kind,monday_item_id')
+        .select('id,full_code,room_code,item_code,stage,install_status,kind,monday_item_id,team_id')
         .eq('job_id', job.id).order('full_code');
       if (error) throw error;
       setItems((data as Item[]) ?? []);
@@ -69,7 +70,7 @@ export default function ItemsScreen({ job, role, onBack, onOpen, onNew, onEditPe
           </TouchableOpacity>
           {canCreate ? (
             <TouchableOpacity onPress={onNew} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={s.newBtn}>+ New</Text>
+              <Text style={s.newBtn}>{role === 'scanner' ? '+ Scan' : '+ New'}</Text>
             </TouchableOpacity>
           ) : <View />}
         </View>
@@ -81,12 +82,13 @@ export default function ItemsScreen({ job, role, onBack, onOpen, onNew, onEditPe
         <View style={s.center}><ActivityIndicator color={C.magenta} /></View>
       ) : (
         <FlatList
-          data={fitterView ? items.filter((i) => !!i.install_status) : items}
+          data={fitterView ? items.filter((i) => !!i.install_status && !!teamId && i.team_id === teamId) : items}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: 16 }}
           refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={C.magenta} />}
           ListHeaderComponent={
             <View>
+              {fitterView && !teamId && <Text style={s.banner}>You're not assigned to a team yet. Ask the office to set your team so your items appear here.</Text>}
               {offline && <Text style={s.banner}>Offline — showing saved data. New items are queued.</Text>}
               {pending.length > 0 && (
                 <View style={s.pendingBox}>
@@ -106,7 +108,7 @@ export default function ItemsScreen({ job, role, onBack, onOpen, onNew, onEditPe
               )}
             </View>
           }
-          ListEmptyComponent={<Text style={s.empty}>{offline ? 'Offline and nothing cached yet.' : fitterView ? 'No items are ready to fit on this job yet.' : 'No items on this job yet.'}</Text>}
+          ListEmptyComponent={<Text style={s.empty}>{offline ? 'Offline and nothing cached yet.' : fitterView ? (teamId ? 'No items are ready for your team to fit on this job yet.' : '') : 'No items on this job yet.'}</Text>}
           renderItem={({ item }) => {
             const isSnag = item.kind === 'snag';
             const st = item.install_status ? INSTALL_LABEL[item.install_status] ?? item.install_status : null;
@@ -121,8 +123,8 @@ export default function ItemsScreen({ job, role, onBack, onOpen, onNew, onEditPe
                 </Text>
                 <View style={s.tags}>
                   {item.monday_item_id
-                    ? <Text style={[s.tag, s.tagGreen]}>synced</Text>
-                    : <Text style={[s.tag, s.tagGrey]}>local</Text>}
+                    ? <Text style={[s.tag, s.tagGreen]}>on Monday</Text>
+                    : <Text style={[s.tag, s.tagGrey]}>saved · not on Monday</Text>}
                   {st && <Text style={[s.tag, s.tagAmber]}>{st}</Text>}
                 </View>
               </TouchableOpacity>

@@ -17,10 +17,12 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [role, setRole] = useState<string | null>(null);
+  const [teamId, setTeamId] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [itemId, setItemId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingPending, setEditingPending] = useState<Pending | null>(null);
+  const [editingItem, setEditingItem] = useState<any | null>(null); // surveyor adding spec to a saved item
   const [creatingJob, setCreatingJob] = useState(false);
 
   useEffect(() => {
@@ -31,9 +33,13 @@ export default function App() {
 
   // Load the signed-in user's role so we can hide actions they aren't allowed to use.
   useEffect(() => {
-    if (!session) { setRole(null); return; }
-    supabase.from('app_users').select('role').eq('auth_user_id', session.user.id).maybeSingle()
-      .then(({ data }) => setRole((data as { role?: string } | null)?.role ?? null));
+    if (!session) { setRole(null); setTeamId(null); return; }
+    supabase.from('app_users').select('role,team_id').eq('auth_user_id', session.user.id).maybeSingle()
+      .then(({ data }) => {
+        const row = data as { role?: string; team_id?: string | null } | null;
+        setRole(row?.role ?? null);
+        setTeamId(row?.team_id ?? null);
+      });
   }, [session]);
 
   if (!ready) {
@@ -59,12 +65,14 @@ export default function App() {
               ? <NewJobScreen onCancel={() => setCreatingJob(false)} onDone={() => setCreatingJob(false)} />
               : <JobsScreen onOpen={setJob} onNew={() => setCreatingJob(true)} canNewJob={can(role, 'jobs.manage')} />)
           : editingPending
-            ? <NewItemScreen key={editingPending.localId} job={job} editing={editingPending} onCancel={() => setEditingPending(null)} onDone={() => setEditingPending(null)} />
+            ? <NewItemScreen key={editingPending.localId} job={job} role={role} editing={editingPending} onCancel={() => setEditingPending(null)} onDone={() => setEditingPending(null)} />
             : creating
-              ? <NewItemScreen job={job} onCancel={() => setCreating(false)} onDone={() => setCreating(false)} />
+              ? <NewItemScreen job={job} role={role} onCancel={() => setCreating(false)} onDone={() => setCreating(false)} />
+              : editingItem
+                ? <NewItemScreen key={editingItem.id} job={job} role={role} existingItem={editingItem} onCancel={() => setEditingItem(null)} onDone={() => { setEditingItem(null); setItemId(null); }} />
               : itemId
-                ? <ItemDetailScreen id={itemId} role={role} onBack={() => setItemId(null)} onChanged={() => {}} />
-                : <ItemsScreen job={job} role={role} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); }} onOpen={setItemId} onNew={() => setCreating(true)} onEditPending={setEditingPending} />}
+                ? <ItemDetailScreen id={itemId} role={role} onEditItem={setEditingItem} onBack={() => setItemId(null)} onChanged={() => {}} />
+                : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); }} onOpen={setItemId} onNew={() => setCreating(true)} onEditPending={setEditingPending} />}
       </View>
     </SafeAreaView>
   );

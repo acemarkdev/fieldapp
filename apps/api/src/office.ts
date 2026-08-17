@@ -14,16 +14,20 @@ import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyIt
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
   filterItemIdsByTenant, bulkUpdateItems,
-  listAppUsers, getAppUser, updateAppUser,
+  listAppUsers, getAppUser, updateAppUser, setItemTeamFromMonday,
   listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket } from './store';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
+import { Monday } from './monday';
+
+// Normalise a column title for loose matching (Fitters pull, etc.).
+const normTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 const ROLES = ['admin', 'office', 'surveyor', 'scanner', 'fitter'];
 const genPassword = () => 'ACE-' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
 import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG,
-  CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL } from '@ace/shared';
+  CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL, can, type Capability } from '@ace/shared';
 
 const ROLE_MATRIX = { caps: CAPABILITIES, roles: SHARED_ROLES, labels: ROLE_LABEL, matrix: ROLE_CAPS };
 
@@ -174,6 +178,15 @@ const server = createServer(async (req, res) => {
     const ctx = await context(req);
     if (!ctx) { send(res, 401, { error: 'Not authenticated' }); return; }
 
+    // Server-side role guard. The office server uses the service-role key (bypasses RLS),
+    // so this is what actually stops a role from doing something the UI merely hides.
+    // Returns true if allowed; otherwise sends 403 and returns false (caller must `return`).
+    const allow = (cap: Capability): boolean => {
+      if (can(ctx.role, cap)) return true;
+      send(res, 403, { error: `Your role (${ctx.role}) is not allowed to do that.` });
+      return false;
+    };
+
     if (p === '/api/me') { send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role }); return; }
 
     if (p === '/api/dashboard') { send(res, 200, await dashboardData(ctx.tenant_id)); return; }
@@ -208,6 +221,7 @@ const server = createServer(async (req, res) => {
 
     // Create a new survey item from the desk (populates a fresh board without the mobile app).
     if (p === '/api/items' && req.method === 'POST') {
+      if (!allow('items.create')) return;
       const b = await readJson(req);
       const [c, j] = String(b.job ?? '').split('.');
       const job = await getJobByCode(c, j);
@@ -246,14 +260,17 @@ const server = createServer(async (req, res) => {
       if (allowed.length === 0) { send(res, 403, { error: 'forbidden' }); return; }
 
       if (action === 'team') {
+        if (!allow('items.edit')) return;
         const n = await bulkUpdateItems(allowed, { team_id: value || null }, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
       if (action === 'status') {
+        if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
       if (action === 'sync') {
+        if (!allow('monday.sync')) return;
         let created = 0, updated = 0, failed = 0; const errors: string[] = [];
         for (const id of allowed) {
           try { const r = await promoteItem(id); r.action === 'created' ? created++ : updated++; }
@@ -266,6 +283,7 @@ const server = createServer(async (req, res) => {
 
     // Phase A recognition assist: analyse an item's photo with the vision model.
     if (p.startsWith('/api/recognise/') && req.method === 'POST') {
+      if (!allow('items.edit')) return;
       const id = p.split('/').pop()!;
       const it = await getSurveyItem(id);
       if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
@@ -303,6 +321,7 @@ const server = createServer(async (req, res) => {
 
     // Raise a snag as its own item (own labour cost + team), optionally with a defect photo.
     if (p.startsWith('/api/item/') && p.endsWith('/snags') && req.method === 'POST') {
+      if (!allow('snags.raise')) return;
       const id = p.split('/')[3];
       const it: any = await getSurveyItem(id);
       if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
@@ -337,6 +356,12 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       const item = await getSurveyItem(id);
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      // Spec/rate/team edits need items.edit; a status-only change needs items.fit (or edit).
+      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body);
+      if (touchesSpec) { if (!allow('items.edit')) return; }
+      else if ('install_status' in body) {
+        if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
+      }
       const patch: Record<string, unknown> = {};
       if ('rate_override_pennies' in body)
         patch.rate_override_pennies = (body.rate_override_pennies === '' || body.rate_override_pennies == null) ? null : Math.round(Number(body.rate_override_pennies));
@@ -349,6 +374,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (p.startsWith('/api/promote/') && req.method === 'POST') {
+      if (!allow('monday.sync')) return;
       const id = p.split('/').pop()!;
       const item = await getSurveyItem(id);
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
@@ -364,12 +390,12 @@ const server = createServer(async (req, res) => {
         id: t.id, name: t.name, default_rate_pennies: t.default_rate_pennies,
         default_rate: formatPennies(t.default_rate_pennies), in_use: await countItemsUsingTeam(t.id),
       })));
-      send(res, 200, { teams: rows, canManage: ctx.role === 'admin', role: ctx.role });
+      send(res, 200, { teams: rows, canManage: can(ctx.role, 'teams.manage'), role: ctx.role });
       return;
     }
 
     if (p === '/api/teams' && req.method === 'POST') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only admins can manage teams' }); return; }
+      if (!allow('teams.manage')) return;
       const { name, rate_pennies } = await readJson(req);
       if (!name || !String(name).trim()) { send(res, 400, { error: 'Team name is required' }); return; }
       const pennies = Math.round(Number(rate_pennies));
@@ -380,7 +406,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (p.startsWith('/api/teams/') && (req.method === 'PUT' || req.method === 'DELETE')) {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only admins can manage teams' }); return; }
+      if (!allow('teams.manage')) return;
       const id = p.split('/').pop()!;
       const team = await getTeam(id);
       if (!team || team.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
@@ -415,13 +441,13 @@ const server = createServer(async (req, res) => {
           total: items.length, synced, unsynced: items.length - synced,
         };
       }));
-      send(res, 200, { jobs: rows, canManage: ctx.role === 'admin' });
+      send(res, 200, { jobs: rows, canManage: can(ctx.role, 'monday.sync') });
       return;
     }
 
     // Link / unlink a job's Monday board. Accepts a board id or a full board URL.
     if (p.startsWith('/api/job/') && p.endsWith('/board') && req.method === 'PUT') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only admins can link boards' }); return; }
+      if (!allow('monday.sync')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
       const [c, j] = code.split('.');
       const job = await getJobByCode(c, j);
@@ -435,6 +461,7 @@ const server = createServer(async (req, res) => {
 
     // Batch-sync every item on a job to its board. Idempotent (create or update per item).
     if (p.startsWith('/api/job/') && p.endsWith('/sync') && req.method === 'POST') {
+      if (!allow('monday.sync')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
       const [c, j] = code.split('.');
       const job = await getJobByCode(c, j);
@@ -450,13 +477,55 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Pull the team assignment back FROM Monday (Monday is master for scheduling). Reads the
+    // "Fitters" column for every synced item on the job and sets survey_items.team_id to the
+    // matching team (by name). Doesn't re-flag items for re-sync (we just read this from Monday).
+    if (p.startsWith('/api/job/') && p.endsWith('/pull-fitters') && req.method === 'POST') {
+      if (!allow('monday.sync')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.');
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
+
+      const mon = new Monday();
+      const cols = await mon.getColumns(job.monday_board_id);
+      const fittersCol = cols.find((col) => normTitle(col.title) === 'fitters');
+      if (!fittersCol) { send(res, 400, { error: 'No "Fitters" column found on this board.' }); return; }
+
+      const teams = await listTeams(ctx.tenant_id);
+      const teamByName = new Map(teams.map((t) => [t.name.trim().toLowerCase(), t.id]));
+      const rows = await mon.getColumnTextForItems(job.monday_board_id, fittersCol.id);
+      const textByMondayId = new Map(rows.map((r) => [r.id, (r.text ?? '').trim()]));
+
+      const items = await listSurveyItems(job.id);
+      let assigned = 0, cleared = 0, unchanged = 0; const unmatched = new Set<string>();
+      for (const it of items) {
+        if (!it.monday_item_id) { unchanged++; continue; }
+        const text = textByMondayId.get(it.monday_item_id) ?? '';
+        let newTeam: string | null = null;
+        if (text) {
+          const match = teamByName.get(text.toLowerCase());
+          if (!match) { unmatched.add(text); unchanged++; continue; } // unknown team name — leave as is
+          newTeam = match;
+        }
+        if ((it.team_id ?? null) === newTeam) { unchanged++; continue; }
+        await setItemTeamFromMonday(it.id, newTeam, ctx.tenant_id);
+        newTeam ? assigned++ : cleared++;
+      }
+      send(res, 200, { ok: true, total: items.length, assigned, cleared, unchanged, unmatched: [...unmatched] });
+      return;
+    }
+
     // ---- user management (office Stage 3, admin only) ----
     if (p === '/api/users' && req.method === 'GET') {
       if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
       const users = await listAppUsers(ctx.tenant_id);
+      const teams = await listTeams(ctx.tenant_id);
       send(res, 200, {
         me: ctx.id, roles: ROLES,
-        users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, has_login: !!u.auth_user_id })),
+        teams: teams.map((t) => ({ id: t.id, name: t.name })),
+        users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, has_login: !!u.auth_user_id, team_id: u.team_id })),
       });
       return;
     }
@@ -509,6 +578,7 @@ const server = createServer(async (req, res) => {
         patch.role = b.role; }
       if ('active' in b) { if (id === ctx.id && b.active === false) { send(res, 400, { error: "You can't deactivate yourself." }); return; }
         patch.active = !!b.active; }
+      if ('team_id' in b) patch.team_id = b.team_id || null; // fitter's team (for the mobile view)
       await updateAppUser(id, patch as any, ctx.tenant_id);
       send(res, 200, { ok: true });
       return;
@@ -777,9 +847,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="add" onclick="addUser()">Add user</button>
       </div>
       <div class="ferr" id="userErr" style="padding:6px 2px 0"></div>
-      <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="min-width:900px"><thead><tr>
-        <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>LOGIN</th><th>STATUS</th><th></th>
+      <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="min-width:1000px"><thead><tr>
+        <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>TEAM</th><th>LOGIN</th><th>STATUS</th><th></th>
       </tr></thead><tbody id="userRows"></tbody></table></div>
+      <div class="sub" style="margin-top:8px">A <b>fitter's</b> team decides which items they see in the phone app. Set it here; item→team assignment itself comes from Monday (Sync tab → Pull fitters).</div>
     </main>
   </div>
   <div id="rolesView" style="display:none">
@@ -1071,9 +1142,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var toSync=jb.unsynced>0?'<span class="count amber">'+jb.unsynced+'</span>':'<span class="count">0</span>';
       var canSync=jb.board&&jb.total>0;
       var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.code+'\\',this)">Sync all</button>';
+      var pull=manage?' <button class="syncall" style="background:#fff;color:var(--purple);border:1px solid #cfc9ea" '+(jb.board?'':'disabled')+' onclick="pullFitters(\\''+jb.code+'\\',this)" title="Read team assignments back from the Monday Fitters column">Pull fitters</button>':'';
       tr.innerHTML='<td class="mono"><b>'+jb.code+'</b><div style="font-size:11px;color:var(--muted);font-weight:400">'+(jb.name||'')+'</div></td>'+
         '<td>'+board+'</td><td>'+jb.total+'</td><td><span class="count green">'+jb.synced+'</span></td><td>'+toSync+'</td>'+
-        '<td style="text-align:right">'+btn+'</td>';
+        '<td style="text-align:right;white-space:nowrap">'+btn+pull+'</td>';
       tb.appendChild(tr);
     });
   }
@@ -1086,14 +1158,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }catch(e){tShow('Sync failed');}
     btn.textContent=old;btn.disabled=false;
   }
+  async function pullFitters(code,btn){
+    btn.disabled=true;var old=btn.textContent;btn.textContent='Pulling…';tShow('Reading fitters from Monday…');
+    try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pull-fitters',{method:'POST'})).json();
+      if(d.ok){var msg=d.assigned+' assigned'+(d.cleared?', '+d.cleared+' cleared':'');
+        if(d.unmatched&&d.unmatched.length)msg+=' · unknown team'+(d.unmatched.length>1?'s':'')+': '+d.unmatched.join(', ');
+        tShow(msg);loadItems();}
+      else tShow(d.error||'Pull failed');
+    }catch(e){tShow('Pull failed');}
+    btn.textContent=old;btn.disabled=false;
+  }
 
   // ---- user management (admin only) ----
   var myId='';
   async function loadUsers(){
     var data=await (await api('/api/users')).json();
     var tb=document.getElementById('userRows');
-    if(data.error){tb.innerHTML='<tr><td colspan="6" style="padding:16px;color:var(--muted)">'+esc(data.error)+'</td></tr>';return;}
-    myId=data.me;
+    if(data.error){tb.innerHTML='<tr><td colspan="7" style="padding:16px;color:var(--muted)">'+esc(data.error)+'</td></tr>';return;}
+    myId=data.me; var allTeams=data.teams||[];
     var nr=document.getElementById('nuRole');
     if(!nr.options.length)nr.innerHTML=USER_ROLES.map(function(r){return '<option value="'+r+'"'+(r==='surveyor'?' selected':'')+'>'+r+'</option>';}).join('');
     tb.innerHTML='';
@@ -1103,6 +1185,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var nameInput='<input class="tname" value="'+attr(u.name)+'" onchange="saveUserField(\\''+u.id+'\\',\\'name\\',this.value)">';
       var emailInput='<input class="tname" style="width:205px" value="'+attr(u.email)+'" onchange="saveUserField(\\''+u.id+'\\',\\'email\\',this.value)">';
       var roleSel='<select class="sel" '+(self?'disabled':'')+' onchange="saveUserField(\\''+u.id+'\\',\\'role\\',this.value)">'+USER_ROLES.map(function(r){return opt(r,r,u.role)}).join('')+'</select>';
+      var teamOpts='<option value="">— none —</option>'+allTeams.map(function(t){return '<option value="'+t.id+'"'+(u.team_id===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
+      var teamSel='<select class="sel" onchange="saveUserField(\\''+u.id+'\\',\\'team_id\\',this.value)">'+teamOpts+'</select>';
       var login=u.has_login?'<span class="count green">yes</span>':'<span class="count">no</span>';
       var status=u.active?'<span class="count green">active</span>':'<span class="count amber">inactive</span>';
       var actions;
@@ -1113,7 +1197,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
                     :'<button class="add" style="padding:5px 11px;font-size:11px" onclick="toggleUserActive(\\''+u.id+'\\',true)">Reactivate</button>');
       }
       var tr=document.createElement('tr');
-      tr.innerHTML='<td>'+nameInput+'</td><td>'+emailInput+'</td><td>'+roleSel+'</td><td>'+login+'</td><td>'+status+'</td><td style="text-align:right;white-space:nowrap">'+actions+'</td>';
+      tr.innerHTML='<td>'+nameInput+'</td><td>'+emailInput+'</td><td>'+roleSel+'</td><td>'+teamSel+'</td><td>'+login+'</td><td>'+status+'</td><td style="text-align:right;white-space:nowrap">'+actions+'</td>';
       tb.appendChild(tr);
     });
   }
