@@ -26,8 +26,12 @@ interface Full {
   id: string; tenant_id: string; full_code: string | null; kind: string | null; snag_comment: string | null;
   block: string | null; elevation: string | null; flat: string | null; floor: string | null;
   room_code: string | null; item_code: string | null;
-  material: string | null; item_type: string | null; glass: string | null; glazing: string | null;
-  width_mm: number | null; height_mm: number | null; comments: string | null;
+  material: string | null; item_type: string | null; window_type: string | null; design_code: string | null;
+  glass: string | null; safety_glass: string | null; glazing: string | null;
+  width_mm: number | null; height_mm: number | null; cill_depth_mm: number | null;
+  transom1_mm: number | null; transom2_mm: number | null; transom3_mm: number | null;
+  mullion1_mm: number | null; mullion2_mm: number | null; mullion3_mm: number | null;
+  open_in_out: string | null; add_ons: string | null; coupled: string | null; comments: string | null;
   stage: string; install_status: string | null; actual_install_date: string | null;
   team_id: string | null; rate_override_pennies: number | null; monday_item_id: string | null;
 }
@@ -184,9 +188,18 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
         <Section title="SPECIFICATION">
           <Row k="Material" v={item.material} />
           <Row k="Type" v={item.item_type} />
+          <Row k="Window type" v={item.window_type} />
+          <Row k="Style" v={item.design_code} />
           <Row k="Glass" v={item.glass} />
+          <Row k="Safety glass" v={item.safety_glass} />
           <Row k="Glazing" v={item.glazing} />
           <Row k="Size (mm)" v={item.width_mm || item.height_mm ? `${item.width_mm ?? '?'} × ${item.height_mm ?? '?'}` : null} />
+          <Row k="Cill depth (mm)" v={item.cill_depth_mm != null ? String(item.cill_depth_mm) : null} />
+          <Row k="Transoms (mm)" v={[item.transom1_mm, item.transom2_mm, item.transom3_mm].filter((x) => x != null).join(' · ') || null} />
+          <Row k="Mullions (mm)" v={[item.mullion1_mm, item.mullion2_mm, item.mullion3_mm].filter((x) => x != null).join(' · ') || null} />
+          <Row k="Opens" v={item.open_in_out ? `Open ${item.open_in_out}` : null} />
+          <Row k="Coupled" v={item.coupled} />
+          <Row k="Add-ons" v={item.add_ons} />
           <Row k="Comments" v={item.comments} />
         </Section>
 

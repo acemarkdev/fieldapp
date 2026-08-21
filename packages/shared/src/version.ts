@@ -1,11 +1,26 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.18.0';
+export const APP_VERSION = '0.22.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.22.0', date: '2026-08-17', changes: [
+    'Style picker filters by size. Loaded the Clearview Window Types sheet (505 styles) into the app, so the Choose-style picker now filters by Wide (1-6) and High (1-3) sections plus product Type (Window / Door / Tilt & Turn), on top of code search and the MOST USED HERE ranking. Each tile shows its wide x high and opening count. Picking a style also auto-fills the item window type from the catalogue. Metadata in src/lib/styleMeta.ts (regenerate from the xlsx when it changes).',
+  ] },
+  { version: '0.21.0', date: '2026-08-17', changes: [
+    'Full sketch catalogue in the style picker. All 391 real Clearview style sketches (from the sketches folder, keyed by design code) are now bundled into the app and shown in the Choose-style picker as image tiles \u2014 works fully offline. Search by code (e.g. 27, 129B) and a MOST USED HERE ranking (from pick_events, room-weighted) float the common ones to the top. Picking sets the item design_code; the chosen sketch shows on the form and in item detail. Regenerate the catalogue with the bundled asset map when sketches change.',
+  ] },
+  { version: '0.20.0', date: '2026-08-17', changes: [
+    'Visual style picker (mobile). The survey form now has a "Choose type…" button that opens a full-screen picker with sketched window/door layouts (SVG), Window / Door / Tilt & turn and 1 / 2 / 3+ light filters, and a "MOST USED HERE" grid auto-ranked by pick frequency (learned from pick_events, room-weighted). Picking a style sets the item\'s window type + design code (Clearview style number) and remembers it for "Same as last item". design_code now maps to a Monday "Design Code" column. Needs: npx expo install react-native-svg.',
+  ] },
+  { version: '0.19.0', date: '2026-08-17', changes: [
+    'Fuller survey spec + scanner "one hands" mode. The mobile survey form now captures Window type, Safety glass, Cill depth, Transoms x1-3, Mullions x1-3, Open in/out, Coupled and Add-ons (on top of material/glazing/glass/sizes). A scanner can flip an on-screen "Add full details now" toggle to survey while scanning (saves as surveyed); left off, it stays a quick location-only scan. New window_type field (migration 0010) maps to a Monday "Window Type" column. Apply 0010_window_type.sql in Supabase.',
+  ] },
+  { version: '0.18.1', date: '2026-08-17', changes: [
+    'Mobile: switched to react-native-safe-area-context for the safe-area handling, clearing the "SafeAreaView has been deprecated" warning and giving better notch/home-indicator insets. Run: npx expo install react-native-safe-area-context.',
+  ] },
   { version: '0.18.0', date: '2026-08-17', changes: [
     'Surveyor: add the spec to a scanned item on the phone. Opening an item now shows an "Add survey details" button (surveyor/office) that reopens it in the full form \u2014 fill material, glazing, glass, sizes, team \u2014 and Save details updates the item and moves it to stage "surveyed". Completes the two-pass field flow (scanner creates, surveyor details). Also clearer item tags: "on Monday" vs "saved \u00b7 not on Monday" (the old "local" wording wrongly implied device-only \u2014 items are in the database and visible on any device once saved).',
   ] },

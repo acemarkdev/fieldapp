@@ -82,6 +82,7 @@ export interface SurveyItem {
   // specification
   material: string | null;
   item_type: string | null;
+  window_type: string | null;   // opening style: Casement, Tilt & Turn, Sliding Sash, …
   glass: string | null;
   safety_glass: string | null;
   glazing: string | null;

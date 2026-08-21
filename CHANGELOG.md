@@ -5,6 +5,24 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.22.0 — 2026-08-17
+- **Style picker filters by size.** Imported the *Window Types (Clearview WD)* sheet — 505 styles with **Product Type / Wide / High / Opening / Fixed** — into `src/lib/styleMeta.ts`. The **Choose style** picker now has **Wide (1–6)** and **High (1–3)** selectors plus a **Type** toggle (All / Window / Door / Tilt & Turn), alongside the existing code search and **MOST USED HERE** ranking. Each tile shows its `wide×high` and opening count; picking a style also **auto-fills the item's window type** from the catalogue. (All 391 bundled sketches matched a metadata row.)
+
+## 0.21.0 — 2026-08-17
+- **Full Clearview sketch catalogue in the picker.** All **391 real style sketches** (keyed by design code, e.g. `27`, `129B`, `303`) are bundled into the app (`apps/mobile/assets/styles/`, mapped in `src/lib/styleAssets.ts`) and shown in the **Choose style** picker as image tiles — **fully offline**. **Search by code** and a **MOST USED HERE** ranking (from `pick_events`, weighted to the current room) surface the common styles. Selecting sets the item's **design code**; the chosen sketch appears on the survey form and in item detail. Replaces the earlier hand-drawn SVG set. (Adds ~2 MB to the bundle; `react-native-svg` is no longer required.)
+
+## 0.20.0 — 2026-08-17
+- **Visual style picker (mobile) — the config “pick screen” from the concept model.** The survey form's **Choose type…** button opens a full-screen picker with **sketched layouts** drawn as SVG (frame + mullions/transoms + opening indicators). Toggles for **Window / Door / Tilt & turn** and **1 / 2 / 3+ lights**, and a **“MOST USED HERE”** grid **auto-ranked by pick frequency** — learned from the `pick_events` table and weighted toward the current room. Selecting a style sets the item's **window type** and **design code** (Clearview style number, e.g. “Style 24”), records a pick event so the ranking improves, and remembers the last pick for a **“Same as last item”** shortcut. Catalogue lives in `src/lib/windowStyles.ts` (easy to extend). `design_code` now also maps to a Monday **Design Code** column if present.
+- **Install once:** `npx expo install react-native-svg` (bundled in Expo Go).
+
+## 0.19.0 — 2026-08-17
+- **Fuller survey spec (mobile).** The survey form now captures the full demo field set: **Window type** (Casement / Tilt & Turn / Sliding Sash / … picker + custom), **Safety glass**, **Cill depth**, **Transoms ×1–3** (mm from top), **Mullions ×1–3** (mm from left), **Open in/out**, **Coupled**, and **Add-ons** — alongside material, glazing, glass, width/height. All shown in the mobile item detail too.
+- **Scanner "one hands" mode.** The scan screen has an on-screen **Add full details now** toggle. Off = quick location-only scan (stage `scanned`, with Save & scan next). On = the full survey form, saved as `surveyed` — for when the same person scans and surveys in one pass. No admin setup; each user flips it per session.
+- **New field:** `survey_items.window_type` (**migration 0010**), mapped to a Monday **Window Type** column if the board has one. Apply `0010_window_type.sql` in Supabase.
+
+## 0.18.1 — 2026-08-17
+- Mobile: replaced React Native's deprecated built-in `SafeAreaView` with `react-native-safe-area-context` (wrapped the app in `SafeAreaProvider`), clearing the deprecation warning and improving notch/home-indicator insets. **Install once:** `npx expo install react-native-safe-area-context`.
+
 ## 0.18.0 — 2026-08-17
 - **Surveyor adds the spec on the phone (two-pass flow completed).** Opening an item now shows an **Add survey details** button for surveyors/office; it reopens the item in the full survey form pre-filled with its location, where you set material, glazing, glass, sizes and team. **Save details** updates the item (direct DB update, online) and moves it to stage **surveyed**. So: scanner creates the skeleton → surveyor fills the spec → office syncs to Monday.
 - **Clearer item tags.** The mobile item list now shows **on Monday** (green) vs **saved · not on Monday** (grey), replacing the ambiguous "local"/"synced". "local" wrongly implied device-only — once an item is saved it's in the database and visible to anyone on any device; the grey tag only means it hasn't been pushed to Monday yet.

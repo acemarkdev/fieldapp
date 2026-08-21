@@ -6,6 +6,10 @@ import { C } from '../lib/theme';
 import { enqueueItem, enqueuePhoto, flushAll, cacheGet, cacheSet, updatePending, removePending, repointPendingPhotos, type Pending } from '../lib/offline';
 import { ROOMS, QUICK_ROOMS, roomName } from '../lib/rooms';
 import { GLASS_DEFAULT, GLASS_QUICK, GLASS_OPTIONS } from '../lib/glass';
+import { WINDOW_TYPE_QUICK, WINDOW_TYPES } from '../lib/windowTypes';
+import StylePicker from './StylePicker';
+import { STYLE_ASSETS } from '../lib/styleAssets';
+import { STYLE_META } from '../lib/styleMeta';
 import type { Job } from './JobsScreen';
 
 const MATERIALS = ['uPVC', 'Aluminium', 'Timber', 'Composite', 'Steel'];
@@ -37,16 +41,34 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
   const [roomQuery, setRoomQuery] = useState('');
   // spec (predefined pickers — Glazing defaults to Triple, Glass to 4-20-4)
   const [material, setMaterial] = useState(p.material || '');
+  const [windowType, setWindowType] = useState(p.window_type || '');
+  const [designCode, setDesignCode] = useState(p.design_code || '');
+  const [stylePicker, setStylePicker] = useState(false);
+  const [wtModal, setWtModal] = useState(false);
+  const [wtQuery, setWtQuery] = useState('');
   const [glazing, setGlazing] = useState(p.glazing || 'Triple');
   const [glass, setGlass] = useState(p.glass || GLASS_DEFAULT);
   const [glassModal, setGlassModal] = useState(false);
   const [glassQuery, setGlassQuery] = useState('');
+  const [safetyGlass, setSafetyGlass] = useState(p.safety_glass || '');   // 'Yes' | 'No'
+  const [openInOut, setOpenInOut] = useState(p.open_in_out || '');        // 'In' | 'Out'
+  const [coupled, setCoupled] = useState(p.coupled || '');                // 'Yes' | 'No'
   const [spec, setSpec] = useState<Record<string, string>>({
     width: p.width_mm != null ? String(p.width_mm) : '',
     height: p.height_mm != null ? String(p.height_mm) : '',
+    cill: p.cill_depth_mm != null ? String(p.cill_depth_mm) : '',
+    t1: p.transom1_mm != null ? String(p.transom1_mm) : '',
+    t2: p.transom2_mm != null ? String(p.transom2_mm) : '',
+    t3: p.transom3_mm != null ? String(p.transom3_mm) : '',
+    m1: p.mullion1_mm != null ? String(p.mullion1_mm) : '',
+    m2: p.mullion2_mm != null ? String(p.mullion2_mm) : '',
+    m3: p.mullion3_mm != null ? String(p.mullion3_mm) : '',
+    addons: p.add_ons || '',
     comments: p.comments || '',
   });
   const specSet = (k: string) => (t: string) => setSpec((prev) => ({ ...prev, [k]: t }));
+  // Scanner "one hands" mode: flip on to capture the full spec now (saves as surveyed).
+  const [fullDetails, setFullDetails] = useState(false);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
   const [teamId, setTeamId] = useState<string | null>(p.team_id ?? null);
   const [shots, setShots] = useState<{ uri: string; base64: string }[]>([]);
@@ -66,6 +88,8 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
   const itemType = wd === 'W' ? 'Window' : wd === 'D' ? 'Door' : '';
   const code = [job.client_code, job.job_code, block, elevation, flatDigits ? 'F' + flatDigits : '', roomCode, itemCode, floor]
     .filter((x) => x && x.trim()).join('.');
+  const specOff = scanMode && !fullDetails; // quick location-only scan (no spec captured)
+  const showSpec = !specOff;                // whether the specification sections are shown/saved
 
   useEffect(() => {
     (async () => {
@@ -93,14 +117,18 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
     if (!itemCode) { setError('Item is required — pick W or D and enter a number.'); return; }
     if (!floor) { setError('Floor is required.'); return; }
     setSaving(true);
+    const off = <T,>(v: T) => (specOff ? null : v); // in a quick scan, leave the spec blank for the surveyor
     const payload = {
-      tenant_id: job.tenant_id, job_id: job.id, kind: 'item', stage: scanMode ? 'scanned' : 'surveyed',
+      tenant_id: job.tenant_id, job_id: job.id, kind: 'item', stage: specOff ? 'scanned' : 'surveyed',
       block: block || null, elevation: elevation || null, flat: flatDigits || null, floor: floor || null,
       room_code: roomCode, item_code: itemCode, full_code: code, item_type: itemType || null,
-      // In scan mode we deliberately leave the spec empty — the surveyor fills it in later.
-      material: scanMode ? null : (material || null), glass: scanMode ? null : (glass || null), glazing: scanMode ? null : (glazing || null),
-      width_mm: scanMode ? null : num(spec.width || ''), height_mm: scanMode ? null : num(spec.height || ''),
-      comments: scanMode ? null : (spec.comments || null), team_id: scanMode ? null : teamId,
+      material: off(material || null), window_type: off(windowType || null), design_code: off(designCode || null),
+      glass: off(glass || null), safety_glass: off(safetyGlass || null), glazing: off(glazing || null),
+      width_mm: off(num(spec.width || '')), height_mm: off(num(spec.height || '')), cill_depth_mm: off(num(spec.cill || '')),
+      transom1_mm: off(num(spec.t1 || '')), transom2_mm: off(num(spec.t2 || '')), transom3_mm: off(num(spec.t3 || '')),
+      mullion1_mm: off(num(spec.m1 || '')), mullion2_mm: off(num(spec.m2 || '')), mullion3_mm: off(num(spec.m3 || '')),
+      open_in_out: off(openInOut || null), add_ons: off(spec.addons || null), coupled: off(coupled || null),
+      comments: off(spec.comments || null), team_id: off(teamId),
     };
     if (existingItem) {
       // Surveyor completing the spec on a real, already-saved item — update it directly (online).
@@ -199,9 +227,16 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
           )}
         </View>
 
-        {scanMode && <Text style={s.scanNote}>Scan pass: capture the location only. The surveyor adds material, glass and sizes later.</Text>}
+        {scanMode && (
+          <TouchableOpacity style={s.toggleRow} onPress={() => setFullDetails((v) => !v)} activeOpacity={0.7}>
+            <View style={[s.toggle, fullDetails && s.toggleOn]}>{fullDetails && <View style={s.toggleDot} />}</View>
+            <Text style={s.toggleText}>Add full details now (survey while scanning)</Text>
+          </TouchableOpacity>
+        )}
 
-        {!scanMode && (<>
+        {specOff && <Text style={s.scanNote}>Scan pass: capture the location only. The surveyor adds material, glass and sizes later.</Text>}
+
+        {showSpec && (<>
         <Text style={s.group}>SPECIFICATION</Text>
 
         <View style={s.field}>
@@ -209,6 +244,24 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
           <View style={s.row}>
             {MATERIALS.map((m) => <Pill key={m} label={m} on={material === m} onPress={() => setMaterial(material === m ? '' : m)} />)}
           </View>
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>Window style</Text>
+          <TouchableOpacity style={s.styleBtn} onPress={() => setStylePicker(true)} activeOpacity={0.8}>
+            {designCode && STYLE_ASSETS[designCode] ? <Image source={STYLE_ASSETS[designCode]} style={s.styleThumb} resizeMode="contain" /> : null}
+            <Text style={[s.styleBtnText, !designCode && { color: C.muted }]}>{designCode ? `Style ${designCode}` : 'Choose style…'}</Text>
+            <Text style={s.styleBtnArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>Window type {designCode ? '(or override)' : ''}</Text>
+          <View style={s.row}>
+            {WINDOW_TYPE_QUICK.map((t) => <Pill key={t} label={t} on={windowType === t} onPress={() => setWindowType(windowType === t ? '' : t)} />)}
+            <Pill label="More…" on={false} onPress={() => { setWtQuery(''); setWtModal(true); }} />
+          </View>
+          {!!windowType && !WINDOW_TYPE_QUICK.includes(windowType) && <Text style={s.hint}>Selected: {windowType}</Text>}
         </View>
 
         <View style={s.field}>
@@ -227,8 +280,46 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
           {!!glass && !GLASS_QUICK.includes(glass) && <Text style={s.hint}>Selected: {glass}</Text>}
         </View>
 
+        <View style={s.field}>
+          <Text style={s.label}>Safety glass</Text>
+          <View style={s.row}>
+            {['Yes', 'No'].map((o) => <Pill key={o} label={o} on={safetyGlass === o} onPress={() => setSafetyGlass(safetyGlass === o ? '' : o)} />)}
+          </View>
+        </View>
+
         <Field label="Width (mm)" ph="900" v={spec.width} on={specSet('width')} kb="numeric" />
         <Field label="Height inc cill (mm)" ph="1050" v={spec.height} on={specSet('height')} kb="numeric" />
+        <Field label="Cill depth (mm)" ph="150" v={spec.cill} on={specSet('cill')} kb="numeric" />
+
+        <Text style={s.group}>TRANSOMS (mm from top)</Text>
+        <View style={s.row3}>
+          <MiniField label="T1" v={spec.t1} on={specSet('t1')} />
+          <MiniField label="T2" v={spec.t2} on={specSet('t2')} />
+          <MiniField label="T3" v={spec.t3} on={specSet('t3')} />
+        </View>
+
+        <Text style={s.group}>MULLIONS (mm from left)</Text>
+        <View style={s.row3}>
+          <MiniField label="M1" v={spec.m1} on={specSet('m1')} />
+          <MiniField label="M2" v={spec.m2} on={specSet('m2')} />
+          <MiniField label="M3" v={spec.m3} on={specSet('m3')} />
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>Opens</Text>
+          <View style={s.row}>
+            {['In', 'Out'].map((o) => <Pill key={o} label={'Open ' + o} on={openInOut === o} onPress={() => setOpenInOut(openInOut === o ? '' : o)} />)}
+          </View>
+        </View>
+
+        <View style={s.field}>
+          <Text style={s.label}>Coupled</Text>
+          <View style={s.row}>
+            {['Yes', 'No'].map((o) => <Pill key={o} label={o} on={coupled === o} onPress={() => setCoupled(coupled === o ? '' : o)} />)}
+          </View>
+        </View>
+
+        <Field label="Add-ons required" v={spec.addons} on={specSet('addons')} />
         <Field label="Comments" v={spec.comments} on={specSet('comments')} multiline />
         </>)}
 
@@ -248,7 +339,7 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
           </ScrollView>
         )}
 
-        {!scanMode && (<>
+        {showSpec && (<>
         <Text style={s.group}>TEAM (optional)</Text>
         <View style={s.chips}>
           <Pill label="— none —" on={teamId === null} onPress={() => setTeamId(null)} />
@@ -259,7 +350,7 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
         {!!justSaved && <Text style={s.saved}>Saved {justSaved} ✓ — ready for the next.</Text>}
         {!!error && <Text style={s.error}>{error}</Text>}
 
-        {scanMode && !editing ? (
+        {specOff && !editing ? (
           <>
             <TouchableOpacity style={[s.save, saving && { opacity: 0.6 }]} onPress={() => save(true)} disabled={saving} activeOpacity={0.85}>
               {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveText}>Save &amp; scan next</Text>}
@@ -345,6 +436,50 @@ export default function NewItemScreen({ job, onDone, onCancel, editing, existing
           </View>
         </View>
       </Modal>
+
+      <Modal visible={wtModal} animationType="slide" transparent onRequestClose={() => setWtModal(false)}>
+        <View style={s.modalWrap}>
+          <View style={s.modalCard}>
+            <View style={s.modalHead}>
+              <Text style={s.modalTitle}>Window / door type</Text>
+              <TouchableOpacity onPress={() => setWtModal(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={s.modalDone}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={s.search} placeholder="Search, or type a custom type…" placeholderTextColor="#9a97ad"
+              autoCorrect={false} value={wtQuery} onChangeText={setWtQuery}
+            />
+            <FlatList
+              data={WINDOW_TYPES.filter((t) => t.toLowerCase().includes(wtQuery.trim().toLowerCase()))}
+              keyExtractor={(t) => t}
+              keyboardShouldPersistTaps="handled"
+              style={{ maxHeight: 380 }}
+              ListHeaderComponent={
+                wtQuery.trim() && !WINDOW_TYPES.some((t) => t.toLowerCase() === wtQuery.trim().toLowerCase())
+                  ? <TouchableOpacity style={s.roomRow} onPress={() => { setWindowType(wtQuery.trim()); setWtModal(false); }} activeOpacity={0.7}>
+                      <Text style={[s.roomName, { color: C.magenta, fontWeight: '700' }]}>Use “{wtQuery.trim()}”</Text>
+                      <Text style={s.roomCode}>custom</Text>
+                    </TouchableOpacity>
+                  : null
+              }
+              renderItem={({ item }) => (
+                <TouchableOpacity style={s.roomRow} onPress={() => { setWindowType(item); setWtModal(false); }} activeOpacity={0.7}>
+                  <Text style={s.roomName}>{item}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <StylePicker
+        visible={stylePicker}
+        subtitle={[flatDigits ? 'Flat ' + flatDigits : '', roomCode ? roomName(roomCode) : '', itemCode].filter(Boolean).join(' · ')}
+        roomCode={roomCode} jobId={job.id} tenantId={job.tenant_id} current={designCode}
+        onClose={() => setStylePicker(false)}
+        onPick={(code: string) => { setDesignCode(code); const m = STYLE_META[code]; if (m?.type) setWindowType(m.type); }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -374,6 +509,15 @@ function Field({ label, ph, v, on, kb, multiline }: { label: string; ph?: string
   );
 }
 
+function MiniField({ label, v, on }: { label: string; v?: string; on: (t: string) => void }) {
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={s.label}>{label}</Text>
+      <TextInput style={s.input} placeholder="—" placeholderTextColor="#9a97ad" keyboardType="numeric" value={v ?? ''} onChangeText={on} />
+    </View>
+  );
+}
+
 function Pill({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
   return (
     <TouchableOpacity style={[s.chip, on && s.chipOn]} onPress={onPress} activeOpacity={0.7}>
@@ -396,8 +540,18 @@ const s = StyleSheet.create({
   prefixText: { color: C.muted, fontSize: 15, fontWeight: '800' },
   prefixInput: { flex: 1, paddingHorizontal: 6, paddingVertical: 10, fontSize: 15, color: C.ink },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
+  row3: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16, backgroundColor: C.soft, borderRadius: 12, padding: 12 },
+  toggle: { width: 44, height: 26, borderRadius: 999, backgroundColor: '#cfc9df', justifyContent: 'center', alignItems: 'flex-start', paddingHorizontal: 3 },
+  toggleOn: { backgroundColor: C.magenta, alignItems: 'flex-end' },
+  toggleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff' },
+  toggleText: { flex: 1, fontSize: 13.5, fontWeight: '700', color: C.ink },
   mini: { borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, fontSize: 15, width: 84, color: C.ink, backgroundColor: '#fff' },
   hint: { fontSize: 12, color: C.muted, marginTop: 7, fontWeight: '600' },
+  styleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: C.line, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 13, backgroundColor: '#fff' },
+  styleBtnText: { flex: 1, fontSize: 15, fontWeight: '700', color: C.ink },
+  styleBtnArrow: { fontSize: 20, fontWeight: '800', color: C.magenta },
+  styleThumb: { width: 40, height: 30, marginRight: 10 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
   chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff' },
   chipOn: { backgroundColor: C.purple, borderColor: C.purple },

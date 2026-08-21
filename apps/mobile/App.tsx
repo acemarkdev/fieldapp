@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, StatusBar, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './src/lib/supabase';
 import { C } from './src/lib/theme';
@@ -51,7 +52,8 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={s.fill}>
+    <SafeAreaProvider>
+    <SafeAreaView style={s.fill} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" />
       <View style={s.topbar}>
         <Text style={s.brand}>ACE<Text style={s.brandB}>GROUP</Text> <Text style={s.field}>Field · v{APP_VERSION}</Text></Text>
@@ -75,6 +77,7 @@ export default function App() {
                 : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); }} onOpen={setItemId} onNew={() => setCreating(true)} onEditPending={setEditingPending} />}
       </View>
     </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

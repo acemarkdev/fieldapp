@@ -75,6 +75,8 @@ export function buildColumnValues(
     { title: 'Floor', value: item.floor },
     { title: 'Material', value: item.material },
     { title: 'Item Type', value: item.item_type },
+    { title: 'Window Type', value: item.window_type },
+    { title: 'Design Code', value: item.design_code },
     { title: 'Glass', value: item.glass },
     { title: 'Safety Glass', value: item.safety_glass },
     { title: 'Glazing', value: item.glazing },
