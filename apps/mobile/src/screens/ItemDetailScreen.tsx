@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image } from 'react-native';
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { C } from '../lib/theme';
@@ -40,6 +40,11 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
   const canFit = can(role, 'items.fit');   // only these roles may change install status
   const canAddPhoto = can(role, 'photos.add');
   const canEditSpec = can(role, 'items.edit'); // surveyor/office may fill in the spec
+  const canSnag = can(role, 'snags.raise');
+  const [snagOpen, setSnagOpen] = useState(false);
+  const [snagComment, setSnagComment] = useState('');
+  const [snagShots, setSnagShots] = useState<{ uri: string; base64: string }[]>([]);
+  const [snagSaving, setSnagSaving] = useState(false);
   const [item, setItem] = useState<Full | null>(null);
   const [team, setTeam] = useState<{ name: string; default_rate_pennies: number } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +116,46 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
     onChanged();
   }
 
+  async function addSnagShot(fromCamera: boolean) {
+    const perm = fromCamera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert('Permission needed', 'Allow camera / photo access to attach images.'); return; }
+    const res = fromCamera
+      ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.4 })
+      : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.4 });
+    if (res.canceled || !res.assets?.[0]?.base64) return;
+    setSnagShots((prev) => [...prev, { uri: res.assets![0].uri, base64: res.assets![0].base64! }]);
+  }
+
+  async function saveSnag() {
+    if (!item) return;
+    const comment = snagComment.trim();
+    if (!comment) { Alert.alert('Add a description', 'Describe the defect before saving.'); return; }
+    setSnagSaving(true);
+    try {
+      // Next "-S<n>" like the office does, so codes stay consistent.
+      const { data: kids } = await supabase.from('survey_items').select('full_code').eq('parent_item_id', item.id);
+      const taken = new Set((kids ?? []).map((k: any) => k.full_code));
+      let n = 1; while (taken.has(`${item.full_code}-S${n}`)) n++;
+      const full_code = `${item.full_code}-S${n}`;
+      const row: Record<string, unknown> = {
+        tenant_id: item.tenant_id, job_id: (item as any).job_id, kind: 'snag', parent_item_id: item.id, team_id: item.team_id,
+        block: item.block, elevation: item.elevation, flat: item.flat, room_code: item.room_code, item_code: item.item_code, floor: (item as any).floor,
+        full_code, material: item.material, item_type: item.item_type, glass: item.glass, safety_glass: item.safety_glass, glazing: item.glazing,
+        width_mm: item.width_mm, height_mm: item.height_mm, stage: 'surveyed', install_status: 'snag', snag_comment: comment, comments: comment,
+      };
+      const { data: created, error } = await supabase.from('survey_items').insert(row).select('id').single();
+      if (error) throw error;
+      for (const sh of snagShots) await enqueuePhoto({ tenant_id: item.tenant_id, itemId: (created as any).id }, sh.base64);
+      await flushPhotos();
+      setSnagSaving(false); setSnagOpen(false); setSnagComment(''); setSnagShots([]);
+      Alert.alert('Snag raised', full_code);
+      onChanged(); load();
+    } catch (e: any) {
+      setSnagSaving(false);
+      Alert.alert('Could not raise snag', /network|fetch|Failed to fetch/i.test(e?.message || '') ? 'You appear to be offline. Raising a snag needs a connection.' : (e?.message || String(e)));
+    }
+  }
+
   if (loading || !item) return (
     <View style={{ flex: 1 }}>
       <Header code={item?.full_code} onBack={onBack} />
@@ -128,6 +173,11 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
         {canEditSpec && onEditItem && !isSnag && (
           <TouchableOpacity style={s.editBtn} onPress={() => onEditItem(item)} activeOpacity={0.85}>
             <Text style={s.editBtnText}>{(item.material || item.glass || item.width_mm) ? 'Edit details' : 'Add survey details ›'}</Text>
+          </TouchableOpacity>
+        )}
+        {canSnag && !isSnag && (
+          <TouchableOpacity style={s.snagBtn} onPress={() => { setSnagComment(''); setSnagShots([]); setSnagOpen(true); }} activeOpacity={0.85}>
+            <Text style={s.snagBtnText}>⚠ Raise a snag</Text>
           </TouchableOpacity>
         )}
         <Section title="INSTALL STATUS">
@@ -209,6 +259,41 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
           <Row k="Monday" v={item.monday_item_id ? 'synced' : 'not synced'} />
         </Section>
       </ScrollView>
+
+      <Modal visible={snagOpen} animationType="slide" transparent onRequestClose={() => setSnagOpen(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.modalWrap}>
+          <View style={s.modalCard}>
+            <View style={s.modalHead}>
+              <Text style={s.modalTitle}>Raise a snag</Text>
+              <TouchableOpacity onPress={() => setSnagOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={s.modalX}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={s.modalSub}>Against {item.full_code}. Creates a snag item the office can schedule and push to Monday.</Text>
+            <TextInput
+              style={s.snagInput} placeholder="Describe the defect…" placeholderTextColor="#9a97ad"
+              value={snagComment} onChangeText={setSnagComment} multiline
+            />
+            <View style={s.photoBar}>
+              <TouchableOpacity style={s.pbtn} onPress={() => addSnagShot(true)} activeOpacity={0.7}><Text style={s.pbtnText}>Take photo</Text></TouchableOpacity>
+              <TouchableOpacity style={s.pbtn} onPress={() => addSnagShot(false)} activeOpacity={0.7}><Text style={s.pbtnText}>Choose photo</Text></TouchableOpacity>
+            </View>
+            {snagShots.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                {snagShots.map((sh, i) => (
+                  <View key={i} style={{ marginRight: 8 }}>
+                    <Image source={{ uri: sh.uri }} style={s.thumb} />
+                    <TouchableOpacity onPress={() => setSnagShots((prev) => prev.filter((_, j) => j !== i))} style={s.rm}><Text style={s.rmText}>×</Text></TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+            <TouchableOpacity style={[s.snagSave, snagSaving && { opacity: 0.6 }]} onPress={saveSnag} disabled={snagSaving} activeOpacity={0.85}>
+              {snagSaving ? <ActivityIndicator color="#fff" /> : <Text style={s.snagSaveText}>Save snag</Text>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -255,6 +340,19 @@ const s = StyleSheet.create({
   snag: { fontSize: 10, fontWeight: '800', color: '#fff', backgroundColor: C.magenta, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, overflow: 'hidden' },
   editBtn: { backgroundColor: C.magenta, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 16 },
   editBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  snagBtn: { borderWidth: 1.5, borderColor: '#f3d19a', backgroundColor: C.amberSoft, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 16 },
+  snagBtnText: { color: C.amber, fontWeight: '800', fontSize: 15 },
+  modalWrap: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(31,26,61,0.45)' },
+  modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28 },
+  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: C.purple },
+  modalX: { fontSize: 18, fontWeight: '800', color: C.muted },
+  modalSub: { fontSize: 12.5, color: C.muted, marginTop: 4, marginBottom: 12 },
+  snagInput: { borderWidth: 1, borderColor: C.line, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 11, fontSize: 15, color: C.ink, minHeight: 80, textAlignVertical: 'top' },
+  snagSave: { backgroundColor: C.magenta, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginTop: 16 },
+  snagSaveText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  rm: { position: 'absolute', top: -6, right: -6, backgroundColor: C.ink, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  rmText: { color: '#fff', fontSize: 15, fontWeight: '800', lineHeight: 18 },
   section: { marginBottom: 16 },
   sectionTitle: { fontSize: 11, fontWeight: '800', color: '#9a97ad', letterSpacing: 0.5, marginBottom: 7 },
   card: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.line, borderRadius: 14, paddingHorizontal: 14 },

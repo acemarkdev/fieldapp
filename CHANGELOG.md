@@ -5,6 +5,42 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.27.0 — 2026-08-24
+- **Fitter data scope (database-enforced).** A fitter now only **reads the items assigned to their own team** — plus those items’ photos, the jobs that hold their work, and their own team row (other teams’ fitting rates stay hidden). This is enforced by **Row-Level Security** (restrictive SELECT policies + a new `auth_team_id()` helper), so the boundary holds even outside the app, not just in the UI. **Snags inherit their parent item’s team** (new trigger + the mobile app sets `team_id` on the snag), so fitters keep seeing snags on their own items; existing snags are backfilled. Admin/office/surveyor/scanner are unchanged, and the office server (service-role key) bypasses RLS as before. **Requires migration `0013_fitter_row_scope.sql`.**
+
+## 0.26.2 — 2026-08-24
+- Plan **Unplaced** filter fix, follow-up (office + mobile): **Unplaced** now always means **not pinned on any plan for the site**, in both single- and multi-plan modes. It no longer lists items that are placed on another plan.
+
+## 0.26.1 — 2026-08-24
+- Plan **Unplaced** filter fix (office + mobile): it now shows only items **not pinned on any plan**, instead of also listing items placed on another plan. (In multi-plan mode it still means “not on this plan.”)
+
+## 0.26.0 — 2026-08-24
+- **One plan per item (configurable).** By default an item can be pinned to **only one plan**: on other plans it shows as **“on <plan name>”** and isn’t offered for placing (unpin it there first to move it). A new **Plans setting — “Item can be on multiple plans”** (admin/office toggle in the office Plans tab) relaxes this for cases like plan versions. Enforced in the office UI, the mobile app, and the server (`PUT /api/item/:id/pin` returns 409 on a cross-plan re-pin when multi-plan is off). **Requires migration `0012_pins_multi_plan.sql`** (adds `tenants.pins_multi_plan`).
+
+## 0.25.2 — 2026-08-24
+- Plan navigation (mobile): opening an item from a **plan pin** now returns to the **plan** when you tap Back (and Back again goes to Items), instead of dropping straight to the items list. Items opened from the list still go back to the list.
+
+## 0.25.1 — 2026-08-17
+- Plan screen (mobile): **pull-to-refresh**. Pins placed/moved in the office web app now update on the phone with a pull-down, instead of only after leaving and re-opening the screen.
+
+## 0.25.0 — 2026-08-17
+- **Plan view on the phone (plan feature complete).** A new **Plan** button on the mobile items screen opens the job's floor plan (from Supabase, signed URL) with the item **pins** overlaid, colour-coded by install status. **Tap a pin to open its item.** Surveyors/office can **drop or move a pin** (tap an item in the list, then tap the plan) and **unpin**; fitters/scanners see it read-only. Plan selector for jobs with several plans, and a **placed / unplaced** filter. So the office uploads the plan and pins from the desk, and the field sees/updates it on site.
+
+## 0.24.1 — 2026-08-17
+- Fix: `apps/mobile/package.json` now lists the native modules the app depends on — **react-native-safe-area-context**, **expo-web-browser**, **expo-auth-session**, **expo-crypto**. They'd been added via `expo install` in earlier sessions but never declared, so unzipping a fresh build reverted package.json and dropped them (Metro: *Unable to resolve "react-native-safe-area-context"*). After unzipping, run `npx expo install react-native-safe-area-context expo-web-browser expo-auth-session expo-crypto` from `apps/mobile` to install them at the SDK-54 versions.
+
+## 0.24.0 — 2026-08-17
+- **Raise a snag on the phone.** The item detail screen now has a **Raise a snag** button (for surveyors, fitters and office — not scanners). Enter a description + optional photos, and it creates a **snag item** in Supabase against the parent: `kind='snag'`, a `-S<n>` code, install status **Snag**, copying the parent's location/spec — exactly the model the office uses. The office can then schedule it and it flows to Monday on sync (photo → Design Sketch). Online action, with a clear offline message. No migration.
+
+## 0.23.2 — 2026-08-17
+- Plans polish: the items side-panel is wider and long full-codes now wrap cleanly, so the **place ›** / **unpin** action isn't cut off; removed the stray horizontal scrollbar.
+
+## 0.23.1 — 2026-08-17
+- Fix: placing an item pin returned **"invalid input syntax for type uuid"**. The existing `PUT /api/item/:id` route matched `/api/item/:id/pin` first and used `"pin"` as the id. It now excludes the `/pin` path, so the pin endpoint handles it. (No migration; office server restart only.)
+
+## 0.23.0 — 2026-08-17
+- **Plan view with item pins (office).** New **Plans** tab in the office web app. Upload a **floor plan / elevation image** per job (stored in a tenant-scoped `plans` bucket), then **pin each item to its location** — click an item in the side list, then click the spot on the plan. Pins are **colour-coded by install status**, and clicking a pin opens the item detail. Switch between multiple plans per job, filter the item list by **placed / unplaced**, and unpin. Manager-gated: upload/delete plans = admin/office; placing pins = items.edit. **Requires migration `0011_plans.sql`** (adds `job_plans`, `survey_items.plan_id/plan_x/plan_y`, and the `plans` storage bucket + RLS). Next: the phone plan viewer (tap a pin on site → open the item; drop a pin during survey).
+
 ## 0.22.0 — 2026-08-17
 - **Style picker filters by size.** Imported the *Window Types (Clearview WD)* sheet — 505 styles with **Product Type / Wide / High / Opening / Fixed** — into `src/lib/styleMeta.ts`. The **Choose style** picker now has **Wide (1–6)** and **High (1–3)** selectors plus a **Type** toggle (All / Window / Door / Tilt & Turn), alongside the existing code search and **MOST USED HERE** ranking. Each tile shows its `wide×high` and opening count; picking a style also **auto-fills the item's window type** from the catalogue. (All 391 bundled sketches matched a metadata row.)
 

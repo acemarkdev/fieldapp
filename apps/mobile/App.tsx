@@ -10,6 +10,7 @@ import ItemsScreen from './src/screens/ItemsScreen';
 import ItemDetailScreen from './src/screens/ItemDetailScreen';
 import NewItemScreen from './src/screens/NewItemScreen';
 import NewJobScreen from './src/screens/NewJobScreen';
+import PlanScreen from './src/screens/PlanScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
 import { can } from './src/lib/permissions';
@@ -24,6 +25,7 @@ export default function App() {
   const [creating, setCreating] = useState(false);
   const [editingPending, setEditingPending] = useState<Pending | null>(null);
   const [editingItem, setEditingItem] = useState<any | null>(null); // surveyor adding spec to a saved item
+  const [viewingPlan, setViewingPlan] = useState(false);
   const [creatingJob, setCreatingJob] = useState(false);
 
   useEffect(() => {
@@ -72,9 +74,11 @@ export default function App() {
               ? <NewItemScreen job={job} role={role} onCancel={() => setCreating(false)} onDone={() => setCreating(false)} />
               : editingItem
                 ? <NewItemScreen key={editingItem.id} job={job} role={role} existingItem={editingItem} onCancel={() => setEditingItem(null)} onDone={() => { setEditingItem(null); setItemId(null); }} />
+              : viewingPlan && !itemId
+                ? <PlanScreen job={job} role={role} onBack={() => setViewingPlan(false)} onOpenItem={(id) => setItemId(id)} />
               : itemId
                 ? <ItemDetailScreen id={itemId} role={role} onEditItem={setEditingItem} onBack={() => setItemId(null)} onChanged={() => {}} />
-                : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); }} onOpen={setItemId} onNew={() => setCreating(true)} onEditPending={setEditingPending} />}
+                : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); }} onOpen={setItemId} onNew={() => setCreating(true)} onEditPending={setEditingPending} onPlan={() => setViewingPlan(true)} />}
       </View>
     </SafeAreaView>
     </SafeAreaProvider>

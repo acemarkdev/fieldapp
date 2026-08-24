@@ -29,7 +29,7 @@
 | Sync to Monday | ✓ | ✓ | – | – | – |
 | Manage users | ✓ | – | – | – | – |
 
-**Data scope:** `fitter` sees only items with an install status (ready to fit); all other roles see every item in their tenant.
+**Data scope:** a `fitter` reads only the items assigned to **their own team** (and those items' photos, the jobs holding their work, and their own team row — other teams' rates stay hidden). This is enforced by RLS (`0013`), not just the UI. All other roles see every item in their tenant. The mobile UI additionally shows fitters only the ready-to-fit subset.
 
 To change access, edit `ROLE_CAPS` in `permissions.ts` **and** mirror the change in the RLS migration (below). Keep them in step.
 
@@ -45,7 +45,7 @@ The mobile app talks to Supabase **directly** with the anon key, so **UI checks 
    - `item_photos` insert → any active member.
    - `fitter_teams` write → `office`/`admin`.
    - `app_users` write → `admin` (already).
-   - (Later) `survey_items` SELECT for `fitter` restricted to ready-to-fit rows.
+   - `survey_items`/`item_photos`/`jobs`/`fitter_teams` SELECT for `fitter` restricted to their own team (`0013`, helper `auth_team_id()`; snags inherit the parent's team).
 
 ## Action plan
 
@@ -54,7 +54,7 @@ The mobile app talks to Supabase **directly** with the anon key, so **UI checks 
 - [x] **B. Office UI gating** — `applyRole()` hides Dashboard/Teams/Monday-sync tabs and the "+ New item" button by capability; item-row rate/status/team/sync controls render read-only unless the role can edit/fit/sync; a role that can't view the dashboard lands on Items. Client-side `canCap()` reads the injected matrix.
 - [x] **C. Mobile UI gating** — `apps/mobile/src/lib/permissions.ts` mirrors the matrix; the app loads the signed-in user's role and hides "+ New job" (unless jobs.manage), hides the survey "+ New" for fitters, filters the item list to ready-to-fit for fitters, and shows the install-status editor only to fitters/office (read-only otherwise).
 - [x] **E. Server endpoint checks** — every mutating office API endpoint calls a `can(ctx.role, cap)` guard (create→items.create, edit→items.edit, status→items.fit, snag→snags.raise, sync/board→monday.sync, teams→teams.manage, users→users.manage). Closes the service-role gap: a wrong-role API call is refused, not just hidden in the UI.
-- [ ] **F. (Optional) fitter row-scope** — RLS SELECT policy limiting fitters to ready-to-fit items.
+- [x] **F. Fitter row-scope** — `supabase/migrations/0013_fitter_row_scope.sql`. Restrictive SELECT policies (AND-ed with the tenant policy) limit a fitter to their own team's items, those items' photos, the jobs holding their work, and their own team row. New `auth_team_id()` helper; snags inherit the parent's team (trigger + mobile sets `team_id`), with a backfill for existing snags.
 
 **D is the real boundary** — it's what actually stops a field user from, say, creating a job by calling Supabase directly. UI gating (B, C) makes it feel right; RLS makes it true.
 

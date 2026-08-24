@@ -1,11 +1,47 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.22.0';
+export const APP_VERSION = '0.27.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.27.0', date: '2026-08-24', changes: [
+    'Fitter data scope (database enforced). A fitter now only reads the items assigned to their own team — plus those items’ photos, the jobs that hold their work, and their own team row (other teams’ rates stay hidden). Enforced by Row-Level Security, so it holds even outside the app. Snags inherit their parent item’s team so fitters keep seeing snags on their own items. Other roles are unchanged. Requires migration 0013.',
+  ] },
+  { version: '0.26.2', date: '2026-08-24', changes: [
+    'Plan filter fix (follow-up): Unplaced now always means not pinned on any plan for the site, in both single- and multi-plan modes. It no longer lists items that are placed on another plan.',
+  ] },
+  { version: '0.26.1', date: '2026-08-24', changes: [
+    'Plan filter fix: Unplaced now means not pinned on any plan (was showing items placed on another plan). In multi-plan mode it still means not on this plan.',
+  ] },
+  { version: '0.26.0', date: '2026-08-24', changes: [
+    'One plan per item (configurable). By default an item can be pinned to only one plan \u2014 on other plans it shows as \'on <plan name>\' and can\'t be re-placed (unpin it there first). A new office Plans setting \'Item can be on multiple plans\' (admin/office) relaxes this, e.g. for plan versions. Enforced in the office, on the phone, and on the server. Requires migration 0012.',
+  ] },
+  { version: '0.25.2', date: '2026-08-24', changes: [
+    'Plan navigation: opening an item from a plan pin now returns to the plan on Back (then Back again to Items), instead of jumping straight to the items list.',
+  ] },
+  { version: '0.25.1', date: '2026-08-17', changes: [
+    'Plan screen: pull down to refresh — pins placed on the web app now update without leaving and re-entering the screen.',
+  ] },
+  { version: '0.25.0', date: '2026-08-17', changes: [
+    'Plan view on the phone. A new Plan button on the items screen opens the job\'s floor plan with the item pins, colour-coded by install status. Tap a pin to open its item. Surveyors/office can drop or move a pin (pick an item, tap the plan) and unpin; fitters/scanners get read-only. Plan selector for jobs with multiple plans, and a placed/unplaced filter. Completes the plan feature end to end (office sets up, field uses it).',
+  ] },
+  { version: '0.24.1', date: '2026-08-17', changes: [
+    'Fix: the mobile package.json now declares the native modules the app uses (react-native-safe-area-context, expo-web-browser, expo-auth-session, expo-crypto). They were installed earlier via expo install but not listed, so unzipping a new build dropped them and Metro failed with "Unable to resolve react-native-safe-area-context". Run npx expo install to pull them at SDK-correct versions.',
+  ] },
+  { version: '0.24.0', date: '2026-08-17', changes: [
+    'Raise a snag on the phone. Opening an item now has a "Raise a snag" button (surveyors, fitters, office): add a description + optional photos and it creates a snag item (kind=snag, -S<n> code, install status Snag) against the parent, copying its location/spec — the same model as the office. The office can then schedule it and it syncs to Monday (photo → Design Sketch). Online action; scanners don\'t see the button.',
+  ] },
+  { version: '0.23.2', date: '2026-08-17', changes: [
+    'Plans polish: widened the items panel and let long codes wrap so the place/unpin action no longer clips.',
+  ] },
+  { version: '0.23.1', date: '2026-08-17', changes: [
+    'Fix: placing a pin failed with "invalid input syntax for type uuid" — the generic PUT /api/item/:id route was catching /api/item/:id/pin and treating "pin" as the id. The item route now ignores the /pin path so the pin endpoint handles it.',
+  ] },
+  { version: '0.23.0', date: '2026-08-17', changes: [
+    'Plan view with item pins (office). New Plans tab: upload a floor plan / elevation image per job, then pin each item to its spot on the plan (click an item, click the plan). Pins are colour-coded by install status and clicking one opens the item. Filter items by placed / unplaced, switch between multiple plans per job. Foundation for the phone plan viewer next. Needs migration 0011 (job_plans + item pin fields + plans storage bucket) in Supabase.',
+  ] },
   { version: '0.22.0', date: '2026-08-17', changes: [
     'Style picker filters by size. Loaded the Clearview Window Types sheet (505 styles) into the app, so the Choose-style picker now filters by Wide (1-6) and High (1-3) sections plus product Type (Window / Door / Tilt & Turn), on top of code search and the MOST USED HERE ranking. Each tile shows its wide x high and opening count. Picking a style also auto-fills the item window type from the catalogue. Metadata in src/lib/styleMeta.ts (regenerate from the xlsx when it changes).',
   ] },

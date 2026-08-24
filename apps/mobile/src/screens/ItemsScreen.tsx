@@ -12,8 +12,8 @@ interface Item {
   team_id: string | null;
 }
 
-export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, onEditPending }: {
-  job: Job; role?: string | null; teamId?: string | null; onBack: () => void; onOpen: (id: string) => void; onNew: () => void; onEditPending: (p: Pending) => void;
+export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, onEditPending, onPlan }: {
+  job: Job; role?: string | null; teamId?: string | null; onBack: () => void; onOpen: (id: string) => void; onNew: () => void; onEditPending: (p: Pending) => void; onPlan?: () => void;
 }) {
   const canCreate = can(role, 'items.create');
   const fitterView = isFitter(role); // fitters see only their team's ready-to-fit items
@@ -68,11 +68,18 @@ export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, 
           <TouchableOpacity onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={s.back}>‹ Jobs</Text>
           </TouchableOpacity>
-          {canCreate ? (
-            <TouchableOpacity onPress={onNew} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={s.newBtn}>{role === 'scanner' ? '+ Scan' : '+ New'}</Text>
-            </TouchableOpacity>
-          ) : <View />}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+            {onPlan && (
+              <TouchableOpacity onPress={onPlan} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={s.planBtn}>Plan</Text>
+              </TouchableOpacity>
+            )}
+            {canCreate ? (
+              <TouchableOpacity onPress={onNew} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={s.newBtn}>{role === 'scanner' ? '+ Scan' : '+ New'}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
         <Text style={s.htitle}>{job.client_code}.{job.job_code}</Text>
         <Text style={s.hname}>{job.name}</Text>
@@ -141,6 +148,7 @@ const s = StyleSheet.create({
   hrow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   back: { color: '#cfc9ea', fontSize: 14, fontWeight: '600' },
   newBtn: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  planBtn: { color: '#cfc9ea', fontSize: 14, fontWeight: '800' },
   htitle: { color: '#fff', fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'] },
   hname: { color: '#cfc9ea', fontSize: 13, marginTop: 2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },

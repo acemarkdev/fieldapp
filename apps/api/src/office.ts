@@ -15,7 +15,9 @@ import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyIt
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
   filterItemIdsByTenant, bulkUpdateItems,
   listAppUsers, getAppUser, updateAppUser, setItemTeamFromMonday,
-  listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket } from './store';
+  listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket,
+  listJobPlans, createJobPlan, deleteJobPlan, listPinnedItems, setItemPin, uploadPlan, signedPlanUrl, ensurePlanBucket,
+  getPinsMultiPlan, setPinsMultiPlan } from './store';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
@@ -351,7 +353,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (p.startsWith('/api/item/') && req.method === 'PUT') {
+    if (p.startsWith('/api/item/') && req.method === 'PUT' && !p.endsWith('/pin')) {
       const id = p.split('/').pop()!;
       const body = await readJson(req);
       const item = await getSurveyItem(id);
@@ -514,6 +516,69 @@ const server = createServer(async (req, res) => {
         newTeam ? assigned++ : cleared++;
       }
       send(res, 200, { ok: true, total: items.length, assigned, cleared, unchanged, unmatched: [...unmatched] });
+      return;
+    }
+
+    // ---- Plans (plan view with item pins) ----
+    if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'GET') {
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const plans = await listJobPlans(job.id);
+      const withUrls = await Promise.all(plans.map(async (pl) => ({ id: pl.id, name: pl.name, url: await signedPlanUrl(pl.storage_path) })));
+      const items = await listPinnedItems(job.id);
+      const multiPlan = await getPinsMultiPlan(ctx.tenant_id);
+      send(res, 200, { plans: withUrls, items, multiPlan, canManage: can(ctx.role, 'jobs.manage'), canPin: can(ctx.role, 'items.edit') });
+      return;
+    }
+    if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'POST') {
+      if (!allow('jobs.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const name = String(b.name ?? '').trim() || 'Plan';
+      const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.image || ''));
+      if (!m) { send(res, 400, { error: 'A plan image is required.' }); return; }
+      const bytes = Buffer.from(m[2], 'base64');
+      if (bytes.length > 15 * 1024 * 1024) { send(res, 400, { error: 'Plan image too large (max 15 MB).' }); return; }
+      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const path = `${ctx.tenant_id}/plans/${job.id}/${Date.now()}.${ext}`;
+      await ensurePlanBucket();
+      await uploadPlan(path, bytes, m[1]);
+      const plan = await createJobPlan(ctx.tenant_id, job.id, name, path);
+      send(res, 200, { ok: true, id: plan.id });
+      return;
+    }
+    if (p.startsWith('/api/plans/') && req.method === 'DELETE') {
+      if (!allow('jobs.manage')) return;
+      const id = p.split('/')[3];
+      await deleteJobPlan(id, ctx.tenant_id); // items pinned to it get plan_id NULL via FK
+      send(res, 200, { ok: true });
+      return;
+    }
+    if (p.startsWith('/api/item/') && p.endsWith('/pin') && req.method === 'PUT') {
+      if (!allow('items.edit')) return;
+      const id = p.split('/')[3];
+      const it = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const planId = b.plan_id || null;
+      // One-plan-per-item unless the tenant allows multi-plan. Block re-pinning an item that's
+      // already on a different plan (unpin there first).
+      if (planId && (it as any).plan_id && (it as any).plan_id !== planId) {
+        if (!(await getPinsMultiPlan(ctx.tenant_id))) { send(res, 409, { error: 'This item is already pinned on another plan. Unpin it there first, or enable multi-plan in Plans settings.' }); return; }
+      }
+      const clamp = (v: any) => (v == null || v === '' ? null : Math.max(0, Math.min(1, Number(v))));
+      await setItemPin(id, planId, planId ? clamp(b.x) : null, planId ? clamp(b.y) : null, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+    if (p === '/api/settings/pins-multi-plan' && req.method === 'PUT') {
+      if (!allow('jobs.manage')) return;
+      const b = await readJson(req);
+      await setPinsMultiPlan(ctx.tenant_id, !!b.value);
+      send(res, 200, { ok: true });
       return;
     }
 
@@ -726,6 +791,31 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .scanned{background:#eef0f4;color:var(--muted)}.in_survey{background:var(--amber-soft);color:var(--amber)}
   .surveyed{background:var(--soft);color:var(--purple)}.synced{background:var(--green-soft);color:var(--green)}
   input.rate{width:74px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px}
+  .planbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}
+  .planarm{background:var(--purple);color:#fff;border-radius:10px;padding:9px 14px;font-size:13px;font-weight:700;margin-bottom:12px}
+  .planwrap{display:flex;gap:16px;align-items:flex-start}
+  .planstage{position:relative;flex:1;min-height:300px;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .planstage img{display:block;width:100%;cursor:crosshair}
+  #planPins{position:absolute;inset:0;pointer-events:none}
+  .pin{position:absolute;transform:translate(-50%,-100%);pointer-events:auto;cursor:pointer;display:flex;flex-direction:column;align-items:center}
+  .pin .dot{width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .pin .lbl{font-size:9px;font-weight:800;background:#1f1a3d;color:#fff;padding:1px 5px;border-radius:5px;margin-top:2px;white-space:nowrap}
+  .pin.sel .dot{outline:3px solid var(--magenta);outline-offset:1px}
+  .planside{width:340px;flex-shrink:0}
+  .planside-h{font-size:13px;font-weight:800;color:var(--ink);margin-bottom:8px}
+  .planfilter{display:flex;gap:6px;margin-bottom:10px}
+  .planfilter .chip{font-size:11px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--muted);cursor:pointer;font-weight:700}
+  .planfilter .chip.on{background:var(--purple);color:#fff;border-color:var(--purple)}
+  .planitems{max-height:66vh;overflow-y:auto;overflow-x:hidden;border:1px solid var(--line);border-radius:12px;background:#fff}
+  .pitem{display:flex;align-items:center;gap:9px;padding:10px 12px;border-top:1px solid #f2f0f8;cursor:pointer;font-size:12px}
+  .pitem:first-child{border-top:none}
+  .pitem:hover{background:#faf9fd}
+  .pitem.armed{background:var(--soft)}
+  .pitem .pdot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+  .pitem .pcode{flex:1;min-width:0;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--ink);word-break:break-all;line-height:1.35}
+  .pitem .pact{flex-shrink:0;white-space:nowrap;font-size:11px;font-weight:800}
+  .pitem .pact.punpin{color:var(--magenta)}
+  .pitem .pact.pplace{color:var(--muted)}
   select.sel{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;background:#fff}
   .sync{background:var(--purple);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer}
   .resync{background:#fff;color:var(--purple);border:1px solid #cfc9ea;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px}
@@ -761,6 +851,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <button id="tabItems" class="tab" onclick="showTab('items')">Items</button>
       <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
       <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
+      <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
       <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
       <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
     </nav>
@@ -834,6 +925,40 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </tr></thead><tbody id="syncRows"></tbody></table></div>
     </main>
   </div>
+  <div id="plansView" style="display:none">
+    <main style="max-width:1200px">
+      <h2>Plans</h2>
+      <div class="sub">Upload a floor plan or elevation per job, then pin each item to its spot. Field staff see the pins on the phone. Click an item on the right, then click its location on the plan.</div>
+      <div class="planbar">
+        <select id="planJob" class="tinput" onchange="loadPlans()"></select>
+        <select id="planSel" class="tinput" onchange="renderPlan()"></select>
+        <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload plan</button>
+        <input type="file" id="planFile" accept="image/*" style="display:none" onchange="uploadPlan(this)">
+        <button class="del" id="planDelBtn" onclick="deletePlan()">Delete plan</button>
+        <span id="planMsg" style="font-size:12px;color:var(--muted)"></span>
+        <label id="multiPlanWrap" style="display:none;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin-left:auto;cursor:pointer">
+          <input type="checkbox" id="multiPlanChk" onchange="setMultiPlan(this.checked)" style="width:15px;height:15px;accent-color:var(--magenta)"> Item can be on multiple plans
+        </label>
+      </div>
+      <div id="planArm" class="planarm" style="display:none"></div>
+      <div class="planwrap">
+        <div id="planStage" class="planstage">
+          <div id="planEmpty" class="empty" style="padding:40px;text-align:center">No plan for this job yet. Upload a floor plan to start pinning.</div>
+          <img id="planImg" style="display:none" onclick="planClick(event)">
+          <div id="planPins"></div>
+        </div>
+        <div class="planside">
+          <div class="planside-h">Items <span id="planCount" style="color:var(--muted);font-weight:400"></span></div>
+          <div class="planfilter">
+            <button class="chip on" data-pf="all" onclick="setPlanFilter('all')">All</button>
+            <button class="chip" data-pf="unplaced" onclick="setPlanFilter('unplaced')">Unplaced</button>
+            <button class="chip" data-pf="placed" onclick="setPlanFilter('placed')">Placed</button>
+          </div>
+          <div id="planItems" class="planitems"></div>
+        </div>
+      </div>
+    </main>
+  </div>
 
   <div id="usersView" style="display:none">
     <main style="max-width:1080px">
@@ -879,7 +1004,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||'dashboard';
-    var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync'};
+    var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view'};
     if((t==='users'||t==='roles')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -1030,17 +1155,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
     document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
     document.getElementById('syncView').style.display=name==='sync'?'block':'none';
+    document.getElementById('plansView').style.display=name==='plans'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
+    document.getElementById('tabPlans').classList.toggle('on',name==='plans');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
     if(name==='dashboard')loadDashboard();
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
+    if(name==='plans')loadPlansTab();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
   }
@@ -1094,6 +1222,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabDash',canCap('dashboard.view'));
     show('tabTeams',canCap('teams.manage'));
     show('tabSync',canCap('monday.sync'));
+    show('tabPlans',canCap('dashboard.view'));
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
   }
   async function loadTeams(){
@@ -1167,6 +1296,124 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       else tShow(d.error||'Pull failed');
     }catch(e){tShow('Pull failed');}
     btn.textContent=old;btn.disabled=false;
+  }
+
+  // ---- Plans (plan view with item pins) ----
+  var planData={plans:[],items:[],canManage:false,canPin:false}; var curPlanId=null; var armedItem=null; var planFilter='all';
+  function statusColor(s){return s==='installed_no_snag'?'#16a34a':((s==='snag'||s==='installed_snag'||s==='misfit')?'#e6187e':(s?'#d97706':'#8b88a3'));}
+  async function loadPlansTab(){
+    var sel=document.getElementById('planJob');
+    var jobs=await (await api('/api/jobs')).json();
+    sel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    if(current&&jobs.some(function(j){return j.code===current;}))sel.value=current;
+    await loadPlans();
+  }
+  async function loadPlans(){
+    var code=document.getElementById('planJob').value; if(!code)return;
+    armedItem=null; document.getElementById('planArm').style.display='none';
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans')).json();
+    planData=d;
+    var ps=document.getElementById('planSel');
+    ps.innerHTML=d.plans.map(function(pl){return '<option value="'+pl.id+'">'+esc(pl.name)+'</option>';}).join('');
+    if(!d.plans.length)curPlanId=null;
+    else if(!d.plans.some(function(pl){return pl.id===curPlanId;}))curPlanId=d.plans[0].id;
+    ps.value=curPlanId||'';
+    document.getElementById('planUploadBtn').style.display=d.canManage?'':'none';
+    var mw=document.getElementById('multiPlanWrap');mw.style.display=d.canManage?'flex':'none';
+    document.getElementById('multiPlanChk').checked=!!d.multiPlan;
+    renderPlan(); renderPlanItems();
+  }
+  async function setMultiPlan(v){
+    var r=await (await api('/api/settings/pins-multi-plan',{method:'PUT',body:JSON.stringify({value:v})})).json();
+    if(r.ok){planData.multiPlan=v;tShow(v?'Items can be on multiple plans':'One plan per item');renderPlanItems();}
+    else{tShow(r.error||'Failed');document.getElementById('multiPlanChk').checked=!v;}
+  }
+  function planName(id){var p=(planData.plans||[]).find(function(x){return x.id===id;});return p?p.name:'another plan';}
+  function currentPlan(){return planData.plans.find(function(p){return p.id===curPlanId;});}
+  function renderPlan(){
+    curPlanId=document.getElementById('planSel').value||curPlanId;
+    var pl=currentPlan(); var img=document.getElementById('planImg'); var empty=document.getElementById('planEmpty');
+    document.getElementById('planDelBtn').style.display=(planData.canManage&&curPlanId)?'':'none';
+    if(!pl||!pl.url){img.style.display='none';empty.style.display='block';document.getElementById('planPins').innerHTML='';return;}
+    empty.style.display='none';img.style.display='block';img.src=pl.url; renderPins();
+  }
+  function renderPins(){
+    var host=document.getElementById('planPins');host.innerHTML='';
+    planData.items.forEach(function(it){
+      if(it.plan_id!==curPlanId||it.plan_x==null||it.plan_y==null)return;
+      var d=document.createElement('div');d.className='pin'+(armedItem===it.id?' sel':'');
+      d.style.left=(it.plan_x*100)+'%';d.style.top=(it.plan_y*100)+'%';
+      d.innerHTML='<div class="dot" style="background:'+statusColor(it.install_status)+'"></div><div class="lbl">'+esc(it.item_code||it.full_code||'')+'</div>';
+      d.onclick=function(e){e.stopPropagation(); if(armedItem)placePin(e); else openDetail(it.id);};
+      host.appendChild(d);
+    });
+  }
+  function planClick(e){ if(armedItem)placePin(e); }
+  async function placePin(e){
+    if(!armedItem||!curPlanId)return;
+    var img=document.getElementById('planImg');var r=img.getBoundingClientRect();
+    var x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    var y=Math.max(0,Math.min(1,(e.clientY-r.top)/r.height));
+    var id=armedItem;
+    var d=await (await api('/api/item/'+id+'/pin',{method:'PUT',body:JSON.stringify({plan_id:curPlanId,x:x,y:y})})).json();
+    if(!d.ok){tShow(d.error||'Could not place pin');return;}
+    var it=planData.items.find(function(i){return i.id===id;}); if(it){it.plan_id=curPlanId;it.plan_x=x;it.plan_y=y;}
+    armedItem=null;document.getElementById('planArm').style.display='none';
+    renderPins();renderPlanItems();tShow('Pin placed');
+  }
+  function armItem(id){
+    if(!planData.canPin){tShow('Your role can’t place pins');return;}
+    if(!curPlanId){tShow('Upload a plan first');return;}
+    var it=planData.items.find(function(i){return i.id===id;});
+    if(it&&it.plan_id&&it.plan_id!==curPlanId&&!planData.multiPlan){tShow('Already on '+planName(it.plan_id)+' — unpin it there first');return;}
+    armedItem=(armedItem===id)?null:id;
+    var arm=document.getElementById('planArm');
+    if(armedItem){var it=planData.items.find(function(i){return i.id===armedItem;});arm.style.display='block';arm.innerHTML='Click the plan to place <b>'+esc(it.item_code||it.full_code)+'</b>  ·  <a style="color:#fff;text-decoration:underline;cursor:pointer" onclick="armItem(\\''+id+'\\')">cancel</a>';}
+    else arm.style.display='none';
+    renderPins();renderPlanItems();
+  }
+  async function unpin(id,ev){ ev.stopPropagation(); await api('/api/item/'+id+'/pin',{method:'PUT',body:JSON.stringify({plan_id:null})}); var it=planData.items.find(function(i){return i.id===id;}); if(it){it.plan_id=null;it.plan_x=null;it.plan_y=null;} renderPins();renderPlanItems();tShow('Pin removed'); }
+  function setPlanFilter(f){planFilter=f;document.querySelectorAll('#plansView .planfilter .chip').forEach(function(c){c.classList.toggle('on',c.getAttribute('data-pf')===f);});renderPlanItems();}
+  function renderPlanItems(){
+    var host=document.getElementById('planItems');
+    var items=planData.items.filter(function(it){
+      var placed=(it.plan_id===curPlanId&&it.plan_x!=null);
+      if(planFilter==='placed')return placed;
+      if(planFilter==='unplaced')return !it.plan_id; // not on ANY plan
+      return true;
+    });
+    document.getElementById('planCount').textContent='('+items.length+')';
+    host.innerHTML=items.map(function(it){
+      var placed=(it.plan_id===curPlanId&&it.plan_x!=null);
+      var elsewhere=(it.plan_id&&it.plan_id!==curPlanId);
+      var action;
+      if(placed) action='<span class="pact punpin" onclick="unpin(\\''+it.id+'\\',event)">unpin</span>';
+      else if(elsewhere&&!planData.multiPlan) action='<span class="pact" style="color:var(--muted)">on '+esc(planName(it.plan_id))+'</span>';
+      else action='<span class="pact pplace">place ›</span>';
+      return '<div class="pitem'+(armedItem===it.id?' armed':'')+'" onclick="armItem(\\''+it.id+'\\')">'
+        +'<span class="pdot" style="background:'+statusColor(it.install_status)+'"></span>'
+        +'<span class="pcode">'+esc(it.full_code||it.item_code||'')+'</span>'
+        +action
+        +'</div>';
+    }).join('')||'<div style="padding:14px;color:var(--muted);font-size:12px">No items.</div>';
+  }
+  async function uploadPlan(input){
+    var f=input.files&&input.files[0]; input.value=''; if(!f)return;
+    var code=document.getElementById('planJob').value;
+    var name=prompt('Plan name (e.g. Ground floor, Elevation E1):', f.name.replace(/\\.[^.]+$/,''))||'Plan';
+    var reader=new FileReader();
+    reader.onload=async function(){
+      document.getElementById('planMsg').textContent='Uploading…';
+      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:name,image:reader.result})})).json();
+      document.getElementById('planMsg').textContent='';
+      if(d.ok){curPlanId=d.id;await loadPlans();tShow('Plan uploaded');}else tShow(d.error||'Upload failed');
+    };
+    reader.readAsDataURL(f);
+  }
+  async function deletePlan(){
+    if(!curPlanId||!confirm('Delete this plan? Item pins on it will be cleared.'))return;
+    var d=await (await api('/api/plans/'+curPlanId,{method:'DELETE'})).json();
+    if(d.ok){curPlanId=null;await loadPlans();tShow('Plan deleted');}else tShow(d.error||'Failed');
   }
 
   // ---- user management (admin only) ----

@@ -269,3 +269,68 @@ export async function downloadPhoto(path: string): Promise<Uint8Array> {
   if (error) throw error;
   return new Uint8Array(await data.arrayBuffer());
 }
+
+// ---- plans (plan view with item pins) ----
+export const PLAN_BUCKET = 'plans';
+export interface JobPlan { id: string; tenant_id: string; job_id: string; name: string; storage_path: string; sort: number; }
+
+export async function ensurePlanBucket(): Promise<void> {
+  const { data } = await db().storage.getBucket(PLAN_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(PLAN_BUCKET, { public: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+}
+
+export async function uploadPlan(path: string, bytes: Uint8Array, contentType = 'image/png'): Promise<void> {
+  const { error } = await db().storage.from(PLAN_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+
+export async function signedPlanUrl(path: string, seconds = 3600): Promise<string | null> {
+  const { data, error } = await db().storage.from(PLAN_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
+}
+
+export async function listJobPlans(jobId: string): Promise<JobPlan[]> {
+  const { data, error } = await db().from('job_plans')
+    .select('id,tenant_id,job_id,name,storage_path,sort').eq('job_id', jobId).order('sort').order('created_at');
+  if (error) throw error;
+  return (data ?? []) as JobPlan[];
+}
+
+export async function createJobPlan(tenantId: string, jobId: string, name: string, storagePath: string, sort = 0): Promise<JobPlan> {
+  const { data, error } = await db().from('job_plans')
+    .insert({ tenant_id: tenantId, job_id: jobId, name, storage_path: storagePath, sort }).select().single();
+  if (error) throw error;
+  return data as JobPlan;
+}
+
+export async function deleteJobPlan(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('job_plans').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// Items pinned on a job's plans (for the viewer).
+export async function listPinnedItems(jobId: string): Promise<any[]> {
+  const { data, error } = await db().from('survey_items')
+    .select('id,full_code,room_code,item_code,kind,install_status,plan_id,plan_x,plan_y').eq('job_id', jobId).order('full_code');
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function setItemPin(id: string, planId: string | null, x: number | null, y: number | null, tenantId: string): Promise<void> {
+  const { error } = await db().from('survey_items')
+    .update({ plan_id: planId, plan_x: x, plan_y: y }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// Tenant setting: allow an item to be pinned on more than one plan.
+export async function getPinsMultiPlan(tenantId: string): Promise<boolean> {
+  const { data } = await db().from('tenants').select('pins_multi_plan').eq('id', tenantId).maybeSingle();
+  return !!(data as any)?.pins_multi_plan;
+}
+export async function setPinsMultiPlan(tenantId: string, value: boolean): Promise<void> {
+  const { error } = await db().from('tenants').update({ pins_multi_plan: value }).eq('id', tenantId);
+  if (error) throw error;
+}
