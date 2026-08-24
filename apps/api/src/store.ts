@@ -10,6 +10,14 @@ export async function getJobByCode(clientCode: string, jobCode: string): Promise
   return data as Job;
 }
 
+export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null }): Promise<Job> {
+  const { data, error } = await db().from('jobs')
+    .insert({ tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null })
+    .select().single();
+  if (error) throw error;
+  return data as Job;
+}
+
 export async function getJob(id: string): Promise<Job> {
   const { data, error } = await db().from('jobs').select('*').eq('id', id).single();
   if (error) throw error;
@@ -139,6 +147,69 @@ export async function listSurveyItems(jobId: string): Promise<SurveyItem[]> {
   return (data ?? []) as SurveyItem[];
 }
 
+// ---- finance: pricing rules (admin / invoice_manager only; server-side gated) ----
+export interface PricingRuleRow { id: string; tenant_id: string; name: string; customer: string | null; model: string; params: any; active: boolean }
+
+export async function listPricingRules(tenantId: string): Promise<PricingRuleRow[]> {
+  const { data, error } = await db().from('pricing_rules').select('*').eq('tenant_id', tenantId).order('name');
+  if (error) throw error;
+  return (data ?? []) as PricingRuleRow[];
+}
+export async function getPricingRule(id: string, tenantId: string): Promise<PricingRuleRow | null> {
+  const { data, error } = await db().from('pricing_rules').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as PricingRuleRow | null;
+}
+export async function createPricingRule(tenantId: string, r: { name: string; customer?: string | null; model?: string; params?: any }): Promise<PricingRuleRow> {
+  const { data, error } = await db().from('pricing_rules')
+    .insert({ tenant_id: tenantId, name: r.name, customer: r.customer ?? null, model: r.model ?? 'axs_flat_v1', params: r.params ?? {} })
+    .select().single();
+  if (error) throw error;
+  return data as PricingRuleRow;
+}
+export async function updatePricingRule(id: string, tenantId: string, patch: Partial<Pick<PricingRuleRow, 'name' | 'customer' | 'model' | 'params' | 'active'>>): Promise<void> {
+  const { error } = await db().from('pricing_rules').update(patch).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+export async function deletePricingRule(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('pricing_rules').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// job -> pricing rule link (finance-only)
+export async function getJobRuleId(jobId: string): Promise<string | null> {
+  const { data } = await db().from('job_pricing').select('pricing_rule_id').eq('job_id', jobId).maybeSingle();
+  return (data as any)?.pricing_rule_id ?? null;
+}
+export async function setJobRuleId(jobId: string, tenantId: string, ruleId: string | null): Promise<void> {
+  const { error } = await db().from('job_pricing')
+    .upsert({ job_id: jobId, tenant_id: tenantId, pricing_rule_id: ruleId, updated_at: new Date().toISOString() }, { onConflict: 'job_id' });
+  if (error) throw error;
+}
+
+// per-item finance flags (variations)
+export interface ItemPricingRow { item_id: string; is_variation: boolean; variation_amount_pennies: number | null }
+export async function listItemPricing(itemIds: string[]): Promise<ItemPricingRow[]> {
+  if (!itemIds.length) return [];
+  const { data, error } = await db().from('item_pricing').select('item_id,is_variation,variation_amount_pennies').in('item_id', itemIds);
+  if (error) throw error;
+  return (data ?? []) as ItemPricingRow[];
+}
+export async function setItemPricing(itemId: string, tenantId: string, patch: { is_variation?: boolean; variation_amount_pennies?: number | null }): Promise<void> {
+  const { error } = await db().from('item_pricing')
+    .upsert({ item_id: itemId, tenant_id: tenantId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'item_id' });
+  if (error) throw error;
+}
+
+// All items across the tenant that have a planned install date (for the office calendar).
+export async function listScheduledItems(tenantId: string): Promise<any[]> {
+  const { data, error } = await db().from('survey_items')
+    .select('id,full_code,room_code,item_code,install_status,planned_install_date,team_id,job_id, jobs(client_code,job_code,name)')
+    .eq('tenant_id', tenantId).not('planned_install_date', 'is', null).order('planned_install_date');
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
   const { data, error } = await db().from('fitter_teams').select('*').eq('tenant_id', tenantId);
   if (error) throw error;
@@ -175,6 +246,15 @@ export async function updateAppUser(id: string, patch: Partial<Pick<AppUserRow, 
 // flag_resync trigger marks dirty), then clear the flag (a no-op update that the trigger ignores).
 export async function setItemTeamFromMonday(id: string, teamId: string | null, tenantId: string): Promise<void> {
   const a = await db().from('survey_items').update({ team_id: teamId }).eq('id', id).eq('tenant_id', tenantId);
+  if (a.error) throw a.error;
+  const b = await db().from('survey_items').update({ needs_resync: false }).eq('id', id).eq('tenant_id', tenantId);
+  if (b.error) throw b.error;
+}
+
+// Apply a patch read FROM Monday (team, planned date, …) without leaving the item
+// flagged for re-sync: set the fields, then clear the flag the trigger just raised.
+export async function applyMondayPull(id: string, patch: Record<string, unknown>, tenantId: string): Promise<void> {
+  const a = await db().from('survey_items').update(patch).eq('id', id).eq('tenant_id', tenantId);
   if (a.error) throw a.error;
   const b = await db().from('survey_items').update({ needs_resync: false }).eq('id', id).eq('tenant_id', tenantId);
   if (b.error) throw b.error;
@@ -290,6 +370,12 @@ export async function signedPlanUrl(path: string, seconds = 3600): Promise<strin
   const { data, error } = await db().storage.from(PLAN_BUCKET).createSignedUrl(path, seconds);
   if (error) return null;
   return data?.signedUrl ?? null;
+}
+
+export async function downloadPlan(path: string): Promise<Uint8Array> {
+  const { data, error } = await db().storage.from(PLAN_BUCKET).download(path);
+  if (error) throw error;
+  return new Uint8Array(await data.arrayBuffer());
 }
 
 export async function listJobPlans(jobId: string): Promise<JobPlan[]> {

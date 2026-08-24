@@ -3,10 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
+  invoice_manager: 'Invoice manager',
 };
 
 export type Capability =
@@ -19,7 +20,9 @@ export type Capability =
   | 'photos.add'       // attach photos to an item
   | 'teams.manage'     // manage fitter teams and rates
   | 'monday.sync'      // link a board / push items to Monday
-  | 'users.manage';    // invite users, set roles, activate/deactivate
+  | 'users.manage'     // invite users, set roles, activate/deactivate
+  | 'finance.view'     // see the budget / customer pricing module (admin, invoice_manager only)
+  | 'finance.manage';  // edit pricing rules, assign to jobs, set variations
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -32,6 +35,8 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'teams.manage', label: 'Manage teams & rates', desc: 'Fitter teams and default rates' },
   { key: 'monday.sync', label: 'Sync to Monday', desc: 'Link boards & push items' },
   { key: 'users.manage', label: 'Manage users', desc: 'Invite, set roles, deactivate' },
+  { key: 'finance.view', label: 'View finance', desc: 'Budget & customer pricing (admin / invoice manager)' },
+  { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
 ];
 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
@@ -41,6 +46,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add'],
   scanner: ['items.create', 'photos.add'],
   fitter: ['items.fit', 'snags.raise', 'photos.add'],
+  // Finance-only role: sees the budget/pricing module, nothing operational.
+  invoice_manager: ['finance.view', 'finance.manage'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

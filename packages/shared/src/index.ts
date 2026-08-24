@@ -3,3 +3,4 @@ export * from './domain';
 export * from './version';
 export * from './recognition';
 export * from './permissions';
+export * from './pricing';

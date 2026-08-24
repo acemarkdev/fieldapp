@@ -1,11 +1,56 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.27.0';
+export const APP_VERSION = '0.37.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.37.1', date: '2026-08-24', changes: [
+    'Pick a pricing rule when creating a job in the office. The "+ New job" form now includes a Pricing rule dropdown (only for admins / invoice managers, since rules are finance-only); choosing one assigns it to the new job on save, so the Budget breakdown is ready immediately. Plain office users don\'t see the picker.',
+  ] },
+  { version: '0.37.0', date: '2026-08-24', changes: [
+    'Create jobs from the office. The office had no way to add a job (only the phone did). The Items tab now has a "+ New job" link by the JOBS list (admin/office): enter client code, job code, name and optional site address, with a live CLIENT.JOB code preview. Backed by a new POST /api/jobs, role-gated to jobs.manage. Handy for setting a job up at the desk and then assigning its pricing rule.',
+  ] },
+  { version: '0.36.0', date: '2026-08-24', changes: [
+    'Budget module — assign a rule to a job + live price breakdown (office, admin/invoice_manager). In the Budget tab you can now pick a job, assign one of your pricing rules to it, and see the numbers: three cards (customer price, our budget cost, margin with %), a per-flat table (windows, base rate, biggest-extra windows m² and £, flat total), plus lines for doors, communal windows and variations, then the customer total. Snags excluded, variations separate. Computed server-side by the pricing engine; still finance-gated (endpoints + RLS). No migration.',
+  ] },
+  { version: '0.35.0', date: '2026-08-24', changes: [
+    'Budget module — pricing-rules manager (office, admin/invoice_manager only). A new Budget tab lists customer pricing rules and lets you create/edit/delete them: material cost (window frame/glass per m², door frame/glass per unit), rip-out labour (window/door per unit), and sale rates (per flat, per door, per m², windows included per flat), all entered in £ and stored in pennies. The tab is hidden from every other role and the endpoints are role-gated on the server (on top of RLS). Next: assign a rule to a job + the per-flat price/margin view.',
+  ] },
+  { version: '0.34.0', date: '2026-08-24', changes: [
+    'Budget & customer-pricing module — foundations (admin only, no UI yet). New finance-only tables (pricing_rules, job_pricing, item_pricing) readable strictly by admin and a new invoice_manager role — office/field/mobile can never see costs or prices. A configurable per-customer pricing rule (model + rates) drives, per job: our budget cost (materials + rip-out labour) and the customer sale price grouped by flat (base rate incl. the 5 smallest windows, biggest extras + communal per m², doors flat-rate, snags excluded, variations manual). Pricing engine lives in @ace/shared and is unit-tested against the Axis worked example. Requires migrations 0016 + 0017. UI comes next.',
+  ] },
+  { version: '0.33.1', date: '2026-08-24', changes: [
+    'Fix: role could load as null on the phone, hiding role-gated buttons (e.g. "+ New job" for admin/office). The mobile app only matched your app_users row by auth id, so an identity that was never linked (set up for the web app, or Microsoft SSO) was invisible under RLS. The app now links your login to your user row by email on sign-in (new link_current_user() function) and shows your role next to the version. Requires migration 0015.',
+  ] },
+  { version: '0.33.0', date: '2026-08-24', changes: [
+    'Office install calendar. A new Calendar tab shows every scheduled install across all jobs and teams on a month grid, with a colour-coded count on each day (green all-installed, magenta any snag/misfit, amber otherwise), month paging, and a team filter. Click a day to list its installs (job, code, team, status); click one to open the item. Dates come from the Monday pull. Office/admin/surveyor only.',
+  ] },
+  { version: '0.32.0', date: '2026-08-24', changes: [
+    'Install PDF now shows planned install dates. The install report has a new "Scheduled" column (the date pulled from Monday) next to each item, and the summary shows the overall scheduled date range plus how many items aren\'t scheduled yet. Survey report is unchanged.',
+  ] },
+  { version: '0.31.1', date: '2026-08-24', changes: [
+    'Fix: clicking a style in the office picker did nothing — the grid called a pickStyle() that was never defined, so no design code was set. Added it; picking now fills the design code + window type and closes the picker.',
+  ] },
+  { version: '0.31.0', date: '2026-08-24', changes: [
+    'Office new-item form now matches the phone. The desk "New item" form gained the full survey spec — window type, safety glass, cill depth, transoms ×3, mullions ×3, open in/out, coupled, add-ons — plus a visual "Choose style…" picker: the same 391 Clearview sketches as the app, filterable by product type / wide / high and code search. Picking a style sets the design code (and fills the window type) and shows a thumbnail. Office staff can now create fully-specified items without the app.',
+  ] },
+  { version: '0.30.0', date: '2026-08-24', changes: [
+    'Month view for the fitter schedule. A new Agenda / Month toggle on "My schedule": Month shows a calendar grid with a count badge per day (colour-coded — green all-installed, magenta if any snag/misfit, amber otherwise), month arrows to page back/forward, and tapping a day lists that day\'s items below. Agenda stays the default.',
+  ] },
+  { version: '0.29.2', date: '2026-08-24', changes: [
+    'PDF report: pin numbers now cross-reference the table. Each pin on the plan is numbered, and that number appears in a new "#" column next to the matching item in the table below — so you can read a pin off the plan and find its row. Replaces the old number-plus-window-code legend under the plan, which was unclear.',
+  ] },
+  { version: '0.29.1', date: '2026-08-24', changes: [
+    'Plan screen now reports load failures instead of failing silently. Before, if the plan couldn\'t be read it showed the same "no plan uploaded" empty state as a job that genuinely has none — so a fitter opening a job with no plan just saw a dead end. It now surfaces the actual error (and still says clearly when a job simply has no plan yet).',
+  ] },
+  { version: '0.29.0', date: '2026-08-24', changes: [
+    'Fitter schedule on the phone. Fitters now land on "My schedule" — an agenda of their team\'s work grouped by day: Overdue, Today, Tomorrow, each day this week/next, Later, and Not-scheduled-yet. Tap any item to open the fit flow. A "Jobs ›" link still opens the full job list. Planned install dates come from Monday: the office "Pull fitters" button now also reads the board\'s date column (install/plan/schedule/due/date) into each item. Requires migration 0014.',
+  ] },
+  { version: '0.28.0', date: '2026-08-24', changes: [
+    'Per-job PDF reports (office). The Plans tab now has Survey PDF and Install PDF buttons: a branded, printable document with the job summary, the floor plan(s) with colour-coded item pins and a numbered legend, a spec/status table, a snags list, and a photo appendix. Survey PDF shows dimensions/glass/design + survey photos; Install PDF shows team/rate/install status + install photos. Available to admin/office/surveyor.',
+  ] },
   { version: '0.27.0', date: '2026-08-24', changes: [
     'Fitter data scope (database enforced). A fitter now only reads the items assigned to their own team — plus those items’ photos, the jobs that hold their work, and their own team row (other teams’ rates stay hidden). Enforced by Row-Level Security, so it holds even outside the app. Snags inherit their parent item’s team so fitters keep seeing snags on their own items. Other roles are unchanged. Requires migration 0013.',
   ] },

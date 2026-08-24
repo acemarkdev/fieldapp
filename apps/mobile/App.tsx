@@ -11,9 +11,10 @@ import ItemDetailScreen from './src/screens/ItemDetailScreen';
 import NewItemScreen from './src/screens/NewItemScreen';
 import NewJobScreen from './src/screens/NewJobScreen';
 import PlanScreen from './src/screens/PlanScreen';
+import ScheduleScreen from './src/screens/ScheduleScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
-import { can } from './src/lib/permissions';
+import { can, isFitter } from './src/lib/permissions';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -27,6 +28,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState<any | null>(null); // surveyor adding spec to a saved item
   const [viewingPlan, setViewingPlan] = useState(false);
   const [creatingJob, setCreatingJob] = useState(false);
+  const [browsingJobs, setBrowsingJobs] = useState(false); // fitter: chose to browse jobs instead of the schedule
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
@@ -37,12 +39,18 @@ export default function App() {
   // Load the signed-in user's role so we can hide actions they aren't allowed to use.
   useEffect(() => {
     if (!session) { setRole(null); setTeamId(null); return; }
-    supabase.from('app_users').select('role,team_id').eq('auth_user_id', session.user.id).maybeSingle()
-      .then(({ data }) => {
-        const row = data as { role?: string; team_id?: string | null } | null;
-        setRole(row?.role ?? null);
-        setTeamId(row?.team_id ?? null);
-      });
+    let cancelled = false;
+    (async () => {
+      // Link this auth identity to its app_users row (by email) if it isn't already —
+      // otherwise RLS hides the user's own row and the role loads as null.
+      try { await supabase.rpc('link_current_user'); } catch { /* older DB without the fn */ }
+      const { data } = await supabase.from('app_users').select('role,team_id').eq('auth_user_id', session.user.id).maybeSingle();
+      if (cancelled) return;
+      const row = data as { role?: string; team_id?: string | null } | null;
+      setRole(row?.role ?? null);
+      setTeamId(row?.team_id ?? null);
+    })();
+    return () => { cancelled = true; };
   }, [session]);
 
   if (!ready) {
@@ -58,16 +66,21 @@ export default function App() {
     <SafeAreaView style={s.fill} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" />
       <View style={s.topbar}>
-        <Text style={s.brand}>ACE<Text style={s.brandB}>GROUP</Text> <Text style={s.field}>Field · v{APP_VERSION}</Text></Text>
+        <Text style={s.brand}>ACE<Text style={s.brandB}>GROUP</Text> <Text style={s.field}>Field · v{APP_VERSION}{role ? ` · ${role}` : ''}</Text></Text>
         <TouchableOpacity onPress={() => supabase.auth.signOut()}>
           <Text style={s.signout}>Sign out</Text>
         </TouchableOpacity>
       </View>
       <View style={s.fill}>
         {!job
-          ? (creatingJob
-              ? <NewJobScreen onCancel={() => setCreatingJob(false)} onDone={() => setCreatingJob(false)} />
-              : <JobsScreen onOpen={setJob} onNew={() => setCreatingJob(true)} canNewJob={can(role, 'jobs.manage')} />)
+          ? (itemId
+              // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
+              ? <ItemDetailScreen id={itemId} role={role} onEditItem={setEditingItem} onBack={() => setItemId(null)} onChanged={() => {}} />
+              : (isFitter(role) && !browsingJobs)
+                ? <ScheduleScreen teamId={teamId} onOpenItem={(id) => setItemId(id)} onBrowseJobs={() => setBrowsingJobs(true)} />
+                : creatingJob
+                  ? <NewJobScreen onCancel={() => setCreatingJob(false)} onDone={() => setCreatingJob(false)} />
+                  : <JobsScreen onOpen={setJob} onNew={() => setCreatingJob(true)} canNewJob={can(role, 'jobs.manage')} onBack={isFitter(role) ? () => setBrowsingJobs(false) : undefined} />)
           : editingPending
             ? <NewItemScreen key={editingPending.localId} job={job} role={role} editing={editingPending} onCancel={() => setEditingPending(null)} onDone={() => setEditingPending(null)} />
             : creating

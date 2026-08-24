@@ -6,7 +6,7 @@ import { cacheGet, cacheSet } from '../lib/offline';
 
 export interface Job { id: string; tenant_id: string; client_code: string; job_code: string; name: string; }
 
-export default function JobsScreen({ onOpen, onNew, canNewJob = true }: { onOpen: (job: Job) => void; onNew: () => void; canNewJob?: boolean }) {
+export default function JobsScreen({ onOpen, onNew, canNewJob = true, onBack }: { onOpen: (job: Job) => void; onNew: () => void; canNewJob?: boolean; onBack?: () => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
@@ -39,6 +39,11 @@ export default function JobsScreen({ onOpen, onNew, canNewJob = true }: { onOpen
       refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={C.magenta} />}
       ListHeaderComponent={
         <View>
+          {onBack && (
+            <TouchableOpacity onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={s.back}>‹ Schedule</Text>
+            </TouchableOpacity>
+          )}
           <View style={s.hrow}>
             <Text style={s.h}>Jobs</Text>
             {canNewJob && (
@@ -63,6 +68,7 @@ export default function JobsScreen({ onOpen, onNew, canNewJob = true }: { onOpen
 
 const s = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  back: { color: C.magenta, fontSize: 14, fontWeight: '700', marginBottom: 8 },
   hrow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   h: { fontSize: 22, fontWeight: '800', color: C.purple },
   newBtn: { color: C.magenta, fontSize: 15, fontWeight: '800' },

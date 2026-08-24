@@ -22,6 +22,7 @@ export default function PlanScreen({ job, role, onBack, onOpenItem }: {
   const [items, setItems] = useState<PinItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unplaced' | 'placed'>('all');
   const [multiPlan, setMultiPlan] = useState(false);
@@ -31,7 +32,8 @@ export default function PlanScreen({ job, role, onBack, onOpenItem }: {
   // Fetch plans + pins from Supabase (no loading flag, so pull-to-refresh doesn't flash the spinner).
   const fetchData = useCallback(async () => {
     try {
-      const { data: pl } = await supabase.from('job_plans').select('id,name,storage_path').eq('job_id', job.id).order('sort');
+      const { data: pl, error: pe } = await supabase.from('job_plans').select('id,name,storage_path').eq('job_id', job.id).order('sort');
+      if (pe) throw pe;
       const withUrls: Plan[] = [];
       for (const p of (pl ?? []) as Plan[]) {
         const { data: s } = await supabase.storage.from('plans').createSignedUrl(p.storage_path, 3600);
@@ -39,12 +41,16 @@ export default function PlanScreen({ job, role, onBack, onOpenItem }: {
       }
       setPlans(withUrls);
       setCurId((prev) => (prev && withUrls.some((p) => p.id === prev)) ? prev : (withUrls[0]?.id ?? null));
-      const { data: it } = await supabase.from('survey_items')
+      const { data: it, error: ie } = await supabase.from('survey_items')
         .select('id,full_code,item_code,install_status,plan_id,plan_x,plan_y').eq('job_id', job.id).order('full_code');
+      if (ie) throw ie;
       setItems((it ?? []) as PinItem[]);
       const { data: t } = await supabase.from('tenants').select('pins_multi_plan').eq('id', job.tenant_id).maybeSingle();
       setMultiPlan(!!(t as any)?.pins_multi_plan);
-    } catch { /* offline / no access */ }
+      setErr(null);
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not load the plan. Check your connection and pull down to retry.');
+    }
   }, [job.id, job.tenant_id]);
 
   const load = useCallback(async () => { setLoading(true); await fetchData(); setLoading(false); }, [fetchData]);
@@ -102,7 +108,9 @@ export default function PlanScreen({ job, role, onBack, onOpenItem }: {
           alwaysBounceVertical
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.magenta} colors={[C.magenta]} />}
         >
-          <Text style={s.empty}>No plan uploaded for this job yet.{'\n'}Add one in the office Plans tab.{'\n\n'}Pull down to refresh.</Text>
+          {err
+            ? <Text style={s.empty}>Couldn't load the plan.{'\n'}{err}{'\n\n'}Pull down to retry.</Text>
+            : <Text style={s.empty}>No plan uploaded for this job yet.{'\n'}Add one in the office Plans tab.{'\n\n'}Pull down to refresh.</Text>}
         </ScrollView>
       ) : (
         <ScrollView

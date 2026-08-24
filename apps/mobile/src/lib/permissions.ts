@@ -3,7 +3,7 @@
 // The database (RLS, migration 0007) is the real boundary; this only decides what the
 // UI shows, so field staff don't see buttons that would be refused.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter';
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager';
 
 export type Capability =
   | 'jobs.manage' | 'items.create' | 'items.edit' | 'items.fit'
@@ -15,6 +15,7 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add'],
   scanner: ['items.create', 'photos.add'],
   fitter: ['items.fit', 'snags.raise', 'photos.add'],
+  invoice_manager: [], // finance-only; no field capabilities on the phone
 };
 
 export function can(role: string | null | undefined, cap: Capability): boolean {

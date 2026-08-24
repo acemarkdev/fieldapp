@@ -8,16 +8,24 @@
 // SUPABASE_SERVICE_ROLE_KEY, MONDAY_API_TOKEN in .env, and a login created via create-admin.
 
 import { createServer } from 'node:http';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { db, ACE_TENANT } from './supabase';
-import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, getSurveyItem,
+import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule, deletePricingRule,
+  getJobRuleId, setJobRuleId, listItemPricing, setItemPricing } from './store';
+import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
+import { createJob } from './store';
+import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
   filterItemIdsByTenant, bulkUpdateItems,
-  listAppUsers, getAppUser, updateAppUser, setItemTeamFromMonday,
+  listAppUsers, getAppUser, updateAppUser, setItemTeamFromMonday, applyMondayPull,
   listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket,
   listJobPlans, createJobPlan, deleteJobPlan, listPinnedItems, setItemPin, uploadPlan, signedPlanUrl, ensurePlanBucket,
   getPinsMultiPlan, setPinsMultiPlan } from './store';
+import { buildJobReportPdf } from './reportPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
@@ -25,6 +33,52 @@ import { Monday } from './monday';
 
 // Normalise a column title for loose matching (Fitters pull, etc.).
 const normTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Pick the Monday date column that most likely holds the planned install date.
+// Ranks by title keyword (install > fit > plan > schedule > due > date). If several
+// date columns exist and none matches a keyword we return null rather than guess.
+function pickDateColumn(cols: { id: string; title: string; type: string }[]): { id: string; title: string } | null {
+  const dates = cols.filter((c) => c.type === 'date');
+  if (!dates.length) return null;
+  const rank = (t: string) => {
+    const n = normTitle(t);
+    if (n.includes('install')) return 5;
+    if (n.includes('fit')) return 4;
+    if (n.includes('plan')) return 3;
+    if (n.includes('schedule')) return 2;
+    if (n.includes('due')) return 1;
+    if (n.includes('date')) return 0;
+    return -1;
+  };
+  const ranked = dates.map((c) => ({ c, r: rank(c.title) })).filter((x) => x.r >= 0).sort((a, b) => b.r - a.r);
+  if (ranked.length) return ranked[0].c;
+  return dates.length === 1 ? dates[0] : null;
+}
+// Monday date cells read back as "YYYY-MM-DD" (optionally with a time) — keep the date.
+function parseMondayDate(text: string | null): string | null {
+  const m = (text ?? '').trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+// ---- Clearview style catalogue (shared with the mobile picker) ----
+// Sketch PNGs live in the mobile app's assets, keyed by design code; metadata is a
+// generated JSON. The office serves both so desk staff get the same visual picker.
+const __dir = dirname(fileURLToPath(import.meta.url));
+const STYLES_DIR = join(__dir, '../../mobile/assets/styles');
+interface StyleMetaRow { type: string; wide: number | null; high: number | null; opening: number | null; fixed: number | null }
+const STYLE_META: Record<string, StyleMetaRow> = (() => {
+  try { return JSON.parse(readFileSync(join(__dir, 'styleMeta.generated.json'), 'utf8')); } catch { return {}; }
+})();
+// Codes that actually have a sketch on disk (the picker only shows these).
+const STYLE_IMAGE_CODES: Set<string> = (() => {
+  try { return new Set(readdirSync(STYLES_DIR).filter((f) => f.endsWith('.png')).map((f) => f.replace(/\.png$/, ''))); }
+  catch { return new Set<string>(); }
+})();
+// Catalogue rows = styles that have both metadata and a sketch, sorted numerically.
+const STYLE_CATALOGUE = Object.keys(STYLE_META)
+  .filter((code) => STYLE_IMAGE_CODES.has(code))
+  .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b))
+  .map((code) => ({ code, ...STYLE_META[code] }));
 
 const ROLES = ['admin', 'office', 'surveyor', 'scanner', 'fitter'];
 const genPassword = () => 'ACE-' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
@@ -158,6 +212,22 @@ const server = createServer(async (req, res) => {
       res.end(html); return;
     }
 
+    // Style sketch image (public: loaded via <img>, which can't send the bearer token;
+    // the drawings are generic product sketches, not tenant data). Guards path traversal
+    // by only serving codes we found on disk at startup.
+    if (p.startsWith('/api/style-image/')) {
+      const code = decodeURIComponent(p.slice('/api/style-image/'.length));
+      if (!STYLE_IMAGE_CODES.has(code)) { res.writeHead(404); res.end('not found'); return; }
+      try {
+        const bytes = readFileSync(join(STYLES_DIR, `${code}.png`));
+        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
+        res.end(bytes);
+      } catch { res.writeHead(404); res.end('not found'); }
+      return;
+    }
+    // Style catalogue metadata for the picker (code, type, wide, high). Non-sensitive.
+    if (p === '/api/styles') { send(res, 200, STYLE_CATALOGUE); return; }
+
     // Standalone auto-refreshing wallboard (pin it as a browser tab). Key-gated, no login.
     if (p === '/live') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(LIVE_PAGE); return; }
     if (p === '/api/live') {
@@ -193,9 +263,125 @@ const server = createServer(async (req, res) => {
 
     if (p === '/api/dashboard') { send(res, 200, await dashboardData(ctx.tenant_id)); return; }
 
-    if (p === '/api/jobs') {
+    // Install calendar: every scheduled item across all jobs/teams (office-wide planner).
+    if (p === '/api/calendar' && req.method === 'GET') {
+      if (!allow('dashboard.view')) return;
+      const teams = await listTeams(ctx.tenant_id);
+      const tname = new Map(teams.map((t) => [t.id, t.name]));
+      const rows = await listScheduledItems(ctx.tenant_id);
+      const items = rows.map((r: any) => ({
+        id: r.id, full_code: r.full_code, room_code: r.room_code, item_code: r.item_code,
+        install_status: r.install_status, date: r.planned_install_date,
+        job: r.jobs ? `${r.jobs.client_code}.${r.jobs.job_code}` : '', jobName: r.jobs?.name ?? '',
+        team: r.team_id ? (tname.get(r.team_id) ?? '') : '', team_id: r.team_id ?? '',
+      }));
+      send(res, 200, { items, teams: teams.map((t) => ({ id: t.id, name: t.name })) });
+      return;
+    }
+
+    // ---- Finance: pricing rules (admin / invoice_manager only) ----
+    if (p === '/api/pricing-rules' && req.method === 'GET') {
+      if (!allow('finance.view')) return;
+      send(res, 200, await listPricingRules(ctx.tenant_id));
+      return;
+    }
+    if (p === '/api/pricing-rules' && req.method === 'POST') {
+      if (!allow('finance.manage')) return;
+      const b = await readJson(req);
+      const name = String(b.name ?? '').trim();
+      if (!name) { send(res, 400, { error: 'A rule name is required.' }); return; }
+      try {
+        const created = await createPricingRule(ctx.tenant_id, { name, customer: b.customer ?? null, model: b.model || 'axs_flat_v1', params: b.params ?? {} });
+        send(res, 200, { ok: true, id: created.id });
+      } catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: `A rule called "${name}" already exists.` }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
+      return;
+    }
+    if (p.startsWith('/api/pricing-rules/') && req.method === 'PUT') {
+      if (!allow('finance.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const b = await readJson(req);
+      const patch: Record<string, unknown> = {};
+      if (b.name !== undefined) patch.name = String(b.name).trim();
+      if (b.customer !== undefined) patch.customer = b.customer || null;
+      if (b.model !== undefined) patch.model = b.model || 'axs_flat_v1';
+      if (b.params !== undefined) patch.params = b.params;
+      if (b.active !== undefined) patch.active = !!b.active;
+      try { await updatePricingRule(id, ctx.tenant_id, patch); send(res, 200, { ok: true }); }
+      catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: 'Another rule already has that name.' }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
+      return;
+    }
+    if (p.startsWith('/api/pricing-rules/') && req.method === 'DELETE') {
+      if (!allow('finance.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      await deletePricingRule(id, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    // Job pricing: current rule + full budget/sale/margin breakdown (finance only).
+    if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'GET') {
+      if (!allow('finance.view')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const rules = await listPricingRules(ctx.tenant_id);
+      const ruleId = await getJobRuleId(job.id);
+      const rule = ruleId ? await getPricingRule(ruleId, ctx.tenant_id) : null;
+      let breakdown: unknown = null;
+      if (rule && (rule.params as any)?.sale) {
+        const items = await listSurveyItems(job.id);
+        const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
+        const priceItems: PriceItem[] = items.map((it: any) => {
+          const f = ipMap.get(it.id);
+          return {
+            id: it.id, full_code: it.full_code, kind: it.kind,
+            category: classifyCategory({ item_type: it.item_type, item_code: it.item_code }),
+            width_mm: it.width_mm, height_mm: it.height_mm, flat: it.flat,
+            is_variation: !!f?.is_variation, variation_amount: f?.variation_amount_pennies ?? 0,
+          };
+        });
+        breakdown = priceJob(priceItems, rule as any);
+      }
+      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown });
+      return;
+    }
+    if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'PUT') {
+      if (!allow('finance.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      await setJobRuleId(job.id, ctx.tenant_id, b.rule_id || null);
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    if (p === '/api/jobs' && req.method === 'GET') {
       const jobs = await listJobs(ctx.tenant_id);
       send(res, 200, jobs.map((j) => ({ code: `${j.client_code}.${j.job_code}`, name: j.name })));
+      return;
+    }
+    if (p === '/api/jobs' && req.method === 'POST') {
+      if (!allow('jobs.manage')) return;
+      const b = await readJson(req);
+      const client_code = String(b.client_code ?? '').trim().toUpperCase();
+      const job_code = String(b.job_code ?? '').trim().toUpperCase();
+      const name = String(b.name ?? '').trim();
+      if (!client_code || !job_code) { send(res, 400, { error: 'Client code and job code are required (they form the job code, e.g. AXS.LAB).' }); return; }
+      if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
+      try {
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null });
+        send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
+      } catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: `Job ${client_code}.${job_code} already exists.` }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
       return;
     }
 
@@ -236,13 +422,19 @@ const server = createServer(async (req, res) => {
         block: b.block, elevation: b.elevation, flat: b.flat, room, item, floor: b.floor,
       });
       const num = (v: any) => (v === '' || v == null ? null : Math.round(Number(v)));
+      const str = (v: any) => { const t = (v ?? '').toString().trim(); return t === '' ? null : t; };
       const fields: Record<string, unknown> = {
         tenant_id: ctx.tenant_id, job_id: job.id, stage: 'surveyed',
         block: b.block || null, elevation: b.elevation || null, flat: b.flat || null,
         room_code: room, item_code: item, floor: b.floor || null, full_code,
-        material: b.material || null, item_type: b.item_type || null, glass: b.glass || null,
-        glazing: b.glazing || null, width_mm: num(b.width_mm), height_mm: num(b.height_mm),
-        comments: b.comments || null, team_id: b.team_id || null,
+        material: str(b.material), item_type: str(b.item_type), window_type: str(b.window_type),
+        glass: str(b.glass), safety_glass: str(b.safety_glass), glazing: str(b.glazing),
+        width_mm: num(b.width_mm), height_mm: num(b.height_mm), cill_depth_mm: num(b.cill_depth_mm),
+        transom1_mm: num(b.transom1_mm), transom2_mm: num(b.transom2_mm), transom3_mm: num(b.transom3_mm),
+        mullion1_mm: num(b.mullion1_mm), mullion2_mm: num(b.mullion2_mm), mullion3_mm: num(b.mullion3_mm),
+        open_in_out: str(b.open_in_out), add_ons: str(b.add_ons), coupled: str(b.coupled),
+        design_code: str(b.design_code),
+        comments: str(b.comments), team_id: b.team_id || null,
       };
       try {
         const created = await insertSurveyItem(fields);
@@ -500,26 +692,65 @@ const server = createServer(async (req, res) => {
       const rows = await mon.getColumnTextForItems(job.monday_board_id, fittersCol.id);
       const textByMondayId = new Map(rows.map((r) => [r.id, (r.text ?? '').trim()]));
 
+      // Also pull the planned install date, if the board has a suitable date column.
+      const dateCol = pickDateColumn(cols);
+      const dateByMondayId = new Map<string, string | null>();
+      if (dateCol) {
+        const drows = await mon.getColumnTextForItems(job.monday_board_id, dateCol.id);
+        for (const r of drows) dateByMondayId.set(r.id, parseMondayDate(r.text));
+      }
+
       const items = await listSurveyItems(job.id);
-      let assigned = 0, cleared = 0, unchanged = 0; const unmatched = new Set<string>();
+      let assigned = 0, cleared = 0, datesSet = 0, datesCleared = 0, unchanged = 0; const unmatched = new Set<string>();
       for (const it of items) {
         if (!it.monday_item_id) { unchanged++; continue; }
+        const patch: Record<string, unknown> = {};
+        // team assignment
         const text = textByMondayId.get(it.monday_item_id) ?? '';
-        let newTeam: string | null = null;
         if (text) {
           const match = teamByName.get(text.toLowerCase());
-          if (!match) { unmatched.add(text); unchanged++; continue; } // unknown team name — leave as is
-          newTeam = match;
+          if (!match) unmatched.add(text);                                   // unknown team name — leave as is
+          else if ((it.team_id ?? null) !== match) patch.team_id = match;
+        } else if (it.team_id != null) {
+          patch.team_id = null;                                             // cleared on Monday
         }
-        if ((it.team_id ?? null) === newTeam) { unchanged++; continue; }
-        await setItemTeamFromMonday(it.id, newTeam, ctx.tenant_id);
-        newTeam ? assigned++ : cleared++;
+        // planned install date
+        if (dateCol) {
+          const nd = dateByMondayId.get(it.monday_item_id) ?? null;
+          if (nd !== ((it as any).planned_install_date ?? null)) patch.planned_install_date = nd;
+        }
+        if (Object.keys(patch).length === 0) { unchanged++; continue; }
+        await applyMondayPull(it.id, patch, ctx.tenant_id);
+        if ('team_id' in patch) (patch.team_id ? assigned++ : cleared++);
+        if ('planned_install_date' in patch) (patch.planned_install_date ? datesSet++ : datesCleared++);
       }
-      send(res, 200, { ok: true, total: items.length, assigned, cleared, unchanged, unmatched: [...unmatched] });
+      send(res, 200, {
+        ok: true, total: items.length, assigned, cleared, datesSet, datesCleared,
+        dateColumn: dateCol?.title ?? null, unchanged, unmatched: [...unmatched],
+      });
       return;
     }
 
     // ---- Plans (plan view with item pins) ----
+    // Per-job PDF: survey sheet or install report. Browser downloads it (authed via bearer).
+    if (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET') {
+      if (!allow('dashboard.view')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.');
+      const type = (url.searchParams.get('type') === 'install' ? 'install' : 'survey') as 'survey' | 'install';
+      try {
+        const { buffer } = await buildJobReportPdf(c, j, ctx.tenant_id, type);
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-disposition': `attachment; filename="${c}.${j}-${type}-report.pdf"`,
+          'cache-control': 'no-store',
+        });
+        res.end(buffer);
+      } catch (e: any) {
+        send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) });
+      }
+      return;
+    }
     if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'GET') {
       const code = decodeURIComponent(p.split('/')[3] ?? '');
       const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
@@ -792,6 +1023,28 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .surveyed{background:var(--soft);color:var(--purple)}.synced{background:var(--green-soft);color:var(--green)}
   input.rate{width:74px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px}
   .planbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}
+  .calbar{display:flex;gap:10px;align-items:center;margin:16px 0}
+  .calnav{border:1px solid var(--line);background:#fff;border-radius:9px;width:34px;height:34px;font-size:18px;cursor:pointer;color:var(--purple)}
+  .calmonth{font-size:16px;font-weight:800;color:var(--ink);min-width:150px;text-align:center}
+  .calgridwrap{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
+  .calweek{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:6px}
+  .calweek span{text-align:center;font-size:10px;font-weight:700;color:#9a97ad}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .calcell{min-height:64px;border:1px solid var(--line);border-radius:10px;padding:6px;cursor:pointer;display:flex;flex-direction:column;gap:4px;background:#fff}
+  .calcell:hover{border-color:var(--purple)}
+  .calcell.out{background:#fafafb}.calcell.out .caldd{color:#c9c6d8}
+  .calcell.today{border-color:var(--purple);border-width:2px}
+  .calcell.sel{background:var(--soft);border-color:var(--purple)}
+  .caldd{font-size:12px;font-weight:700;color:var(--ink)}
+  .calpill{align-self:flex-start;color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:1px 7px}
+  .calsel-h{font-size:14px;font-weight:800;color:var(--ink);margin:18px 0 8px}
+  .calitem{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:11px;background:#fff;margin-bottom:8px;cursor:pointer}
+  .calitem:hover{border-color:var(--purple)}
+  .caldot{width:10px;height:10px;border-radius:50%;flex:none}
+  .calitem .cimain{flex:1;min-width:0}
+  .calitem .ccode{font-size:12.5px;font-weight:700;color:var(--ink)}
+  .calitem .cmeta{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .calitem .cstat{font-size:10px;font-weight:800;border:1px solid;border-radius:999px;padding:2px 8px;white-space:nowrap}
   .planarm{background:var(--purple);color:#fff;border-radius:10px;padding:9px 14px;font-size:13px;font-weight:700;margin-bottom:12px}
   .planwrap{display:flex;gap:16px;align-items:flex-start}
   .planstage{position:relative;flex:1;min-height:300px;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
@@ -852,6 +1105,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
       <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
       <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
+      <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
+      <button id="tabBudget" class="tab" style="display:none" onclick="showTab('budget')">Budget</button>
       <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
       <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
     </nav>
@@ -870,7 +1125,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
 
   <div id="itemsView" class="layout" style="display:none">
-    <aside><div class="slabel">JOBS</div><div id="jobs"></div></aside>
+    <aside>
+      <div class="slabel" style="display:flex;justify-content:space-between;align-items:center">JOBS
+        <a id="newJobBtn" class="codelink" style="display:none" onclick="openNewJob()">+ New job</a>
+      </div>
+      <div id="jobs"></div>
+    </aside>
     <main>
       <div class="titlerow">
         <div><h2 id="title">—</h2><div class="sub" id="subtitle"></div></div>
@@ -935,6 +1195,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload plan</button>
         <input type="file" id="planFile" accept="image/*" style="display:none" onchange="uploadPlan(this)">
         <button class="del" id="planDelBtn" onclick="deletePlan()">Delete plan</button>
+        <button class="add" id="rptSurveyBtn" onclick="downloadReport('survey')" title="Download a survey sheet PDF for this job">Survey PDF</button>
+        <button class="add" id="rptInstallBtn" onclick="downloadReport('install')" title="Download an install report PDF for this job">Install PDF</button>
         <span id="planMsg" style="font-size:12px;color:var(--muted)"></span>
         <label id="multiPlanWrap" style="display:none;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin-left:auto;cursor:pointer">
           <input type="checkbox" id="multiPlanChk" onchange="setMultiPlan(this.checked)" style="width:15px;height:15px;accent-color:var(--magenta)"> Item can be on multiple plans
@@ -957,6 +1219,49 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div id="planItems" class="planitems"></div>
         </div>
       </div>
+    </main>
+  </div>
+
+  <div id="calView" style="display:none">
+    <main style="max-width:1100px">
+      <h2>Install calendar</h2>
+      <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday (Sync tab → Pull fitters + dates). Filter by team, page months, click a day to see what's on.</div>
+      <div class="calbar">
+        <button class="calnav" onclick="calShift(-1)">‹</button>
+        <div class="calmonth" id="calMonth">—</div>
+        <button class="calnav" onclick="calShift(1)">›</button>
+        <select id="calTeam" class="tinput" onchange="renderCalendar()" style="margin-left:auto"></select>
+        <span id="calMsg" class="itemcount"></span>
+      </div>
+      <div class="calgridwrap">
+        <div class="calweek"></div>
+        <div class="calgrid" id="calGrid"></div>
+      </div>
+      <div class="calsel-h" id="calSelHead"></div>
+      <div id="calSel"></div>
+    </main>
+  </div>
+
+  <div id="budgetView" style="display:none">
+    <main style="max-width:1000px">
+      <div class="titlerow">
+        <div><h2>Budget &amp; pricing</h2><div class="sub">Customer pricing rules. Assign a rule to a job, and items are priced by it. Visible to admins and invoice managers only — no one else can see costs or prices.</div></div>
+        <button class="newbtn" onclick="openRule()">+ New rule</button>
+      </div>
+      <div class="card2" style="margin-top:14px"><table><thead><tr>
+        <th>RULE</th><th>CUSTOMER</th><th>MODEL</th><th>RATE / FLAT</th><th>RATE / DOOR</th><th>RATE / m²</th><th></th>
+      </tr></thead><tbody id="ruleRows"></tbody></table></div>
+
+      <h3 style="margin-top:28px;color:var(--purple)">Job pricing</h3>
+      <div class="sub">Assign a rule to a job, then see the budget cost and the customer price broken down by flat.</div>
+      <div class="planbar">
+        <select id="fpJob" class="tinput" onchange="loadJobPricing()"></select>
+        <label style="font-size:12.5px;color:var(--muted)">Rule:
+          <select id="fpRule" class="tinput" onchange="assignRule()"></select>
+        </label>
+        <span id="fpMsg" class="itemcount"></span>
+      </div>
+      <div id="fpBreak"></div>
     </main>
   </div>
 
@@ -1053,6 +1358,41 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     jobs.forEach(function(j){mk(j.code,j.code);});
   }
   function opt(v,l,sel){return '<option value="'+v+'"'+(v===sel?' selected':'')+'>'+l+'</option>';}
+  async function openNewJob(){
+    var ruleField='';
+    if(canCap('finance.manage')){
+      var rules=[]; try{rules=await (await api('/api/pricing-rules')).json();}catch(e){}
+      ruleField='<div class="field full"><label>Pricing rule (optional)</label><select id="nj_rule"><option value="">— none —</option>'
+        +rules.map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+(r.customer?(' · '+esc(r.customer)):'')+'</option>';}).join('')+'</select></div>';
+    }
+    var html='<div class="fgrid">'
+      +'<div class="codeprev" id="njPrev">CLIENT.JOB</div>'
+      +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
+      +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
+      +'<div class="field full"><label>Site address</label><input id="nj_addr" placeholder="Full site address (optional)"></div>'
+      +ruleField
+      +'<div class="ferr" id="njErr"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveJob()">Create job</button></div>';
+    openModal('New job',html);
+    ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
+    njCode();
+  }
+  function njCode(){var c=(document.getElementById('nj_client').value||'').trim().toUpperCase();var j=(document.getElementById('nj_job').value||'').trim().toUpperCase();document.getElementById('njPrev').textContent=(c||'CLIENT')+'.'+(j||'JOB');}
+  async function saveJob(){
+    var client=(document.getElementById('nj_client').value||'').trim();
+    var job=(document.getElementById('nj_job').value||'').trim();
+    var name=(document.getElementById('nj_name').value||'').trim();
+    if(!client||!job){document.getElementById('njErr').textContent='Client code and job code are required.';return;}
+    if(!name){document.getElementById('njErr').textContent='Job name is required.';return;}
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim()})});
+    var d=await r.json();
+    if(r.ok&&d.ok){
+      var rsel=document.getElementById('nj_rule');
+      if(rsel&&rsel.value){ try{await api('/api/job/'+encodeURIComponent(d.code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rsel.value})});}catch(e){} }
+      closeModal();tShow('Created '+d.code);loadJobs();
+    }
+    else document.getElementById('njErr').textContent=d.error||'Could not create job';
+  }
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data;
     document.getElementById('bulkTeam').innerHTML='<option value="">Assign team…</option>'+teams.map(function(t){return opt(t.id,t.name,'')}).join('');
@@ -1156,6 +1496,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
     document.getElementById('syncView').style.display=name==='sync'?'block':'none';
     document.getElementById('plansView').style.display=name==='plans'?'block':'none';
+    document.getElementById('calView').style.display=name==='cal'?'block':'none';
+    document.getElementById('budgetView').style.display=name==='budget'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
@@ -1163,12 +1505,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
     document.getElementById('tabPlans').classList.toggle('on',name==='plans');
+    document.getElementById('tabCal').classList.toggle('on',name==='cal');
+    document.getElementById('tabBudget').classList.toggle('on',name==='budget');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
     if(name==='dashboard')loadDashboard();
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
     if(name==='plans')loadPlansTab();
+    if(name==='cal')loadCalendar();
+    if(name==='budget')loadBudget();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
   }
@@ -1223,6 +1569,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabTeams',canCap('teams.manage'));
     show('tabSync',canCap('monday.sync'));
     show('tabPlans',canCap('dashboard.view'));
+    show('tabCal',canCap('dashboard.view'));
+    show('tabBudget',canCap('finance.view'));
+    var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
   }
   async function loadTeams(){
@@ -1271,7 +1620,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var toSync=jb.unsynced>0?'<span class="count amber">'+jb.unsynced+'</span>':'<span class="count">0</span>';
       var canSync=jb.board&&jb.total>0;
       var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.code+'\\',this)">Sync all</button>';
-      var pull=manage?' <button class="syncall" style="background:#fff;color:var(--purple);border:1px solid #cfc9ea" '+(jb.board?'':'disabled')+' onclick="pullFitters(\\''+jb.code+'\\',this)" title="Read team assignments back from the Monday Fitters column">Pull fitters</button>':'';
+      var pull=manage?' <button class="syncall" style="background:#fff;color:var(--purple);border:1px solid #cfc9ea" '+(jb.board?'':'disabled')+' onclick="pullFitters(\\''+jb.code+'\\',this)" title="Read team assignments (Fitters column) and planned install dates (date column) back from Monday">Pull fitters + dates</button>':'';
       tr.innerHTML='<td class="mono"><b>'+jb.code+'</b><div style="font-size:11px;color:var(--muted);font-weight:400">'+(jb.name||'')+'</div></td>'+
         '<td>'+board+'</td><td>'+jb.total+'</td><td><span class="count green">'+jb.synced+'</span></td><td>'+toSync+'</td>'+
         '<td style="text-align:right;white-space:nowrap">'+btn+pull+'</td>';
@@ -1291,6 +1640,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     btn.disabled=true;var old=btn.textContent;btn.textContent='Pulling…';tShow('Reading fitters from Monday…');
     try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pull-fitters',{method:'POST'})).json();
       if(d.ok){var msg=d.assigned+' assigned'+(d.cleared?', '+d.cleared+' cleared':'');
+        if(d.datesSet||d.datesCleared)msg+=' · '+d.datesSet+' date'+(d.datesSet===1?'':'s')+' set'+(d.datesCleared?', '+d.datesCleared+' cleared':'')+(d.dateColumn?' (from "'+d.dateColumn+'")':'');
+        else if(!d.dateColumn)msg+=' · no date column found';
         if(d.unmatched&&d.unmatched.length)msg+=' · unknown team'+(d.unmatched.length>1?'s':'')+': '+d.unmatched.join(', ');
         tShow(msg);loadItems();}
       else tShow(d.error||'Pull failed');
@@ -1322,6 +1673,19 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var mw=document.getElementById('multiPlanWrap');mw.style.display=d.canManage?'flex':'none';
     document.getElementById('multiPlanChk').checked=!!d.multiPlan;
     renderPlan(); renderPlanItems();
+  }
+  async function downloadReport(type){
+    var code=document.getElementById('planJob').value; if(!code){tShow('Pick a job first');return;}
+    var btn=document.getElementById(type==='install'?'rptInstallBtn':'rptSurveyBtn'); var was=btn.textContent; btn.textContent='Building…'; btn.disabled=true;
+    try{
+      var r=await fetch('/api/job/'+encodeURIComponent(code)+'/report.pdf?type='+type,{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'Report failed');return;}
+      var blob=await r.blob(); var u=URL.createObjectURL(blob);
+      var a=document.createElement('a'); a.href=u; a.download=code+'-'+type+'-report.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){URL.revokeObjectURL(u);},4000);
+      tShow((type==='install'?'Install':'Survey')+' PDF downloaded');
+    }catch(err){tShow('Report failed');}
+    finally{btn.textContent=was; btn.disabled=false;}
   }
   async function setMultiPlan(v){
     var r=await (await api('/api/settings/pins-multi-plan',{method:'PUT',body:JSON.stringify({value:v})})).json();
@@ -1484,9 +1848,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +field('f_flat','Flat / plot','e.g. 21')+field('f_floor','Floor','e.g. F1')
       +field('f_room','Room *','e.g. LR')+field('f_item','Item *','e.g. W02')
       +'<div class="groupt">SPECIFICATION</div>'
+      +'<div class="field full"><label>Design code (Clearview style)</label>'
+        +'<div style="display:flex;gap:8px;align-items:center">'
+          +'<input id="f_design" type="text" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
+          +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
+          +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">'
+        +'</div></div>'
       +field('f_material','Material','uPVC / Alu / Timber')+field('f_type','Item type','Window / Door')
-      +field('f_glass','Glass','e.g. 4-20-4')+field('f_glazing','Glazing','Double / Triple')
+      +field('f_wtype','Window type','e.g. Casement')+field('f_glass','Glass','e.g. 4-20-4')
+      +field('f_safety','Safety glass','Toughened / Laminated')+field('f_glazing','Glazing','Double / Triple')
       +field('f_width','Width (mm)','','number')+field('f_height','Height inc cill (mm)','','number')
+      +field('f_cill','Cill depth (mm)','','number')+field('f_openinout','Open in / out','In / Out')
+      +field('f_t1','Transom 1 (mm)','','number')+field('f_t2','Transom 2 (mm)','','number')
+      +field('f_t3','Transom 3 (mm)','','number')+field('f_m1','Mullion 1 (mm)','','number')
+      +field('f_m2','Mullion 2 (mm)','','number')+field('f_m3','Mullion 3 (mm)','','number')
+      +field('f_coupled','Coupled','e.g. to W03')+field('f_addons','Add-ons','Trickle vents / etc')
       +'<div class="field"><label>Team</label><select id="f_team">'+topts+'</select></div>'
       +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2"></textarea></div>'
       +'<div class="ferr" id="createErr"></div></div>'
@@ -1504,12 +1880,234 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function submitCreate(){
     function g(id){return (document.getElementById(id).value||'').trim();}
     var body={job:current,block:g('f_block'),elevation:g('f_elev'),flat:g('f_flat'),floor:g('f_floor'),room:g('f_room'),item:g('f_item'),
-      material:g('f_material'),item_type:g('f_type'),glass:g('f_glass'),glazing:g('f_glazing'),width_mm:g('f_width'),height_mm:g('f_height'),
+      design_code:g('f_design'),material:g('f_material'),item_type:g('f_type'),window_type:g('f_wtype'),
+      glass:g('f_glass'),safety_glass:g('f_safety'),glazing:g('f_glazing'),
+      width_mm:g('f_width'),height_mm:g('f_height'),cill_depth_mm:g('f_cill'),open_in_out:g('f_openinout'),
+      transom1_mm:g('f_t1'),transom2_mm:g('f_t2'),transom3_mm:g('f_t3'),
+      mullion1_mm:g('f_m1'),mullion2_mm:g('f_m2'),mullion3_mm:g('f_m3'),
+      coupled:g('f_coupled'),add_ons:g('f_addons'),
       comments:g('f_comments'),team_id:document.getElementById('f_team').value};
     if(!body.room||!body.item){document.getElementById('createErr').textContent='Room and Item are required.';return;}
     var r=await api('/api/items',{method:'POST',body:JSON.stringify(body)});var d=await r.json();
     if(r.ok&&d.ok){closeModal();tShow('Created '+d.full_code);loadItems();}
     else document.getElementById('createErr').textContent=d.error||'Could not create item';
+  }
+  // ---- Install calendar (office-wide) ----
+  var CAL_DATA={items:[],teams:[]}; var calCursor=new Date(); calCursor.setDate(1); var calSel=null; var calTeamId='';
+  function calIso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+  function calMonthGrid(cur){var first=new Date(cur.getFullYear(),cur.getMonth(),1);var back=(first.getDay()+6)%7;var start=new Date(first);start.setDate(1-back);var out=[];for(var i=0;i<42;i++){var d=new Date(start);d.setDate(start.getDate()+i);out.push(calIso(d));}return out;}
+  async function loadCalendar(){
+    document.querySelector('#calView .calweek').innerHTML=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){return '<span>'+w+'</span>';}).join('');
+    try{CAL_DATA=await (await api('/api/calendar')).json();}catch(e){CAL_DATA={items:[],teams:[]};}
+    var sel=document.getElementById('calTeam');
+    sel.innerHTML='<option value="">All teams</option>'+CAL_DATA.teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
+    sel.value=calTeamId;
+    if(!calSel)calSel=calIso(new Date());
+    renderCalendar();
+  }
+  function calShift(n){calCursor=new Date(calCursor.getFullYear(),calCursor.getMonth()+n,1);renderCalendar();}
+  function calFiltered(){return CAL_DATA.items.filter(function(it){return !calTeamId||it.team_id===calTeamId;});}
+  function calByDay(){var m={};calFiltered().forEach(function(it){(m[it.date]=m[it.date]||[]).push(it);});return m;}
+  function calDayColor(list){
+    if(list.some(function(x){return x.install_status==='snag'||x.install_status==='misfit'||x.install_status==='installed_snag';}))return '#e6187e';
+    if(list.every(function(x){return x.install_status==='installed_no_snag';}))return '#16a34a';
+    return '#d97706';
+  }
+  function renderCalendar(){
+    calTeamId=document.getElementById('calTeam').value;
+    document.getElementById('calMonth').textContent=calCursor.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+    var byDay=calByDay(); var todayIso=calIso(new Date()); var mo=calCursor.getMonth();
+    document.getElementById('calGrid').innerHTML=calMonthGrid(calCursor).map(function(day){
+      var list=byDay[day]||[]; var inMonth=Number(day.slice(5,7))===mo+1;
+      var cls='calcell'+(inMonth?'':' out')+(day===todayIso?' today':'')+(day===calSel?' sel':'');
+      var pill=list.length?'<span class="calpill" style="background:'+calDayColor(list)+'">'+list.length+'</span>':'';
+      return '<div class="'+cls+'" onclick="calPick(\\''+day+'\\')"><span class="caldd">'+Number(day.slice(8,10))+'</span>'+pill+'</div>';
+    }).join('');
+    document.getElementById('calMsg').textContent=calFiltered().length+' scheduled';
+    renderCalSel();
+  }
+  function calPick(day){calSel=day;renderCalendar();}
+  function renderCalSel(){
+    var head=document.getElementById('calSelHead');
+    if(!calSel){head.textContent='';document.getElementById('calSel').innerHTML='';return;}
+    var byDay=calByDay(); var list=(byDay[calSel]||[]).slice().sort(function(a,b){return (a.job+a.full_code).localeCompare(b.job+b.full_code);});
+    var d=new Date(calSel+'T00:00:00');
+    head.textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})+(list.length?('  \\u00b7  '+list.length):'');
+    document.getElementById('calSel').innerHTML=list.length?list.map(function(it){
+      var col=statusColor(it.install_status);
+      return '<div class="calitem" onclick="openDetail(\\''+it.id+'\\')"><span class="caldot" style="background:'+col+'"></span>'
+        +'<div class="cimain"><div class="ccode">'+esc(it.full_code||'')+'</div>'
+        +'<div class="cmeta">'+esc(it.job)+(it.jobName?(' \\u00b7 '+esc(it.jobName)):'')+' \\u00b7 '+esc(it.room_code||'—')+'/'+esc(it.item_code||'—')+(it.team?(' \\u00b7 '+esc(it.team)):'')+'</div></div>'
+        +'<span class="cstat" style="color:'+col+';border-color:'+col+'">'+esc(istatLabel(it.install_status))+'</span></div>';
+    }).join(''):'<div class="empty" style="padding:8px 0">Nothing scheduled this day.</div>';
+  }
+
+  // ---- Budget & pricing rules (admin / invoice_manager) ----
+  var RULES=[];
+  var DEFAULT_PARAMS={material:{window_frame_per_m2:13000,window_glass_per_m2:3000,door_frame_per_unit:34000,door_glass_per_unit:3000},labour:{window_per_unit:8000,door_per_unit:12000},sale:{rate_per_flat:315900,rate_per_door:135000,rate_per_m2_extra:32400,windows_included_per_flat:5}};
+  function gbp(pennies){return '£'+((pennies||0)/100).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});}
+  function av(s){return esc(s).replace(/"/g,'&quot;');}
+  async function loadBudget(){
+    try{RULES=await (await api('/api/pricing-rules')).json();}catch(e){RULES=[];}
+    var tb=document.getElementById('ruleRows');
+    tb.innerHTML=RULES.length?RULES.map(function(r){var s=(r.params&&r.params.sale)||{};
+      return '<tr><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.customer||'—')+'</td><td class="ro">'+esc(r.model)+'</td>'
+        +'<td>'+gbp(s.rate_per_flat)+'</td><td>'+gbp(s.rate_per_door)+'</td><td>'+gbp(s.rate_per_m2_extra)+'</td>'
+        +'<td style="text-align:right"><a class="codelink" onclick="openRule(\\''+r.id+'\\')">Edit</a> &nbsp; <a class="codelink" onclick="delRule(\\''+r.id+'\\')">Delete</a></td></tr>';
+    }).join(''):'<tr><td colspan="7" class="ro">No pricing rules yet — create one to price a customer\\'s jobs.</td></tr>';
+    // job pricing selector
+    var jsel=document.getElementById('fpJob');
+    var jobs=await (await api('/api/jobs')).json();
+    var keep=jsel.value;
+    jsel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    if(keep)jsel.value=keep;
+    await loadJobPricing();
+  }
+  async function loadJobPricing(){
+    var code=document.getElementById('fpJob').value; if(!code){document.getElementById('fpBreak').innerHTML='';return;}
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pricing')).json();
+    var rsel=document.getElementById('fpRule');
+    rsel.innerHTML='<option value="">— none —</option>'+(d.rules||[]).map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+'</option>';}).join('');
+    rsel.value=d.rule_id||'';
+    renderBreak(d);
+  }
+  async function assignRule(){
+    var code=document.getElementById('fpJob').value; var rid=document.getElementById('fpRule').value;
+    var r=await api('/api/job/'+encodeURIComponent(code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rid||null})});
+    var d=await r.json(); if(r.ok&&d.ok){tShow(rid?'Rule assigned':'Rule cleared');loadJobPricing();}else tShow(d.error||'Failed');
+  }
+  function renderBreak(d){
+    var host=document.getElementById('fpBreak');
+    if(!d.rule_id){host.innerHTML='<div class="ro" style="padding:14px 2px">No rule assigned to this job yet — pick one above to price it.</div>';return;}
+    var b=d.breakdown;
+    if(!b){host.innerHTML='<div class="ro" style="padding:14px 2px">The assigned rule has no parameters yet. Edit it above.</div>';return;}
+    var marginPct=b.saleTotal?Math.round(b.margin/b.saleTotal*100):0;
+    var cards='<div class="statgrid" style="margin:14px 0">'
+      +stat(gbp(b.saleTotal),'Customer price','')
+      +stat(gbp(b.costTotal),'Our cost (budget)','')
+      +stat(gbp(b.margin),'Margin',marginPct+'%',b.margin<0)+'</div>';
+    var rows=b.flats.map(function(f){
+      return '<tr><td><b>'+esc(f.flat)+'</b></td><td>'+f.windows+'</td><td>'+gbp(f.base)+'</td>'
+        +'<td>'+(f.extraWindows?(f.extraWindows+' · '+f.extraM2+' m²'):'—')+'</td>'
+        +'<td>'+(f.extraAmount?gbp(f.extraAmount):'—')+'</td><td><b>'+gbp(f.total)+'</b></td></tr>';
+    }).join('');
+    var extra='';
+    if(b.doors.count)extra+='<tr><td colspan="5">Doors × '+b.doors.count+'</td><td><b>'+gbp(b.doors.amount)+'</b></td></tr>';
+    if(b.communal.windows)extra+='<tr><td colspan="5">Communal windows × '+b.communal.windows+' ('+b.communal.m2+' m²)</td><td><b>'+gbp(b.communal.amount)+'</b></td></tr>';
+    if(b.variationsTotal)extra+='<tr><td colspan="5">Variations × '+b.variations.length+'</td><td><b>'+gbp(b.variationsTotal)+'</b></td></tr>';
+    host.innerHTML=cards+'<div class="card2"><table><thead><tr><th>FLAT</th><th>WINDOWS</th><th>BASE</th><th>EXTRA (biggest)</th><th>EXTRA £</th><th>FLAT TOTAL</th></tr></thead><tbody>'
+      +rows+extra
+      +'<tr style="border-top:2px solid var(--line)"><td colspan="5" style="text-align:right"><b>Customer price</b></td><td><b>'+gbp(b.saleTotal)+'</b></td></tr></tbody></table></div>';
+  }
+  function rMoney(id,label,pennies){return '<div class="field"><label>'+label+' (£)</label><input id="'+id+'" type="number" min="0" step="0.01" value="'+((pennies||0)/100)+'"></div>';}
+  function rNum(id,label,val){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="number" min="0" step="1" value="'+(val==null?'':val)+'"></div>';}
+  function openRule(id){
+    var r=id?RULES.find(function(x){return x.id===id;}):null;
+    var p=(r&&r.params&&r.params.sale)?r.params:JSON.parse(JSON.stringify(DEFAULT_PARAMS));
+    var m=p.material||{},l=p.labour||{},sa=p.sale||{};
+    var html='<div class="fgrid">'
+      +'<div class="field full"><label>Rule name *</label><input id="r_name" value="'+av(r?r.name:'')+'" placeholder="e.g. Axis — standard"></div>'
+      +'<div class="field full"><label>Customer</label><input id="r_customer" value="'+av(r?(r.customer||''):'')+'" placeholder="Customer / client name"></div>'
+      +'<div class="groupt">MATERIAL COST (our purchase)</div>'
+      +rMoney('r_wfm','Windows — frame / m²',m.window_frame_per_m2)+rMoney('r_wgm','Windows — glass / m²',m.window_glass_per_m2)
+      +rMoney('r_dfu','Single door — frame / unit',m.door_frame_per_unit)+rMoney('r_dgu','Single door — glass / unit',m.door_glass_per_unit)
+      +'<div class="groupt">LABOUR COST — rip-out (budget, not fitter pay)</div>'
+      +rMoney('r_wl','Window / unit',l.window_per_unit)+rMoney('r_dl','Single door / unit',l.door_per_unit)
+      +'<div class="groupt">SALE RATES (customer price)</div>'
+      +rMoney('r_rf','Rate per flat',sa.rate_per_flat)+rMoney('r_rd','Rate per door',sa.rate_per_door)
+      +rMoney('r_rm','Rate per m² (communal / extra windows)',sa.rate_per_m2_extra)+rNum('r_wi','Windows included per flat',sa.windows_included_per_flat)
+      +'<div class="ferr" id="ruleErr"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveRule(\\''+(id||'')+'\\')">Save rule</button></div>';
+    openModal(id?'Edit pricing rule':'New pricing rule',html);
+  }
+  function pval(id){var v=parseFloat(document.getElementById(id).value);return isNaN(v)?0:Math.round(v*100);}
+  function ival(id){var v=parseInt(document.getElementById(id).value,10);return isNaN(v)?0:v;}
+  async function saveRule(id){
+    var name=(document.getElementById('r_name').value||'').trim();
+    if(!name){document.getElementById('ruleErr').textContent='Rule name is required.';return;}
+    var params={material:{window_frame_per_m2:pval('r_wfm'),window_glass_per_m2:pval('r_wgm'),door_frame_per_unit:pval('r_dfu'),door_glass_per_unit:pval('r_dgu')},
+      labour:{window_per_unit:pval('r_wl'),door_per_unit:pval('r_dl')},
+      sale:{rate_per_flat:pval('r_rf'),rate_per_door:pval('r_rd'),rate_per_m2_extra:pval('r_rm'),windows_included_per_flat:ival('r_wi')}};
+    var body={name:name,customer:(document.getElementById('r_customer').value||'').trim(),model:'axs_flat_v1',params:params};
+    var r=id?await api('/api/pricing-rules/'+id,{method:'PUT',body:JSON.stringify(body)}):await api('/api/pricing-rules',{method:'POST',body:JSON.stringify(body)});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Rule saved');loadBudget();}
+    else document.getElementById('ruleErr').textContent=d.error||'Could not save';
+  }
+  async function delRule(id){
+    if(!confirm('Delete this pricing rule? Jobs using it will become unpriced.'))return;
+    var r=await api('/api/pricing-rules/'+id,{method:'DELETE'});var d=await r.json();
+    if(r.ok&&d.ok){tShow('Rule deleted');loadBudget();}else tShow(d.error||'Could not delete');
+  }
+
+  // ---- Clearview style picker (mirrors the mobile picker) ----
+  var STYLES_CACHE=null; var spFilter={type:'',wide:0,high:0,q:''};
+  async function loadStyles(){ if(STYLES_CACHE)return STYLES_CACHE; try{STYLES_CACHE=await (await fetch('/api/styles')).json();}catch(e){STYLES_CACHE=[];} return STYLES_CACHE; }
+  function spEnsureCss(){
+    if(document.getElementById('spCss'))return;
+    var st=document.createElement('style');st.id='spCss';
+    st.textContent='.spover{position:fixed;inset:0;background:rgba(20,16,45,.55);z-index:60;display:none;align-items:center;justify-content:center;padding:20px}'
+      +'.spbox{background:#fff;border-radius:16px;width:min(920px,96vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)}'
+      +'.sphead{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line);font-size:15px}'
+      +'.spclose{cursor:pointer;color:var(--muted);font-size:18px;padding:4px 8px}'
+      +'.spfilters{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line)}'
+      +'.spfilters input{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;min-width:120px}'
+      +'.spchip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;color:var(--ink);margin:1px}'
+      +'.spchip.on{background:var(--purple);color:#fff;border-color:var(--purple)}'
+      +'.spgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;padding:16px;overflow:auto}'
+      +'.spcell{border:1px solid var(--line);border-radius:10px;background:#fff;padding:6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px}'
+      +'.spcell:hover{border-color:var(--purple)}'
+      +'.spcell img{width:100%;height:74px;object-fit:contain}'
+      +'.spcell span{font-size:11px;font-weight:700;color:var(--ink)}';
+    document.head.appendChild(st);
+  }
+  function stylePreview(){
+    var code=(document.getElementById('f_design').value||'').trim();
+    var img=document.getElementById('f_design_prev'); if(!img)return;
+    if(!code){img.style.display='none';return;}
+    img.onerror=function(){img.style.display='none';};
+    img.onload=function(){img.style.display='';};
+    img.src='/api/style-image/'+encodeURIComponent(code);
+  }
+  function spRenderChips(){
+    var styles=STYLES_CACHE||[];
+    var types=[''].concat(Array.from(new Set(styles.map(function(s){return s.type;}))));
+    document.getElementById('spTypes').innerHTML=types.map(function(t){return '<button class="spchip'+(spFilter.type===t?' on':'')+'" onclick="spSetType(\\''+t.replace(/'/g,"")+'\\')">'+(t||'All types')+'</button>';}).join('');
+    document.getElementById('spWide').innerHTML=[0,1,2,3,4,5,6].map(function(w){return '<button class="spchip'+(spFilter.wide===w?' on':'')+'" onclick="spSetWide('+w+')">'+(w?('W'+w):'Any wide')+'</button>';}).join('');
+    document.getElementById('spHigh').innerHTML=[0,1,2,3].map(function(h){return '<button class="spchip'+(spFilter.high===h?' on':'')+'" onclick="spSetHigh('+h+')">'+(h?('H'+h):'Any high')+'</button>';}).join('');
+  }
+  function renderStyleGrid(){
+    var styles=STYLES_CACHE||[];
+    var list=styles.filter(function(s){
+      if(spFilter.type&&s.type!==spFilter.type)return false;
+      if(spFilter.wide&&s.wide!==spFilter.wide)return false;
+      if(spFilter.high&&s.high!==spFilter.high)return false;
+      if(spFilter.q&&String(s.code).toLowerCase().indexOf(spFilter.q)===-1)return false;
+      return true;
+    });
+    var g=document.getElementById('spGrid');
+    g.innerHTML=list.map(function(s){return '<button class="spcell" onclick="pickStyle(\\''+s.code+'\\')"><img loading="lazy" src="/api/style-image/'+encodeURIComponent(s.code)+'"><span>'+esc(s.code)+'</span></button>';}).join('')||'<div class="empty" style="padding:24px">No styles match.</div>';
+  }
+  function spSetType(t){spFilter.type=t;spRenderChips();renderStyleGrid();}
+  function spSetWide(w){spFilter.wide=w;spRenderChips();renderStyleGrid();}
+  function spSetHigh(h){spFilter.high=h;spRenderChips();renderStyleGrid();}
+  function spSetQ(v){spFilter.q=(v||'').trim().toLowerCase();renderStyleGrid();}
+  function pickStyle(code){
+    var f=document.getElementById('f_design'); if(f)f.value=code;
+    var s=(STYLES_CACHE||[]).find(function(x){return String(x.code)===String(code);});
+    var wt=document.getElementById('f_wtype'); if(s&&wt&&!wt.value)wt.value=s.type||'';
+    stylePreview(); closeStylePicker();
+  }
+  function closeStylePicker(){var w=document.getElementById('spOverlay');if(w)w.style.display='none';}
+  async function openStylePicker(){
+    spEnsureCss();
+    var wrap=document.getElementById('spOverlay');
+    if(!wrap){wrap=document.createElement('div');wrap.id='spOverlay';wrap.className='spover';wrap.onclick=function(e){if(e.target===wrap)closeStylePicker();};document.body.appendChild(wrap);}
+    wrap.style.display='flex';
+    wrap.innerHTML='<div class="spbox"><div class="sphead"><b>Choose a Clearview style</b><span class="spclose" onclick="closeStylePicker()">✕</span></div>'
+      +'<div class="spfilters"><input id="spQ" placeholder="Search code…" oninput="spSetQ(this.value)"><span id="spTypes"></span><span id="spWide"></span><span id="spHigh"></span></div>'
+      +'<div class="spgrid" id="spGrid"></div></div>';
+    await loadStyles(); spRenderChips(); renderStyleGrid();
   }
   function istatLabel(v){var m=ISTATUS.filter(function(s){return s[0]===(v||'')});return (m[0]||['','—'])[1];}
   async function openDetail(id){
