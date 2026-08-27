@@ -120,6 +120,25 @@ export async function bulkUpdateItems(ids: string[], patch: Record<string, unkno
   return (data ?? []).length;
 }
 
+// Delete many items (tenant-scoped). Snags/photos/pricing cascade via FKs. Returns rows removed.
+export async function bulkDeleteItems(ids: string[], tenantId: string): Promise<number> {
+  if (!ids.length) return 0;
+  const { data, error } = await db().from('survey_items').delete().in('id', ids).eq('tenant_id', tenantId).select('id');
+  if (error) throw error;
+  return (data ?? []).length;
+}
+
+export async function countItemsForJob(jobId: string): Promise<number> {
+  const { count, error } = await db().from('survey_items').select('id', { count: 'exact', head: true }).eq('job_id', jobId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function deleteJob(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('jobs').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
 export async function getSurveyItem(id: string): Promise<SurveyItem> {
   const { data, error } = await db().from('survey_items').select('*').eq('id', id).single();
   if (error) throw error;
@@ -199,6 +218,29 @@ export async function setItemPricing(itemId: string, tenantId: string, patch: { 
   const { error } = await db().from('item_pricing')
     .upsert({ item_id: itemId, tenant_id: tenantId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'item_id' });
   if (error) throw error;
+}
+
+// ---- in-app QA test results ----
+export async function latestTestResults(tenantId: string, appVersion: string): Promise<Record<string, any>> {
+  const { data, error } = await db().from('test_results')
+    .select('scenario_code,status,comment,tested_by,created_at')
+    .eq('tenant_id', tenantId).eq('app_version', appVersion)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  const latest: Record<string, any> = {};
+  for (const r of (data ?? []) as any[]) if (!latest[r.scenario_code]) latest[r.scenario_code] = r; // first = newest
+  return latest;
+}
+export async function insertTestResult(tenantId: string, r: { scenario_code: string; app_version: string; status: string; comment: string | null; tested_by: string | null; tested_by_id: string | null }): Promise<void> {
+  const { error } = await db().from('test_results').insert({ tenant_id: tenantId, ...r });
+  if (error) throw error;
+}
+export async function allTestResults(tenantId: string, appVersion: string): Promise<any[]> {
+  const { data, error } = await db().from('test_results')
+    .select('scenario_code,status,comment,tested_by,created_at')
+    .eq('tenant_id', tenantId).eq('app_version', appVersion).order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as any[];
 }
 
 // All items across the tenant that have a planned install date (for the office calendar).

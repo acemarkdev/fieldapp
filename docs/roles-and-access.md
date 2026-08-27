@@ -61,3 +61,22 @@ The mobile app talks to Supabase **directly** with the anon key, so **UI checks 
 ### Applying migration 0007
 
 Run it once against the Supabase project (SQL editor, or `supabase db push`). It's idempotent (drops each policy/trigger before recreating), so it's safe to re-run. To sanity-check afterwards, sign in on mobile as a `surveyor` and confirm you can add an item but not a job; as a `fitter`, that you can change install status but not the spec.
+
+## Finance / budget module — a separate wall
+
+The budget & customer-pricing module is deliberately isolated so **only `admin` and the `invoice_manager` role** can ever see costs, sale prices or pricing rules — office, surveyor, scanner, fitter and the **entire mobile app** are blind to it.
+
+- **Capabilities.** `finance.view` / `finance.manage` are held only by `admin` and `invoice_manager` (see `permissions.ts`). No other role has them.
+- **Data lives in its own tables.** RLS is row-level, not column-level, so a money column on the broadly-readable `survey_items`/`jobs` would leak. All financial data therefore sits in `pricing_rules`, `job_pricing` and `item_pricing` (migration `0017`), each with an RLS policy of `auth_role() in ('admin','invoice_manager')`. The operational tables carry **no** price/cost columns.
+- **Three enforcement layers, same as everything else.**
+  - *Database (RLS)* — the real boundary; the mobile anon+JWT client and every non-finance role get zero rows.
+  - *Server* — every finance endpoint in `office.ts` is guarded by `allow('finance.view' | 'finance.manage')` (the office server uses the service-role key, which bypasses RLS, so this guard is what protects that path).
+  - *UI* — the **Budget** tab only renders for `finance.view`; on the New-job form the rule picker only shows for `finance.manage`.
+
+### Verifying the walls hold
+
+- **Automated (run any time):**
+  - `npx tsx packages/shared/src/permissions.test.ts` — asserts the finance caps belong to admin/invoice_manager only, and that `invoice_manager` has no operational caps.
+  - `npx tsx apps/api/src/financeGuards.test.ts` — static audit: every finance route in `office.ts` has a finance guard, and the mobile app never queries a finance table. (A future refactor that drops a guard fails this.)
+- **Database:** run `supabase/tests/finance_rls_check.sql` in the SQL editor — it raises if RLS is off or a policy is missing on any finance table, and prints the policies.
+- **Manual:** sign into the office as an `office` user → the **Budget** tab is absent; their token calling `GET /api/pricing-rules` returns `403`.

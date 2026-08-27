@@ -1,11 +1,35 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.37.1';
+export const APP_VERSION = '0.42.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.42.1', date: '2026-08-27', changes: [
+    'Fix: the on-screen Budget breakdown (and the Variations tick boxes) were blank. The breakdown view referenced a helper (stat) that lives in the separate /live wallboard script, so it threw "stat is not defined" and never rendered — the customer-price PDF was unaffected, which hid the bug. Inlined the summary cards so the breakdown and the Variations list now show. Present since 0.36.0.',
+  ] },
+  { version: '0.42.0', date: '2026-08-27', changes: [
+    'Items tab: Flat column + header filters. The office items table now shows a Flat column, and the Flat and Install-status column headers each have a dropdown to filter the list (e.g. show only flat 21, or only Installed). The item counter reflects the filtered view, so an invoice manager can quickly validate how many items are in each flat and at each status. Filters reset when you switch jobs.',
+  ] },
+  { version: '0.41.2', date: '2026-08-27', changes: [
+    'Fix: the Users tab now lets you assign the invoice manager role. Two hard-coded role lists in the office had never been updated, so invoice_manager showed on the Roles matrix but couldn\'t actually be assigned (the server rejected it and the dropdown omitted it). Both now derive from the shared role list, so any future role appears automatically. Needs migration 0016 (adds the enum value) applied.',
+  ] },
+  { version: '0.41.1', date: '2026-08-27', changes: [
+    'Finance access hardening + verification. Confirmed and locked down the finance walls: added automated tests (permissions matrix + a static audit that every finance route in the office server is capability-guarded and the mobile app never queries a finance table), a Supabase SQL check that RLS is on and admin/invoice_manager-only on all finance tables, and documented the model in docs/roles-and-access.md. No behaviour change — this proves office/field/mobile can never see costs or prices.',
+  ] },
+  { version: '0.41.0', date: '2026-08-27', changes: [
+    'In-app QA Test tab (office, admin/office). A new Test tab lists the app\'s test scenarios grouped by area; a tester ticks each OK or NOK with an optional comment, and results are saved to the database against the current app version and tester. Live progress (tested / OK / NOK / untested), filter by area or result, and Export CSV. Scenarios come from the same versioned list as the test-plan spreadsheet. Requires migration 0018.',
+  ] },
+  { version: '0.40.0', date: '2026-08-26', changes: [
+    'Office deletes + item counters. (1) Delete a job (admin/office) — allowed only when it has no items; otherwise it tells you how many to clear first. (2) Delete one or more items: select rows and hit Delete in the bulk bar (managers only; snags/photos/pricing cascade). (3) The items header now shows a live count — how many items are shown (and of how many when filtered), how many have changed since last sync, and how many aren\'t synced yet.',
+  ] },
+  { version: '0.39.0', date: '2026-08-25', changes: [
+    'Customer price-breakdown PDF (office, finance only). A "Customer price PDF" button in the Budget job view downloads a branded, customer-facing quote: per-flat rows (base + biggest extras), doors, communal windows, variations and the grand total. It deliberately shows ONLY the sale side — never our cost or margin. Endpoint GET /api/job/:code/price.pdf, gated to finance.view.',
+  ] },
+  { version: '0.38.0', date: '2026-08-25', changes: [
+    'Variations in the budget breakdown (office, finance only). The job price view now lists the job\'s items with a Variation tick + a manual amount (£). Marking an item pulls it out of the flat\'s fixed scope and bills it separately at the agreed amount, and the totals/margin update live. Stored in the finance-only item_pricing table; endpoint PUT /api/item/:id/pricing gated to finance.manage.',
+  ] },
   { version: '0.37.1', date: '2026-08-24', changes: [
     'Pick a pricing rule when creating a job in the office. The "+ New job" form now includes a Pricing rule dropdown (only for admins / invoice managers, since rules are finance-only); choosing one assigns it to the new job on save, so the Budget breakdown is ready immediately. Plain office users don\'t see the picker.',
   ] },

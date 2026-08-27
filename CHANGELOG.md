@@ -5,6 +5,33 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.42.1 — 2026-08-27
+- **Fix: on-screen Budget breakdown (and the Variations tick boxes) were blank.** `renderBreak` called `stat()`, a helper that only exists in the separate `/live` wallboard script, so it threw `stat is not defined` and never rendered the flat table or the Variations list. (The customer-price **PDF** is generated server-side and was unaffected — which is why the numbers looked fine there and the bug stayed hidden since 0.36.0.) The summary cards are now built inline, so the breakdown and the Variation checkboxes appear.
+
+## 0.42.0 — 2026-08-27
+- **Items tab — Flat column + header filters.** The office items table now has a **Flat** column, and the **Flat** and **Install status** column headers each carry a dropdown to filter the list (e.g. only flat 21, or only *Installed* / *no status*). The item counter reflects the filtered view, so an **invoice manager** can validate item counts per flat and per status at a glance. Filters reset when you switch jobs. (Also fixed a leftover line that overwrote the richer item counter.)
+
+## 0.41.2 — 2026-08-27
+- **Fix: the Users tab can now assign the *invoice manager* role.** Two hard-coded role lists in the office server/UI were never updated, so `invoice_manager` appeared on the **Roles** matrix but couldn't actually be assigned — the server rejected it as invalid and the dropdown omitted it. Both now derive from the shared role list (`@ace/shared`), so this and any future role appear automatically (with a friendly "invoice manager" label). Requires migration `0016` (adds the enum value) to be applied.
+
+## 0.41.1 — 2026-08-27
+- **Finance access hardening + verification.** Proved and locked the finance walls. Added **automated tests** — `packages/shared/src/permissions.test.ts` (finance caps belong to admin/invoice_manager only; invoice_manager has no operational caps) and `apps/api/src/financeGuards.test.ts` (static audit: **all 8 finance routes** in the office server are capability-guarded, and the **mobile app never queries a finance table**) — a **Supabase check** `supabase/tests/finance_rls_check.sql` (raises unless RLS is on and admin/invoice_manager-only on `pricing_rules`, `job_pricing`, `item_pricing`), and a **Finance security** section in `docs/roles-and-access.md`. No behaviour change; this is the proof that office/field/mobile can never see costs or prices.
+
+## 0.41.0 — 2026-08-27
+- **In-app QA Test tab** (office; admin/office). A new **Test** tab lists the app's test scenarios grouped by area. A tester marks each **OK** or **NOK** with an optional comment; each submission is saved to the database (`test_results`) against the **current app version** and the tester's name. The tab shows **live progress** (tested / OK / NOK / untested), filters by **area** and **result**, and has **Export CSV**. The scenario list lives in code (`apps/api/src/testScenarios.json`) — the *same* list behind the versioned test-plan spreadsheet, so the two stay in sync. Endpoints `GET /api/tests`, `POST /api/tests/result`, `GET /api/tests/export.csv` (gated to `dashboard.view`). **Requires migration `0018_test_results.sql`.**
+
+## 0.40.0 — 2026-08-26
+- **Office deletes + item counters.**
+  - **Delete a job** (admin/office): a **Delete job** button appears when a specific job is open; it's allowed **only when the job has no items** — otherwise the server refuses (409) and tells you how many items to clear first (`DELETE /api/job/:code`, `job_pricing` link cascades).
+  - **Delete items**: select one or more rows and hit **Delete** in the bulk bar (managers only — admin/office; matches the DB delete policy). Snags, photos and pricing rows **cascade** via FKs. Confirms before deleting. New bulk action `delete` on `/api/items/bulk`.
+  - **Item counters**: the items header now shows a live count — how many items are **shown** (and *of* how many when a filter is active), plus **N changed** (needs re-sync) and **N not synced**.
+
+## 0.39.0 — 2026-08-25
+- **Customer price-breakdown PDF** (office; finance only). A **“Customer price PDF”** button in the Budget → Job pricing view downloads a branded, customer-facing quote: per-flat rows (base + biggest extras), doors, communal windows, each variation, and the grand total. It shows **only the sale side — never our cost or margin** (that stays internal to the on-screen breakdown). Built with `pdfkit` (`apps/api/src/pricingPdf.ts`); endpoint **`GET /api/job/:code/price.pdf`** gated to `finance.view`; returns 400 if the job has no rule assigned. No migration.
+
+## 0.38.0 — 2026-08-25
+- **Variations in the budget breakdown** (office; finance only). The job price view now lists the job's items with a **Variation** tick and a **manual amount (£)**. Ticking an item takes it **out of the flat's fixed scope** and bills it **separately** at the agreed amount; the summary cards, per-flat table and margin update live. Stored in the finance-only `item_pricing` table via **`PUT /api/item/:id/pricing`** (gated to `finance.manage`; the generic item route now ignores `/pricing`). Verified end-to-end against the real engine (ticking a £500 variation moved a sample job from £3,159.00 → £3,659.00).
+
 ## 0.37.1 — 2026-08-24
 - **Pick a pricing rule when creating a job (office).** The “+ New job” form now shows a **Pricing rule** dropdown — only for admins / invoice managers, since rules are finance-only — and assigns the chosen rule to the new job on save (create job → `PUT /api/job/:code/pricing`), so its Budget breakdown is populated straight away. Plain office users don’t see the picker.
 
