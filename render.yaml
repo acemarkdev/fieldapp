@@ -1,0 +1,68 @@
+# Render Blueprint — deploys the OFFICE app as two web services: test and prod.
+# Each points at its OWN Supabase project + Monday board via env vars (set as secrets in the
+# Render dashboard, not here). The app itself is identical; only the environment differs.
+#
+#   test  → tracks the `main` branch, APP_ENV=test  (shows an orange TEST badge)
+#   prod  → tracks the `release` branch, APP_ENV=prod
+#
+# Promote test → prod by merging `main` into `release` (that push deploys prod).
+# See docs/deploy-test-prod.md for the full walkthrough.
+
+services:
+  - type: web
+    name: ace-office-test
+    runtime: node
+    branch: main
+    plan: free                    # sleeps after ~15 min idle — fine for testing
+    buildCommand: npm install
+    startCommand: npm start -w @ace/api
+    healthCheckPath: /
+    autoDeploy: true              # deploys on every push to main
+    domains:
+      - office-test.acemark.com.pl  # add a CNAME → ace-office-test.onrender.com (see docs)
+    envVars:
+      - key: APP_ENV
+        value: test
+      - key: NODE_VERSION
+        value: "22"
+      - key: SUPABASE_URL
+        sync: false               # set in the Render dashboard (test project)
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MONDAY_API_TOKEN
+        sync: false
+      - key: AZURE_SSO_ENABLED
+        value: "false"
+      - key: LIVE_KEY
+        sync: false
+
+  - type: web
+    name: ace-office-prod
+    runtime: node
+    branch: release
+    plan: starter                 # stays warm (no cold starts) for real users
+    buildCommand: npm install
+    startCommand: npm start -w @ace/api
+    healthCheckPath: /
+    autoDeploy: true              # deploys when you push/merge to `release`
+    domains:
+      - office.acemark.com.pl     # add a CNAME → ace-office-prod.onrender.com (see docs)
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: NODE_VERSION
+        value: "22"
+      - key: SUPABASE_URL
+        sync: false               # set in the Render dashboard (PROD project)
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MONDAY_API_TOKEN
+        sync: false
+      - key: AZURE_SSO_ENABLED
+        value: "false"
+      - key: LIVE_KEY
+        sync: false

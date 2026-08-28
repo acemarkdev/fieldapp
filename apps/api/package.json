@@ -16,16 +16,17 @@
     "dashboard": "tsx src/server.ts",
     "create-admin": "tsx src/create-admin.ts",
     "office": "tsx src/office.ts",
+    "start": "node --import tsx src/office.ts",
     "recognise": "tsx src/recognise-demo.ts"
   },
   "dependencies": {
     "@ace/shared": "*",
     "@supabase/supabase-js": "^2.45.0",
-    "pdfkit": "^0.15.0"
+    "pdfkit": "^0.15.0",
+    "tsx": "^4.16.0"
   },
   "devDependencies": {
     "@types/pdfkit": "^0.13.4",
-    "tsx": "^4.16.0",
     "typescript": "^5.5.0"
   }
 }

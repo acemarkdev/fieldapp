@@ -5,6 +5,12 @@ The office web app shows it as a chip in the header (click it for "What's new").
 Bump the version and add an entry here **and** in `version.ts` on every change.
 Versioning: MAJOR.MINOR.PATCH — MINOR for features, PATCH for fixes/tweaks.
 
+## 0.43.1 — 2026-08-28
+- **Deploy config: custom domains.** The Render blueprint now serves **prod at `office.acemark.com.pl`** and **test at `office-test.acemark.com.pl`**; `docs/deploy-test-prod.md` gained the CNAME/DNS steps and the SSO redirect URLs to add. Config/docs only — no application change.
+
+## 0.43.0 — 2026-08-27
+- **Test / Prod deployment setup.** The office app now reads an **`APP_ENV`** flag and shows a clear **TEST** badge (orange — in the header, on the login screen, and as `[TEST]` in the browser tab) so the test and live copies are impossible to confuse; prod shows a plain `PROD` chip. Added **`render.yaml`** — a Render blueprint defining two cloud web services: **test** (auto-deploys from `main`) and **prod** (deploys from a `release` branch), each pointing at its **own Supabase project and Monday board** via dashboard secrets. Full walkthrough in **`docs/deploy-test-prod.md`** (two Supabase projects, applying migrations to both, admin logins, and the merge-to-`release` promotion flow). `tsx` moved to runtime dependencies + a `start` script so it runs on a host.
+
 ## 0.42.1 — 2026-08-27
 - **Fix: on-screen Budget breakdown (and the Variations tick boxes) were blank.** `renderBreak` called `stat()`, a helper that only exists in the separate `/live` wallboard script, so it threw `stat is not defined` and never rendered the flat table or the Variations list. (The customer-price **PDF** is generated server-side and was unaffected — which is why the numbers looked fine there and the bug stayed hidden since 0.36.0.) The summary cards are now built inline, so the breakdown and the Variation checkboxes appear.
 

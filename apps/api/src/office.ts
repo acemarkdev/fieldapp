@@ -216,7 +216,8 @@ const server = createServer(async (req, res) => {
         .replace('__ROLE_MATRIX_JSON__', () => JSON.stringify(ROLE_MATRIX))
         .replaceAll('__SUPABASE_URL__', () => process.env.SUPABASE_URL ?? '')
         .replaceAll('__SUPABASE_ANON_KEY__', () => process.env.SUPABASE_ANON_KEY ?? '')
-        .replaceAll('__SSO_ENABLED__', () => (process.env.AZURE_SSO_ENABLED === 'true' ? 'true' : 'false'));
+        .replaceAll('__SSO_ENABLED__', () => (process.env.AZURE_SSO_ENABLED === 'true' ? 'true' : 'false'))
+        .replaceAll('__APP_ENV__', () => (process.env.APP_ENV === 'test' ? 'test' : (process.env.APP_ENV === 'prod' ? 'prod' : '')));
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       res.end(html); return;
     }
@@ -1120,6 +1121,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .card2{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:left;font-size:10px;color:#9a97ad;font-weight:700;padding:13px 12px 8px}
+  .envbadge{display:none;font-size:10px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:6px;margin-left:8px;vertical-align:middle}
+  .envbadge.test{display:inline-block;background:#d97706;color:#fff}
+  .envbadge.prod{display:inline-block;background:var(--soft);color:var(--muted)}
+  body.env-test header{box-shadow:inset 0 -3px 0 #d97706}
   .colfilter{margin-top:4px;font-size:11px;font-weight:600;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:3px 4px;max-width:120px;background:#fff}
   td{padding:9px 12px;border-top:1px solid #f2f0f8;vertical-align:middle}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -1212,12 +1217,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </button>
   </div>
   <div class="err" id="loginErr"></div>
-  <div class="loginver">v__APP_VERSION__</div>
+  <div class="loginver">v__APP_VERSION__<span class="envbadge" id="loginEnvBadge"></span></div>
 </div></div>
 
 <div id="appView" style="display:none">
   <header>
-    <div class="brand">ACE<b>GROUP</b> <span>· Office</span></div>
+    <div class="brand">ACE<b>GROUP</b> <span>· Office</span><span class="envbadge" id="envBadge"></span></div>
     <button class="verchip" onclick="showChangelog()" title="What's new">v__APP_VERSION__</button>
     <nav class="nav">
       <button id="tabDash" class="tab on" onclick="showTab('dashboard')">Dashboard</button>
@@ -1464,6 +1469,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var myRole=sessionStorage.getItem('ace_role')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
   var CHANGELOG=__CHANGELOG_JSON__;
   var SSO_ENABLED=__SSO_ENABLED__; var SUPA_URL='__SUPABASE_URL__'; var SUPA_ANON='__SUPABASE_ANON_KEY__';
+  var APP_ENV='__APP_ENV__';
+  (function(){ if(!APP_ENV)return; var label=APP_ENV.toUpperCase();
+    ['envBadge','loginEnvBadge'].forEach(function(id){var b=document.getElementById(id); if(b){b.textContent=label; b.className='envbadge '+APP_ENV;}});
+    if(APP_ENV==='test')document.body.classList.add('env-test');
+    document.title=(APP_ENV==='test'?'[TEST] ':'')+'ACE Office';
+  })();
   function loginMicrosoft(){
     var redirect=window.location.origin+'/';
     window.location.href=SUPA_URL+'/auth/v1/authorize?provider=azure'

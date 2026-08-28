@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.42.1';
+export const APP_VERSION = '0.43.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.43.1', date: '2026-08-28', changes: [
+    'Deploy config: custom domains. The Render blueprint now serves prod at office.acemark.com.pl and test at office-test.acemark.com.pl; docs/deploy-test-prod.md has the CNAME/DNS steps (and the SSO redirect URLs to add). Config/docs only — no app change.',
+  ] },
+  { version: '0.43.0', date: '2026-08-27', changes: [
+    'Test/Prod deployment setup. The office app now reads an APP_ENV flag and shows a clear TEST badge (orange, in the header + login + browser tab) so the test and live copies are unmistakable. Added a Render blueprint (render.yaml) that defines two cloud services — test (from main) and prod (from a release branch), each pointing at its own Supabase project and Monday board — plus docs/deploy-test-prod.md with the full setup and release workflow. tsx moved to runtime deps and a start script added so it runs on a host.',
+  ] },
   { version: '0.42.1', date: '2026-08-27', changes: [
     'Fix: the on-screen Budget breakdown (and the Variations tick boxes) were blank. The breakdown view referenced a helper (stat) that lives in the separate /live wallboard script, so it threw "stat is not defined" and never rendered — the customer-price PDF was unaffected, which hid the bug. Inlined the summary cards so the breakdown and the Variations list now show. Present since 0.36.0.',
   ] },
