@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.53.0';
+export const APP_VERSION = '0.54.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.54.0', date: '2026-08-31', changes: [
+    'Scanner mapping workflow. New jobs start as \'New\' and are hidden from scanners; an admin assigns a mapping start date (Mapping tab) which flips the job to \'Pending mapping\' and reveals it to scanners. In the Mapping tab a scanner sets Block and Elevation (defaults for the batch), then adds a row per floor with the number of windows and doors; a new row opens automatically as each is filled. Preload builds one line per item (e.g. Block 1 / Elevation 1 / Floor 1 with 3 windows + 1 door -> AXS.LAB.B1.E1.F1.W1..W3 and .D1). Each line can be edited, deleted, or marked Couple with a count to split it (W2 x2 -> W2.1, W2.2). Save creates the items; the job stays Pending mapping so more can be pre-loaded.',
+    'Fix: photo kinds. Added the \'before\' and \'after\' values to the photo_kind database type so the Picture Before / Picture After routing (v0.52) actually saves. Requires migration 0024.',
+  ] },
   { version: '0.53.0', date: '2026-08-31', changes: [
     'Mobile photos route to Monday by role too. A photo taken in the phone app by a scanner or surveyor now goes to the board\'s "Picture Before" column; a fitter\'s photo goes to "Picture After" — matching the office app. Snag defect photos are unchanged (Design Sketch). Previously all phone photos went to Design Sketch.',
   ] },

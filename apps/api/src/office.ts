@@ -17,7 +17,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts } from './store';
+import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
@@ -464,8 +464,59 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/jobs' && req.method === 'GET') {
-      const jobs = await listJobs(ctx.tenant_id);
-      send(res, 200, jobs.map((j) => ({ code: `${j.client_code}.${j.job_code}`, name: j.name })));
+      let jobs = await listJobs(ctx.tenant_id);
+      // Scanners only see jobs an admin has released for mapping.
+      if (ctx.role === 'scanner') jobs = jobs.filter((j) => (j as any).status === 'pending_mapping');
+      send(res, 200, jobs.map((j) => ({
+        code: `${j.client_code}.${j.job_code}`, name: j.name,
+        status: (j as any).status ?? 'new', mapping_start_date: (j as any).mapping_start_date ?? null,
+      })));
+      return;
+    }
+
+    // Admin assigns a mapping start date → releases the job to scanners (status 'pending_mapping').
+    if (p.startsWith('/api/job/') && p.endsWith('/mapping-date') && req.method === 'POST') {
+      if (!allow('jobs.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const date = String(b.date ?? '').trim() || null;
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { send(res, 400, { error: 'Use a valid date (YYYY-MM-DD).' }); return; }
+      await setJobMappingDate(job.id, date, ctx.tenant_id);
+      send(res, 200, { ok: true, status: date ? 'pending_mapping' : 'new' });
+      return;
+    }
+
+    // Scanner mapping bulk-create: block/elevation + rows [{flat, item, item_type}] → items.
+    if (p.startsWith('/api/job/') && p.endsWith('/mapping-items') && req.method === 'POST') {
+      if (!allow('items.create')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const block = String(b.block ?? '').trim().toUpperCase() || null;
+      const elevation = String(b.elevation ?? '').trim().toUpperCase() || null;
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      if (!rows.length) { send(res, 400, { error: 'Nothing to save — preload some items first.' }); return; }
+      const seen = new Set<string>();
+      const fields: Record<string, unknown>[] = [];
+      for (const r of rows) {
+        const flat = String(r.flat ?? '').trim().replace(/^F/i, '');
+        const item = String(r.item ?? '').trim().toUpperCase();
+        if (!item) continue;
+        const full_code = assembleFullCode({ client: job.client_code, job: job.job_code, block, elevation, flat, item });
+        if (seen.has(full_code)) continue; seen.add(full_code);
+        fields.push({
+          tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
+          block, elevation, flat: flat || null, item_code: item,
+          item_type: String(r.item_type ?? '').trim() || null, full_code,
+        });
+      }
+      try {
+        const inserted = await bulkInsertSurveyItems(fields);
+        send(res, 200, { ok: true, inserted, skipped: fields.length - inserted });
+      } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
       return;
     }
     if (p === '/api/jobs' && req.method === 'POST') {
@@ -1284,6 +1335,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <nav class="nav">
       <button id="tabDash" class="tab on" onclick="showTab('dashboard')">Dashboard</button>
       <button id="tabItems" class="tab" onclick="showTab('items')">Items</button>
+      <button id="tabMapping" class="tab" style="display:none" onclick="showTab('mapping')">Mapping</button>
       <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
       <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
       <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
@@ -1501,6 +1553,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="mappingView" style="display:none">
+    <main style="max-width:1000px">
+      <h2>Mapping</h2>
+      <div class="sub" id="mapSub">Pre-load a job's items floor by floor.</div>
+      <div id="mapBody" style="margin-top:14px"></div>
+    </main>
+  </div>
+
   <div id="customerView" style="display:none">
     <main style="max-width:820px">
       <h2>Your installations</h2>
@@ -1558,8 +1618,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
   var flatFilter='', statusFilter='', teamFilter='';
   function restoreTab(){
-    var t=sessionStorage.getItem('ace_tab')||'dashboard';
-    var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view'};
+    var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
+    var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -1630,12 +1690,169 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(!r.ok){tShow('Could not generate the report.');return null;}return r.blob();
     }).then(function(b){ if(!b)return; var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=code+'-install.pdf';document.body.appendChild(a);a.click();a.remove(); });
   }
+  var JOB_STATUS={}, JOB_MAPDATE={};
+  // ---- Mapping (scanner pre-load) ----
+  function loadMapping(){
+    var box=document.getElementById('mapBody');
+    if(!current||current==='ALL'){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
+    var status=JOB_STATUS[current]||'';
+    document.getElementById('mapSub').innerHTML='Job <b>'+esc(current)+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
+    if(status!=='pending_mapping'){
+      if(canCap('jobs.manage')){
+        box.innerHTML='<div class="card2" style="padding:16px;max-width:480px">'
+          +'<div style="font-weight:800;margin-bottom:4px">Release this job for mapping</div>'
+          +'<div class="sub" style="margin-bottom:10px">Assign a mapping start date to make this job visible to scanners.</div>'
+          +'<div style="display:flex;gap:10px;align-items:center"><input type="date" id="mapDate" value="'+esc(JOB_MAPDATE[current]||'')+'"><button class="save" id="mapDateBtn">Assign date</button></div></div>';
+        document.getElementById('mapDateBtn').addEventListener('click',assignMapDate);
+      } else box.innerHTML='<div class="empty">This job isn\\'t ready for mapping yet — an admin needs to assign a mapping start date.</div>';
+      return;
+    }
+    renderMapBuilder(box);
+  }
+  async function assignMapDate(){
+    var date=document.getElementById('mapDate').value;
+    if(!date){tShow('Pick a date');return;}
+    var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-date',{method:'POST',body:JSON.stringify({date:date})})).json();
+    if(d.ok){JOB_STATUS[current]='pending_mapping';JOB_MAPDATE[current]=date;tShow('Released for mapping');loadMapping();}
+    else tShow(d.error||'Failed');
+  }
+  function mapWirePrefix(id,p){
+    var el=document.getElementById(id);
+    el.addEventListener('input',function(){
+      var v=el.value.toUpperCase().replace(new RegExp('^'+p+'+'),''); v=v?(p+v):'';
+      if(v!==el.value){el.value=v;try{el.setSelectionRange(v.length,v.length);}catch(_){}}
+      maybeRevealFloors();
+    });
+  }
+  function renderMapBuilder(box){
+    box.innerHTML=''
+      +'<div class="card2" style="padding:16px;margin-bottom:14px">'
+      +'<div class="groupt" style="padding:0 0 8px">DEFAULTS FOR ALL ITEMS</div>'
+      +'<div style="display:flex;gap:14px;flex-wrap:wrap">'
+      +'<label style="font-size:12px;color:var(--muted)">Block<br><input id="map_block" placeholder="e.g. 1 &rarr; B1" style="width:130px"></label>'
+      +'<label style="font-size:12px;color:var(--muted)">Elevation<br><input id="map_elev" placeholder="e.g. 1 &rarr; E1" style="width:130px"></label>'
+      +'</div>'
+      +'<div id="floorsWrap" style="margin-top:14px;display:none">'
+      +'<div class="groupt" style="padding:0 0 6px">FLOORS &mdash; enter floor no., windows and doors (a new row opens as you fill each)</div>'
+      +'<div id="floorRows"></div>'
+      +'<button class="add" id="preloadBtn" style="margin-top:10px">Preload</button>'
+      +'</div></div>'
+      +'<div id="mapTableWrap"></div>';
+    mapWirePrefix('map_block','B'); mapWirePrefix('map_elev','E');
+    document.getElementById('preloadBtn').addEventListener('click',mapPreload);
+    maybeRevealFloors();
+  }
+  function maybeRevealFloors(){
+    var bEl=document.getElementById('map_block'), eEl=document.getElementById('map_elev'); if(!bEl||!eEl)return;
+    var w=document.getElementById('floorsWrap');
+    if(bEl.value.trim()&&eEl.value.trim()){ w.style.display='block'; if(!document.querySelector('#floorRows .frow')) addFloorRow(); }
+    else w.style.display='none';
+  }
+  function addFloorRow(){
+    var wrap=document.getElementById('floorRows');
+    var div=document.createElement('div'); div.className='frow'; div.style.cssText='display:flex;gap:8px;margin-bottom:6px;align-items:center';
+    div.innerHTML='<input class="fr-floor" placeholder="Floor" style="width:90px">'
+      +'<input class="fr-win" type="number" min="0" placeholder="Windows" style="width:110px">'
+      +'<input class="fr-door" type="number" min="0" placeholder="Doors" style="width:110px">'
+      +'<button class="del fr-del" title="Remove">&#10005;</button>';
+    wrap.appendChild(div);
+    div.querySelectorAll('input').forEach(function(inp){ inp.addEventListener('input',function(){ onFloorInput(div); }); });
+    div.querySelector('.fr-del').addEventListener('click',function(){ if(document.querySelectorAll('#floorRows .frow').length>1) div.remove(); });
+  }
+  function onFloorInput(div){
+    var rows=document.querySelectorAll('#floorRows .frow');
+    if(div!==rows[rows.length-1]) return;
+    var f=div.querySelector('.fr-floor').value.trim(), w=div.querySelector('.fr-win').value.trim(), d=div.querySelector('.fr-door').value.trim();
+    if(f!==''&&w!==''&&d!=='') addFloorRow();
+  }
+  function mapCode(block,elev,flat,item){
+    var parts=current.split('.');
+    return [parts[0],parts[1],block,elev,(flat?('F'+flat):''),item].filter(function(x){return x;}).join('.');
+  }
+  function mapPreload(){
+    var block=document.getElementById('map_block').value.trim(), elev=document.getElementById('map_elev').value.trim();
+    var floors=[];
+    document.querySelectorAll('#floorRows .frow').forEach(function(div){
+      var f=div.querySelector('.fr-floor').value.trim().replace(/^F/i,'');
+      var w=parseInt(div.querySelector('.fr-win').value,10)||0;
+      var d=parseInt(div.querySelector('.fr-door').value,10)||0;
+      if(f!==''&&(w>0||d>0)) floors.push({floor:f,windows:w,doors:d});
+    });
+    if(!floors.length){tShow('Add at least one floor with windows or doors');return;}
+    var rows=[];
+    floors.forEach(function(fl){
+      for(var i=1;i<=fl.windows;i++) rows.push({flat:fl.floor,item:'W'+i,type:'Window'});
+      for(var j=1;j<=fl.doors;j++) rows.push({flat:fl.floor,item:'D'+j,type:'Door'});
+    });
+    renderMapTable(block,elev,rows);
+  }
+  function renderMapTable(block,elev,rows){
+    var wrap=document.getElementById('mapTableWrap');
+    var head='<tr><th>CODE</th><th>FLOOR</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>&times;</th><th></th></tr>';
+    var body=rows.map(function(r){ return mapRowHtml(block,elev,r); }).join('');
+    wrap.innerHTML='<div class="groupt" style="padding:0 0 6px">PRELOADED ITEMS &mdash; review, edit, mark couples, then Save</div>'
+      +'<div class="card2" style="padding:0;overflow:auto"><table id="mapTable"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>'
+      +'<div style="display:flex;gap:12px;align-items:center;margin-top:12px">'
+      +'<button class="save" id="mapSaveBtn">Save '+rows.length+' item(s)</button>'
+      +'<button class="add" id="mapAddRowBtn">+ Add line</button>'
+      +'<span class="sub" id="mapSaveNote"></span></div>';
+    document.querySelectorAll('#mapTable tbody tr').forEach(function(tr){ wireMapRow(tr,block,elev); });
+    document.getElementById('mapSaveBtn').addEventListener('click',function(){mapSave(block,elev);});
+    document.getElementById('mapAddRowBtn').addEventListener('click',function(){
+      var tb=document.querySelector('#mapTable tbody'); var d=document.createElement('template');
+      d.innerHTML=mapRowHtml(block,elev,{flat:'',item:'',type:'Window'}); var tr=d.content.firstChild;
+      tb.appendChild(tr); wireMapRow(tr,block,elev);
+    });
+  }
+  function mapRowHtml(block,elev,r){
+    var code=mapCode(block,elev,r.flat,r.item);
+    return '<tr>'
+      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(code)+'</td>'
+      +'<td><input class="mr-flat" value="'+esc(r.flat)+'" style="width:64px"></td>'
+      +'<td><input class="mr-item" value="'+esc(r.item)+'" style="width:90px"></td>'
+      +'<td><select class="mr-type"><option'+(r.type==='Window'?' selected':'')+'>Window</option><option'+(r.type==='Door'?' selected':'')+'>Door</option></select></td>'
+      +'<td style="text-align:center"><input type="checkbox" class="mr-couple"></td>'
+      +'<td><input type="number" min="2" value="2" class="mr-n" style="width:56px" disabled></td>'
+      +'<td style="text-align:right"><button class="del mr-del">&#10005;</button></td>'
+      +'</tr>';
+  }
+  function wireMapRow(tr,block,elev){
+    function recode(){ tr.querySelector('.mapcode').textContent=mapCode(block,elev,tr.querySelector('.mr-flat').value.trim().replace(/^F/i,''),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
+    tr.querySelector('.mr-flat').addEventListener('input',recode);
+    tr.querySelector('.mr-item').addEventListener('input',function(){var s=this.selectionStart;this.value=this.value.toUpperCase();try{this.setSelectionRange(s,s);}catch(_){}recode();});
+    var cp=tr.querySelector('.mr-couple'), n=tr.querySelector('.mr-n');
+    cp.addEventListener('change',function(){ n.disabled=!cp.checked; });
+    tr.querySelector('.mr-del').addEventListener('click',function(){ tr.remove(); });
+  }
+  async function mapSave(block,elev){
+    var out=[];
+    document.querySelectorAll('#mapTable tbody tr').forEach(function(tr){
+      var flat=tr.querySelector('.mr-flat').value.trim().replace(/^F/i,'');
+      var item=tr.querySelector('.mr-item').value.trim().toUpperCase();
+      var type=tr.querySelector('.mr-type').value;
+      if(!item) return;
+      var couple=tr.querySelector('.mr-couple').checked;
+      var n=parseInt(tr.querySelector('.mr-n').value,10)||0;
+      if(couple&&n>=2){ for(var i=1;i<=n;i++) out.push({flat:flat,item:item+'.'+i,item_type:type}); }
+      else out.push({flat:flat,item:item,item_type:type});
+    });
+    if(!out.length){tShow('Nothing to save');return;}
+    tShow('Saving '+out.length+' item(s)…');
+    var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:elev,rows:out})})).json();
+    if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); }
+    else tShow(d.error||'Save failed');
+  }
+
   async function loadJobs(){
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
+    JOB_STATUS={}; JOB_MAPDATE={};
+    jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});loadItems();};el.appendChild(d);}
-    mk('ALL','▦ All jobs');
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
+    if(myRole!=='scanner')mk('ALL','▦ All jobs');
     jobs.forEach(function(j){mk(j.code,j.code);});
+    // Scanner (or an empty current) lands on the first available job.
+    if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].code; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
   }
   function opt(v,l,sel){return '<option value="'+v+'"'+(v===sel?' selected':'')+'>'+l+'</option>';}
   async function openNewJob(){
@@ -1824,6 +2041,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sessionStorage.setItem('ace_tab',name);
     document.getElementById('dashView').style.display=name==='dashboard'?'block':'none';
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
+    document.getElementById('mappingView').style.display=name==='mapping'?'block':'none';
     document.getElementById('teamsView').style.display=name==='teams'?'block':'none';
     document.getElementById('syncView').style.display=name==='sync'?'block':'none';
     document.getElementById('plansView').style.display=name==='plans'?'block':'none';
@@ -1834,6 +2052,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
+    document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
     document.getElementById('tabPlans').classList.toggle('on',name==='plans');
@@ -1843,6 +2062,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
     if(name==='dashboard')loadDashboard();
+    if(name==='mapping')loadMapping();
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
     if(name==='plans')loadPlansTab();
@@ -1900,6 +2120,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
     show('tabItems',!isCustomer);
+    show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
     show('tabDash',canCap('dashboard.view'));

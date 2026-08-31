@@ -40,6 +40,8 @@ export interface Job {
   monday_board_id: string | null;
   monday_account_slug: string | null;   // e.g. "ace189144" — makes item links resolve to the right account
   active: boolean;
+  status: string;                        // 'new' | 'pending_mapping' — gates scanner visibility
+  mapping_start_date: string | null;     // set by admin; assigning it flips status to 'pending_mapping'
   created_at: string;
 }
 

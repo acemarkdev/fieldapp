@@ -158,6 +158,25 @@ export async function listJobs(tenantId: string): Promise<Job[]> {
   return (data ?? []) as Job[];
 }
 
+// Admin assigns a mapping start date → job becomes 'pending_mapping' (visible to scanners).
+export async function setJobMappingDate(id: string, date: string | null, tenantId: string): Promise<void> {
+  const { error } = await db().from('jobs')
+    .update({ mapping_start_date: date, status: date ? 'pending_mapping' : 'new' })
+    .eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// Bulk-create mapping items. Existing codes are left untouched (ignoreDuplicates), so a
+// re-save never overwrites items a surveyor may have already edited. Returns the count inserted.
+export async function bulkInsertSurveyItems(rows: Record<string, unknown>[]): Promise<number> {
+  if (!rows.length) return 0;
+  const { data, error } = await db().from('survey_items')
+    .upsert(rows, { onConflict: 'tenant_id,full_code', ignoreDuplicates: true })
+    .select('id');
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+
 export async function listSurveyItems(jobId: string): Promise<SurveyItem[]> {
   const { data, error } = await db()
     .from('survey_items').select('*')
