@@ -37,24 +37,34 @@ export async function promoteItem(itemId: string): Promise<PromoteResult> {
     catch { /* best-effort */ }
   }
 
-  // Push field photos (survey shots + snag sketches) to the board's Design Sketch column,
-  // once each — the monday_pushed flag stops re-syncs from piling up duplicate files.
+  // Push field photos to the right Monday file column, once each — the monday_pushed flag
+  // stops re-syncs from piling up duplicate files. Routing by photo kind:
+  //   before  -> "Picture Before"   (scanner / surveyor)
+  //   after   -> "Picture After"    (fitter)
+  //   survey / sketch -> "Design Sketch"  (legacy mobile survey shots & snag sketches)
+  const COLUMN_FOR_KIND: Record<string, string> = {
+    before: 'picture before', after: 'picture after', survey: 'design sketch', sketch: 'design sketch',
+  };
   let photosPushed = 0; let photoError: string | undefined;
   try {
-    const pending = (await listItemPhotos(itemId)).filter((p) => ['sketch', 'survey'].includes(p.kind) && !p.monday_pushed);
+    const pending = (await listItemPhotos(itemId)).filter((p) => COLUMN_FOR_KIND[p.kind] && !p.monday_pushed);
     if (pending.length) {
       const cols = await monday.getColumns(job.monday_board_id);
       const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-      const sketchCol = cols.find((c) => norm(c.title) === 'design sketch' && c.type === 'file');
-      if (!sketchCol) {
-        photoError = `No "Design Sketch" file column on board ${job.monday_board_id}.`;
-      } else {
-        for (const ph of pending) {
-          const bytes = await downloadPhoto(ph.storage_path);
-          await monday.addFileToColumn(res.itemId, sketchCol.id, bytes, ph.storage_path.split('/').pop() ?? 'photo.jpg');
-          await markPhotoPushed(ph.id);
-          photosPushed++;
-        }
+      const fileCol = (title: string) => cols.find((c) => norm(c.title) === title && c.type === 'file');
+      const missing = new Set<string>();
+      for (const ph of pending) {
+        const wantTitle = COLUMN_FOR_KIND[ph.kind];
+        const col = fileCol(wantTitle);
+        if (!col) { missing.add(wantTitle); continue; }
+        const bytes = await downloadPhoto(ph.storage_path);
+        await monday.addFileToColumn(res.itemId, col.id, bytes, ph.storage_path.split('/').pop() ?? 'photo.jpg');
+        await markPhotoPushed(ph.id);
+        photosPushed++;
+      }
+      if (missing.size) {
+        const pretty = [...missing].map((t) => t.replace(/\b\w/g, (m) => m.toUpperCase())).join('", "');
+        photoError = `No file column(s) named "${pretty}" on board ${job.monday_board_id}.`;
       }
     }
   } catch (e: any) {

@@ -91,6 +91,7 @@ export interface PendingPhoto {
   tenant_id: string;
   itemId?: string;        // an existing server item
   itemFullCode?: string;  // a still-queued item — resolved to its id after that item syncs
+  kind?: string;          // 'before' (survey/scan) | 'after' (fitter) | 'sketch' (snag). Defaults to 'before'.
 }
 
 async function readPhotos(): Promise<PendingPhoto[]> {
@@ -146,7 +147,7 @@ export async function flushPhotos(): Promise<{ synced: number; remaining: number
       const path = `${ph.tenant_id}/${itemId}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`;
       const up = await supabase.storage.from('photos').upload(path, decode(base64), { contentType: 'image/jpeg' });
       if (up.error) throw up.error;
-      const ins = await supabase.from('item_photos').insert({ tenant_id: ph.tenant_id, item_id: itemId, kind: 'survey', storage_path: path });
+      const ins = await supabase.from('item_photos').insert({ tenant_id: ph.tenant_id, item_id: itemId, kind: ph.kind ?? 'before', storage_path: path });
       if (ins.error) throw ins.error;
       await AsyncStorage.removeItem('ace_photo_' + ph.localId);
       synced++;

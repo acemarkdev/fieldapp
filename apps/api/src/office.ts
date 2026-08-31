@@ -96,7 +96,7 @@ import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHA
 const ROLES: string[] = [...SHARED_ROLES];
 const ROLE_MATRIX = { caps: CAPABILITIES, roles: SHARED_ROLES, labels: ROLE_LABEL, matrix: ROLE_CAPS };
 
-const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install' };
+const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install', before: 'Picture Before', after: 'Picture After' };
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -679,12 +679,15 @@ const server = createServer(async (req, res) => {
       if (bytes.length > 6 * 1024 * 1024) { send(res, 400, { error: 'Photo too large (max 6MB).' }); return; }
       const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
       const path = `${it.tenant_id}/${it.id}/${Date.now()}.${ext}`;
+      // Route by uploader role: fitters take "after" (install) photos → Picture After;
+      // scanner / surveyor / office / admin take "before" photos → Picture Before.
+      const kind = ctx.role === 'fitter' ? 'after' : 'before';
       try {
         await ensurePhotoBucket();
         await uploadPhoto(path, bytes, m[1]);
-        await addItemPhoto(it.tenant_id, it.id, 'survey', path);
+        await addItemPhoto(it.tenant_id, it.id, kind, path);
       } catch (err: any) { send(res, 500, { error: 'Upload failed: ' + (err?.message ?? String(err)) }); return; }
-      send(res, 200, { ok: true });
+      send(res, 200, { ok: true, kind });
       return;
     }
 
@@ -2599,9 +2602,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
     } else { html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="empty">No photos yet — add one below, or they arrive from the mobile survey / install flow.</div>'; }
     if(canCap('photos.add')){
+      var pcol=(myRole==='fitter')?'Picture After':'Picture Before';
       html+='<div style="padding:2px 22px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
         +'<input type="file" id="itemPhoto" accept="image/*" style="font-size:12px">'
-        +'<button class="save" onclick="uploadItemPhoto(\\''+it.id+'\\')">Add photo</button></div>';
+        +'<button class="save" onclick="uploadItemPhoto(\\''+it.id+'\\')">Add photo</button>'
+        +'<span style="font-size:11px;color:var(--muted)">→ syncs to Monday <b>'+pcol+'</b></span></div>';
     }
     if(!d.is_snag){
       html+='<div class="groupt" style="padding:10px 22px 0">SNAGS (remedial items)</div>';

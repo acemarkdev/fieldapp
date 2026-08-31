@@ -96,7 +96,10 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
     setUploading(true);
     try {
       // Offline-first: queue the photo, then try to upload now. Works with or without signal.
-      await enqueuePhoto({ tenant_id: item.tenant_id, itemId: item.id }, res.assets[0].base64!);
+      // Fitters take install ("after") photos → Picture After; everyone else takes survey
+      // ("before") photos → Picture Before (routed to Monday on sync).
+      const photoKind = role === 'fitter' ? 'after' : 'before';
+      await enqueuePhoto({ tenant_id: item.tenant_id, itemId: item.id, kind: photoKind }, res.assets[0].base64!);
       await flushPhotos();
       await loadPhotos(item.full_code ?? undefined);
       onChanged();
@@ -145,7 +148,8 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
       };
       const { data: created, error } = await supabase.from('survey_items').insert(row).select('id').single();
       if (error) throw error;
-      for (const sh of snagShots) await enqueuePhoto({ tenant_id: item.tenant_id, itemId: (created as any).id }, sh.base64);
+      // Snag defect photos stay on Design Sketch (kind 'sketch'), unchanged.
+      for (const sh of snagShots) await enqueuePhoto({ tenant_id: item.tenant_id, itemId: (created as any).id, kind: 'sketch' }, sh.base64);
       await flushPhotos();
       setSnagSaving(false); setSnagOpen(false); setSnagComment(''); setSnagShots([]);
       Alert.alert('Snag raised', full_code);
