@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.54.1';
+export const APP_VERSION = '0.54.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.54.2', date: '2026-08-31', changes: [
+    'Fix: assigning a mapping start date could error (\'cannot coerce the result to a single JSON object\') when the Mapping tab was open on the default/placeholder job rather than a real one. The Mapping tab now only acts on a real selected job (prompting you to pick one otherwise), and the release/save endpoints return a clean \'job not found\' instead of a database error.',
+  ] },
   { version: '0.54.1', date: '2026-08-31', changes: [
     'Mapping tweaks: the Save button now sits in a fixed footer under the table (visible as soon as you Preload) with a live item count. Coupling is now explicit — tick Couple, set the count, then press Add on that row to split it into the numbered lines (W2 x2 -> W2.1, W2.2) so you can see and edit them before saving. A running total (floors, windows, doors, items) shows under the floor rows. And a non-numeric floor like GF no longer gets an F prefix (stays GF, not FGF).',
   ] },

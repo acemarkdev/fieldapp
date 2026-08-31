@@ -478,7 +478,8 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-date') && req.method === 'POST') {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const [c, j] = code.split('.');
+      let job; try { job = await getJobByCode(c, j); } catch { send(res, 404, { error: `Job ${code} not found.` }); return; }
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const date = String(b.date ?? '').trim() || null;
@@ -492,7 +493,8 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-items') && req.method === 'POST') {
       if (!allow('items.create')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const [c, j] = code.split('.');
+      let job; try { job = await getJobByCode(c, j); } catch { send(res, 404, { error: `Job ${code} not found.` }); return; }
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const block = String(b.block ?? '').trim().toUpperCase() || null;
@@ -1696,7 +1698,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- Mapping (scanner pre-load) ----
   function loadMapping(){
     var box=document.getElementById('mapBody');
-    if(!current||current==='ALL'){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
+    if(!current||current==='ALL'||!JOB_STATUS[current]){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
     var status=JOB_STATUS[current]||'';
     document.getElementById('mapSub').innerHTML='Job <b>'+esc(current)+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
     if(status!=='pending_mapping'){
