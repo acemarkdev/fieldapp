@@ -502,10 +502,12 @@ const server = createServer(async (req, res) => {
       const seen = new Set<string>();
       const fields: Record<string, unknown>[] = [];
       for (const r of rows) {
-        const flat = String(r.flat ?? '').trim().replace(/^F/i, '');
+        // Floor: strip a leading F only before a number ("F1"->"1"); labels like GF are kept.
+        const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
         const item = String(r.item ?? '').trim().toUpperCase();
         if (!item) continue;
-        const full_code = assembleFullCode({ client: job.client_code, job: job.job_code, block, elevation, flat, item });
+        const floorSeg = /^[0-9]+$/.test(flat) ? `F${flat}` : flat.toUpperCase();
+        const full_code = [job.client_code, job.job_code, block, elevation, (flat ? floorSeg : ''), item].filter(Boolean).join('.');
         if (seen.has(full_code)) continue; seen.add(full_code);
         fields.push({
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
@@ -1735,12 +1737,31 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div id="floorsWrap" style="margin-top:14px;display:none">'
       +'<div class="groupt" style="padding:0 0 6px">FLOORS &mdash; enter floor no., windows and doors (a new row opens as you fill each)</div>'
       +'<div id="floorRows"></div>'
-      +'<button class="add" id="preloadBtn" style="margin-top:10px">Preload</button>'
+      +'<div id="floorTotals" class="sub" style="margin-top:8px;font-weight:700"></div>'
+      +'<button class="add" id="preloadBtn" style="margin-top:8px">Preload</button>'
       +'</div></div>'
-      +'<div id="mapTableWrap"></div>';
+      +'<div id="mapTableWrap"></div>'
+      +'<div id="mapFooter" style="margin-top:12px;gap:12px;align-items:center;display:none">'
+      +'<button class="save" id="mapSaveBtn">Save</button>'
+      +'<button class="add" id="mapAddRowBtn">+ Add line</button>'
+      +'<span class="sub" id="mapSaveNote"></span></div>';
     mapWirePrefix('map_block','B'); mapWirePrefix('map_elev','E');
     document.getElementById('preloadBtn').addEventListener('click',mapPreload);
+    document.getElementById('mapSaveBtn').addEventListener('click',mapSave);
+    document.getElementById('mapAddRowBtn').addEventListener('click',mapAddRow);
     maybeRevealFloors();
+  }
+  function getMapBE(){ return { block:(document.getElementById('map_block')||{}).value||'', elev:(document.getElementById('map_elev')||{}).value||'' }; }
+  function updateFloorTotals(){
+    var el=document.getElementById('floorTotals'); if(!el)return;
+    var tw=0, td=0, nf=0;
+    document.querySelectorAll('#floorRows .frow').forEach(function(div){
+      var f=div.querySelector('.fr-floor').value.trim();
+      var w=parseInt(div.querySelector('.fr-win').value,10)||0;
+      var d=parseInt(div.querySelector('.fr-door').value,10)||0;
+      if(f!==''&&(w>0||d>0)){ nf++; tw+=w; td+=d; }
+    });
+    el.textContent='Total: '+nf+' floor'+(nf===1?'':'s')+' · '+tw+' windows · '+td+' doors · '+(tw+td)+' items';
   }
   function maybeRevealFloors(){
     var bEl=document.getElementById('map_block'), eEl=document.getElementById('map_elev'); if(!bEl||!eEl)return;
@@ -1760,20 +1781,23 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     div.querySelector('.fr-del').addEventListener('click',function(){ if(document.querySelectorAll('#floorRows .frow').length>1) div.remove(); });
   }
   function onFloorInput(div){
+    updateFloorTotals();
     var rows=document.querySelectorAll('#floorRows .frow');
     if(div!==rows[rows.length-1]) return;
     var f=div.querySelector('.fr-floor').value.trim(), w=div.querySelector('.fr-win').value.trim(), d=div.querySelector('.fr-door').value.trim();
     if(f!==''&&w!==''&&d!=='') addFloorRow();
   }
+  // Floor segment: prefix F only for a plain number (1 -> F1); leave labels like GF as-is.
+  function floorSeg(flat){ if(!flat) return ''; return /^[0-9]+$/.test(flat) ? ('F'+flat) : flat.toUpperCase(); }
   function mapCode(block,elev,flat,item){
     var parts=current.split('.');
-    return [parts[0],parts[1],block,elev,(flat?('F'+flat):''),item].filter(function(x){return x;}).join('.');
+    return [parts[0],parts[1],block,elev,floorSeg(flat),item].filter(function(x){return x;}).join('.');
   }
+  function stripF(v){ return String(v||'').trim().replace(/^F(?=[0-9])/i,''); } // "F1"->"1", "GF" stays
   function mapPreload(){
-    var block=document.getElementById('map_block').value.trim(), elev=document.getElementById('map_elev').value.trim();
     var floors=[];
     document.querySelectorAll('#floorRows .frow').forEach(function(div){
-      var f=div.querySelector('.fr-floor').value.trim().replace(/^F/i,'');
+      var f=stripF(div.querySelector('.fr-floor').value);
       var w=parseInt(div.querySelector('.fr-win').value,10)||0;
       var d=parseInt(div.querySelector('.fr-door').value,10)||0;
       if(f!==''&&(w>0||d>0)) floors.push({floor:f,windows:w,doors:d});
@@ -1784,56 +1808,65 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       for(var i=1;i<=fl.windows;i++) rows.push({flat:fl.floor,item:'W'+i,type:'Window'});
       for(var j=1;j<=fl.doors;j++) rows.push({flat:fl.floor,item:'D'+j,type:'Door'});
     });
-    renderMapTable(block,elev,rows);
+    renderMapRows(rows);
   }
-  function renderMapTable(block,elev,rows){
+  function renderMapRows(rows){
     var wrap=document.getElementById('mapTableWrap');
-    var head='<tr><th>CODE</th><th>FLOOR</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>&times;</th><th></th></tr>';
-    var body=rows.map(function(r){ return mapRowHtml(block,elev,r); }).join('');
-    wrap.innerHTML='<div class="groupt" style="padding:0 0 6px">PRELOADED ITEMS &mdash; review, edit, mark couples, then Save</div>'
-      +'<div class="card2" style="padding:0;overflow:auto"><table id="mapTable"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>'
-      +'<div style="display:flex;gap:12px;align-items:center;margin-top:12px">'
-      +'<button class="save" id="mapSaveBtn">Save '+rows.length+' item(s)</button>'
-      +'<button class="add" id="mapAddRowBtn">+ Add line</button>'
-      +'<span class="sub" id="mapSaveNote"></span></div>';
-    document.querySelectorAll('#mapTable tbody tr').forEach(function(tr){ wireMapRow(tr,block,elev); });
-    document.getElementById('mapSaveBtn').addEventListener('click',function(){mapSave(block,elev);});
-    document.getElementById('mapAddRowBtn').addEventListener('click',function(){
-      var tb=document.querySelector('#mapTable tbody'); var d=document.createElement('template');
-      d.innerHTML=mapRowHtml(block,elev,{flat:'',item:'',type:'Window'}); var tr=d.content.firstChild;
-      tb.appendChild(tr); wireMapRow(tr,block,elev);
-    });
+    var head='<tr><th>CODE</th><th>FLOOR</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>#</th><th></th><th></th></tr>';
+    wrap.innerHTML='<div class="groupt" style="padding:0 0 6px">PRELOADED ITEMS &mdash; review, edit, split couples, then Save</div>'
+      +'<div class="card2" style="padding:0;overflow:auto"><table id="mapTable"><thead>'+head+'</thead><tbody id="mapTbody"></tbody></table></div>';
+    var tb=document.getElementById('mapTbody');
+    rows.forEach(function(r){ tb.appendChild(makeMapRow(r)); });
+    document.getElementById('mapFooter').style.display='flex';
+    updateSaveCount();
   }
-  function mapRowHtml(block,elev,r){
-    var code=mapCode(block,elev,r.flat,r.item);
-    return '<tr>'
-      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(code)+'</td>'
+  function makeMapRow(r){
+    var be=getMapBE();
+    var tr=document.createElement('tr');
+    tr.innerHTML=''
+      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(mapCode(be.block.trim(),be.elev.trim(),r.flat,r.item))+'</td>'
       +'<td><input class="mr-flat" value="'+esc(r.flat)+'" style="width:64px"></td>'
       +'<td><input class="mr-item" value="'+esc(r.item)+'" style="width:90px"></td>'
       +'<td><select class="mr-type"><option'+(r.type==='Window'?' selected':'')+'>Window</option><option'+(r.type==='Door'?' selected':'')+'>Door</option></select></td>'
       +'<td style="text-align:center"><input type="checkbox" class="mr-couple"></td>'
-      +'<td><input type="number" min="2" value="2" class="mr-n" style="width:56px" disabled></td>'
-      +'<td style="text-align:right"><button class="del mr-del">&#10005;</button></td>'
-      +'</tr>';
+      +'<td><input type="number" min="2" value="2" class="mr-n" style="width:52px" disabled></td>'
+      +'<td><button class="add mr-split" disabled title="Split into couple lines">Add</button></td>'
+      +'<td style="text-align:right"><button class="del mr-del" title="Delete line">&#10005;</button></td>';
+    wireMapRow(tr);
+    return tr;
   }
-  function wireMapRow(tr,block,elev){
-    function recode(){ tr.querySelector('.mapcode').textContent=mapCode(block,elev,tr.querySelector('.mr-flat').value.trim().replace(/^F/i,''),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
+  function wireMapRow(tr){
+    function recode(){ var be=getMapBE(); tr.querySelector('.mapcode').textContent=mapCode(be.block.trim(),be.elev.trim(),stripF(tr.querySelector('.mr-flat').value),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
     tr.querySelector('.mr-flat').addEventListener('input',recode);
     tr.querySelector('.mr-item').addEventListener('input',function(){var s=this.selectionStart;this.value=this.value.toUpperCase();try{this.setSelectionRange(s,s);}catch(_){}recode();});
-    var cp=tr.querySelector('.mr-couple'), n=tr.querySelector('.mr-n');
-    cp.addEventListener('change',function(){ n.disabled=!cp.checked; });
-    tr.querySelector('.mr-del').addEventListener('click',function(){ tr.remove(); });
+    var cp=tr.querySelector('.mr-couple'), n=tr.querySelector('.mr-n'), sp=tr.querySelector('.mr-split');
+    cp.addEventListener('change',function(){ n.disabled=!cp.checked; sp.disabled=!cp.checked; });
+    sp.addEventListener('click',function(){ splitMapRow(tr); });
+    tr.querySelector('.mr-del').addEventListener('click',function(){ tr.remove(); updateSaveCount(); });
   }
-  async function mapSave(block,elev){
+  function splitMapRow(tr){
+    var n=parseInt(tr.querySelector('.mr-n').value,10)||0;
+    if(n<2){tShow('Set a couple count of 2 or more');return;}
+    var flat=tr.querySelector('.mr-flat').value.trim();
+    var base=tr.querySelector('.mr-item').value.trim().toUpperCase();
+    var type=tr.querySelector('.mr-type').value;
+    if(!base){tShow('Enter an item code first');return;}
+    for(var i=1;i<=n;i++){ tr.parentNode.insertBefore(makeMapRow({flat:flat,item:base+'.'+i,type:type}),tr); }
+    tr.remove(); updateSaveCount();
+  }
+  function mapAddRow(){ var tb=document.getElementById('mapTbody'); if(!tb)return; tb.appendChild(makeMapRow({flat:'',item:'',type:'Window'})); updateSaveCount(); }
+  function updateSaveCount(){ var n=document.querySelectorAll('#mapTbody tr').length; var b=document.getElementById('mapSaveBtn'); if(b)b.textContent='Save '+n+' item'+(n===1?'':'s'); }
+  async function mapSave(){
+    var be=getMapBE(); var block=be.block.trim(), elev=be.elev.trim();
     var out=[];
-    document.querySelectorAll('#mapTable tbody tr').forEach(function(tr){
-      var flat=tr.querySelector('.mr-flat').value.trim().replace(/^F/i,'');
+    document.querySelectorAll('#mapTbody tr').forEach(function(tr){
+      var flat=stripF(tr.querySelector('.mr-flat').value);
       var item=tr.querySelector('.mr-item').value.trim().toUpperCase();
       var type=tr.querySelector('.mr-type').value;
       if(!item) return;
       var couple=tr.querySelector('.mr-couple').checked;
-      var n=parseInt(tr.querySelector('.mr-n').value,10)||0;
-      if(couple&&n>=2){ for(var i=1;i<=n;i++) out.push({flat:flat,item:item+'.'+i,item_type:type}); }
+      var nn=parseInt(tr.querySelector('.mr-n').value,10)||0;
+      if(couple&&nn>=2){ for(var i=1;i<=nn;i++) out.push({flat:flat,item:item+'.'+i,item_type:type}); }
       else out.push({flat:flat,item:item,item_type:type});
     });
     if(!out.length){tShow('Nothing to save');return;}
