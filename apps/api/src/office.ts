@@ -665,6 +665,29 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Attach a photo to an item from the office (mirrors the mobile survey upload: bucket 'photos',
+    // path tenant/item/..., kind 'survey' so it also pushes to Monday's Design Sketch on sync).
+    if (p.startsWith('/api/item/') && p.endsWith('/photo') && req.method === 'POST') {
+      if (!allow('photos.add')) return;
+      const id = p.split('/')[3];
+      const it: any = await getSurveyItem(id);
+      if (!it || it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.photo ?? ''));
+      if (!m) { send(res, 400, { error: 'A photo is required.' }); return; }
+      const bytes = Buffer.from(m[2], 'base64');
+      if (bytes.length > 6 * 1024 * 1024) { send(res, 400, { error: 'Photo too large (max 6MB).' }); return; }
+      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const path = `${it.tenant_id}/${it.id}/${Date.now()}.${ext}`;
+      try {
+        await ensurePhotoBucket();
+        await uploadPhoto(path, bytes, m[1]);
+        await addItemPhoto(it.tenant_id, it.id, 'survey', path);
+      } catch (err: any) { send(res, 500, { error: 'Upload failed: ' + (err?.message ?? String(err)) }); return; }
+      send(res, 200, { ok: true });
+      return;
+    }
+
     if (p.startsWith('/api/item/') && req.method === 'PUT' && !p.endsWith('/pin') && !p.endsWith('/pricing')) {
       const id = p.split('/').pop()!;
       const body = await readJson(req);
@@ -2574,7 +2597,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'</dl>';
     if(d.photos&&d.photos.length){
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
-    } else { html+='<div class="empty">No photos yet — these arrive from the mobile survey / install flow.</div>'; }
+    } else { html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="empty">No photos yet — add one below, or they arrive from the mobile survey / install flow.</div>'; }
+    if(canCap('photos.add')){
+      html+='<div style="padding:2px 22px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+        +'<input type="file" id="itemPhoto" accept="image/*" style="font-size:12px">'
+        +'<button class="save" onclick="uploadItemPhoto(\\''+it.id+'\\')">Add photo</button></div>';
+    }
     if(!d.is_snag){
       html+='<div class="groupt" style="padding:10px 22px 0">SNAGS (remedial items)</div>';
       if(d.snags&&d.snags.length){
@@ -2616,6 +2644,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d=await (await api('/api/item/'+id+'/snags',{method:'POST',body:JSON.stringify(body)})).json();
     if(d.ok){tShow('Snag created: '+d.full_code);openDetail(id);loadItems();}
     else tShow(d.error||'Could not create snag');
+  }
+  async function uploadItemPhoto(id){
+    var f=document.getElementById('itemPhoto').files[0];
+    if(!f){tShow('Choose a photo first');return;}
+    if(f.size>6*1024*1024){tShow('Photo too large (max 6MB)');return;}
+    tShow('Uploading photo…');
+    var photo=await fileToDataUrl(f);
+    var d=await (await api('/api/item/'+id+'/photo',{method:'POST',body:JSON.stringify({photo:photo})})).json();
+    if(d.ok){tShow('Photo added');openDetail(id);}
+    else tShow(d.error||'Upload failed');
   }
   document.getElementById('modal').addEventListener('click',function(e){if(e.target.id==='modal')closeModal();});
   if(SSO_ENABLED){var w=document.getElementById('ssoWrap');if(w)w.style.display='block';}

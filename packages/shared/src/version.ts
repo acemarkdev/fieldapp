@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.50.0';
+export const APP_VERSION = '0.51.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.51.0', date: '2026-08-31', changes: [
+    'Add photos to an item from the office app. The item drawer now has an \'Add photo\' button, so you can attach a photo straight from a laptop or iPad/Chrome without the phone. It saves to the same store as the mobile app and, like survey photos, pushes to Monday\'s Design Sketch column when the item is synced.',
+  ] },
   { version: '0.50.0', date: '2026-08-31', changes: [
     'New survey item: Room is now a picker, sorted by how often you use each room. Instead of typing a code from memory, pick the room from a dropdown that shows the full name and code (e.g. "Kitchen (KT)"). The list is ordered by how many times each room has been used across all jobs — your most common rooms float to the top — with the rest alphabetical. Two rooms were added: Lounge (LG) and WC. Any older code not in the standard list still appears so nothing is lost.',
   ] },
