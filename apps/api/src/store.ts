@@ -258,27 +258,40 @@ export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
   return (data ?? []) as FitterTeam[];
 }
 
+// How many times each room code has been used across the tenant — drives the
+// "most-used first" ordering of the room picker on the new-item form.
+export async function roomCodeCounts(tenantId: string): Promise<Record<string, number>> {
+  const { data, error } = await db().from('survey_items').select('room_code').eq('tenant_id', tenantId);
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  for (const r of (data ?? []) as any[]) {
+    const c = String(r.room_code ?? '').trim().toUpperCase();
+    if (c) out[c] = (out[c] ?? 0) + 1;
+  }
+  return out;
+}
+
 // ---- user management (office Stage 3) ----
 export interface AppUserRow {
   id: string; tenant_id: string; auth_user_id: string | null;
-  name: string; email: string; role: string; active: boolean; team_id: string | null;
+  name: string; email: string; role: string; active: boolean; team_id: string | null; client_code: string | null;
 }
 
 export async function listAppUsers(tenantId: string): Promise<AppUserRow[]> {
   const { data, error } = await db().from('app_users')
-    .select('id,tenant_id,auth_user_id,name,email,role,active,team_id').eq('tenant_id', tenantId).order('name');
+    .select('id,tenant_id,auth_user_id,name,email,role,active,team_id,client_code').eq('tenant_id', tenantId).order('name');
   if (error) throw error;
   return (data ?? []) as AppUserRow[];
 }
 
 export async function getAppUser(id: string): Promise<AppUserRow | null> {
   const { data, error } = await db().from('app_users')
-    .select('id,tenant_id,auth_user_id,name,email,role,active,team_id').eq('id', id).maybeSingle();
+    .select('id,tenant_id,auth_user_id,name,email,role,active,team_id,client_code').eq('id', id).maybeSingle();
   if (error) throw error;
   return (data ?? null) as AppUserRow | null;
 }
 
-export async function updateAppUser(id: string, patch: Partial<Pick<AppUserRow, 'name' | 'email' | 'role' | 'active' | 'team_id'>>, tenantId: string): Promise<void> {
+export async function updateAppUser(id: string, patch: Partial<Pick<AppUserRow, 'name' | 'email' | 'role' | 'active' | 'team_id' | 'client_code'>>, tenantId: string): Promise<void> {
   const { error } = await db().from('app_users').update(patch).eq('id', id).eq('tenant_id', tenantId);
   if (error) throw error;
 }
@@ -311,7 +324,7 @@ export async function createTeam(tenantId: string, name: string, ratePennies: nu
   return data as FitterTeam;
 }
 
-export async function updateTeam(id: string, patch: { name?: string; default_rate_pennies?: number }): Promise<void> {
+export async function updateTeam(id: string, patch: { name?: string; default_rate_pennies?: number; door_rate_pennies?: number; active?: boolean }): Promise<void> {
   const { error } = await db().from('fitter_teams').update(patch).eq('id', id);
   if (error) throw error;
 }

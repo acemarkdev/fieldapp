@@ -25,6 +25,8 @@ export const ROOMS: Room[] = [
   { name: 'Office', code: 'OF' },
   { name: 'Common Room', code: 'CR' },
   { name: 'Common Way', code: 'CW' },
+  { name: 'Lounge', code: 'LG' },
+  { name: 'WC', code: 'WC' },
 ];
 
 // The handful that usually exist in a flat — shown as instant chips.

@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager',
+  invoice_manager: 'Invoice manager', customer: 'Customer',
 };
 
 export type Capability =
@@ -48,6 +48,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   fitter: ['items.fit', 'snags.raise', 'photos.add'],
   // Finance-only role: sees the budget/pricing module, nothing operational.
   invoice_manager: ['finance.view', 'finance.manage'],
+  // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
+  customer: [],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

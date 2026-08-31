@@ -2,6 +2,7 @@
 // Pure functions, no I/O, so they're trivially testable.
 
 import type { PickEvent, StyleCatalogueRow, SurveyItem, FitterTeam } from './types';
+import { classifyCategory } from './pricing';
 
 // ---------------------------------------------------------------
 //  Full item code, e.g. AXS.LAB.B1.E1.F21.LR.W02.F1
@@ -21,15 +22,20 @@ export function assembleFullCode(p: CodeParts, separator = '.'): string {
 }
 
 // ---------------------------------------------------------------
-//  Fitting rate: override if set, else the assigned team's default.
+//  Fitting rate: override if set, else the assigned team's rate for the
+//  item's category — Doors use door_rate_pennies, Windows (everything else)
+//  use default_rate_pennies. A per-item override still wins over both.
 // ---------------------------------------------------------------
 export function effectiveRatePennies(
-  item: Pick<SurveyItem, 'rate_override_pennies' | 'team_id'>,
-  teams: Pick<FitterTeam, 'id' | 'default_rate_pennies'>[],
+  item: Pick<SurveyItem, 'rate_override_pennies' | 'team_id' | 'item_type' | 'item_code'>,
+  teams: Pick<FitterTeam, 'id' | 'default_rate_pennies' | 'door_rate_pennies'>[],
 ): number | null {
   if (item.rate_override_pennies != null) return item.rate_override_pennies;
   const team = teams.find((t) => t.id === item.team_id);
-  return team ? team.default_rate_pennies : null;
+  if (!team) return null;
+  const isDoor = classifyCategory({ item_type: (item as any).item_type, item_code: (item as any).item_code }) === 'door';
+  // door_rate_pennies may be absent on older callers/rows — fall back to the windows rate.
+  return isDoor ? (team.door_rate_pennies ?? team.default_rate_pennies) : team.default_rate_pennies;
 }
 
 export const formatPennies = (p: number | null): string =>

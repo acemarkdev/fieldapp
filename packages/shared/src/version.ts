@@ -1,11 +1,41 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.43.1';
+export const APP_VERSION = '0.50.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.50.0', date: '2026-08-31', changes: [
+    'New survey item: Room is now a picker, sorted by how often you use each room. Instead of typing a code from memory, pick the room from a dropdown that shows the full name and code (e.g. "Kitchen (KT)"). The list is ordered by how many times each room has been used across all jobs — your most common rooms float to the top — with the rest alphabetical. Two rooms were added: Lounge (LG) and WC. Any older code not in the standard list still appears so nothing is lost.',
+  ] },
+  { version: '0.49.2', date: '2026-08-31', changes: [
+    'New survey item: Floor now auto-adds its F too — type "1" and the field shows "F1", matching Block/Elevation/Flat.',
+  ] },
+  { version: '0.49.1', date: '2026-08-31', changes: [
+    'New survey item tweaks. Block, Elevation and Flat now auto-add their letter as you type — type "1" and the field shows "B1" / "E1", type "21" and Flat shows "F21" (still stored as the bare number). And picking a style now fills Item type with Window/Door (it was going into Window type by mistake).',
+  ] },
+  { version: '0.49.0', date: '2026-08-31', changes: [
+    'New survey item: code fields auto-capitalise. In the New survey item form, the location fields that build the code (block, elevation, flat, floor, room, item) now turn what you type into capitals automatically, so codes stay consistent without holding Shift.',
+  ] },
+  { version: '0.48.0', date: '2026-08-31', changes: [
+    'Filter the Items list by Team. The TEAM column header now has a dropdown, alongside the existing Flat and Install status filters. It lists the teams actually present on the current job\'s items (plus "— no team —"), and combines with the other column filters and the chip filters at the top.',
+  ] },
+  { version: '0.47.0', date: '2026-08-31', changes: [
+    'Retire a team instead of deleting it. A team with items assigned still can\'t be deleted (it would orphan their rates and history), but you can now Retire it from Teams & rates. A retired team stays on its existing items, reports and the calendar, but is hidden from every new-assignment dropdown (items list, bulk assign, new item, and the fitter\'s team in Users). It shows greyed with a "retired" tag and can be reactivated anytime; if an item still points at a retired team, that team stays visible in its own dropdown marked "(retired)".',
+  ] },
+  { version: '0.46.0', date: '2026-08-31', changes: [
+    'Separate fitter rate for Doors. Each team now has two rates in Teams & rates: a Windows rate (the existing default) and a Doors rate (default £120). An item is paid at its team\'s rate for its category — doors are detected from the item type/code — while a per-item rate override still beats both. The rate that flows to Monday\'s Labour Cost, the install PDFs, and the phone app all follow this automatically. Existing teams were seeded with a £120 doors rate; adjust per team as needed.',
+  ] },
+  { version: '0.45.0', date: '2026-08-31', changes: [
+    'Customer self-service portal. A new "Customer" role gives a client a read-only login that shows only their own jobs (matched by the CLIENT part of the job code, e.g. AXS) and lets them download the rate-free "Customer install PDF" for each — no teams, rates, dashboard, or anyone else\'s jobs. Set a customer up in Users: add them with the Customer role, then fill in their CLIENT code. The boundary is enforced three ways: the role sees only the portal, the server whitelists just the customer endpoints, and database RLS scopes their rows even on a direct query.',
+  ] },
+  { version: '0.44.0', date: '2026-08-31', changes: [
+    'Reports: full code shown, and a customer-safe install PDF. The items table Code column now shows the full item code in full (it wraps instead of truncating) on both PDFs. The install report button is renamed "Internal install PDF" (it still shows teams + rates), and a new "Customer install PDF" produces a rate-free copy (no Team, no Rate, no labour total) that is safe to send a customer. Both are on the Plans tab.',
+  ] },
+  { version: '0.43.2', date: '2026-08-28', changes: [
+    'Plans: prevent uploading a plan to the wrong job. Plans belong to the job selected in the Plans tab, and that selector persists — so plans meant for another job could get filed under whatever job was showing. Upload now asks "Add this plan to job X?" first. The PDF report also double-checks that every plan it embeds belongs to the job (belt-and-braces). If plans were already misfiled, delete the strays from Plans → Delete plan.',
+  ] },
   { version: '0.43.1', date: '2026-08-28', changes: [
     'Deploy config: custom domains. The Render blueprint now serves prod at office.acemark.com.pl and test at office-test.acemark.com.pl; docs/deploy-test-prod.md has the CNAME/DNS steps (and the SSO redirect URLs to add). Config/docs only — no app change.',
   ] },

@@ -17,7 +17,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts } from './store';
+import { createJob, bulkDeleteItems, countItemsForJob, deleteJob } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
@@ -301,7 +301,7 @@ const server = createServer(async (req, res) => {
         job: r.jobs ? `${r.jobs.client_code}.${r.jobs.job_code}` : '', jobName: r.jobs?.name ?? '',
         team: r.team_id ? (tname.get(r.team_id) ?? '') : '', team_id: r.team_id ?? '',
       }));
-      send(res, 200, { items, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })) });
+      send(res, 200, { items, teams: teams.map((t) => ({ id: t.id, name: t.name })) });
       return;
     }
 
@@ -506,7 +506,7 @@ const server = createServer(async (req, res) => {
         const jobs = await listJobs(ctx.tenant_id);
         const rows: any[] = [];
         for (const jb of jobs) { const items = await listSurveyItems(jb.id); for (const it of items) rows.push(itemRow(it, jb, teams)); }
-        send(res, 200, { job: { code: 'ALL', name: 'All jobs', board: null }, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })), items: rows, role: ctx.role });
+        send(res, 200, { job: { code: 'ALL', name: 'All jobs', board: null }, teams: teams.map((t) => ({ id: t.id, name: t.name })), items: rows, role: ctx.role });
         return;
       }
       const [c, j] = code.split('.');
@@ -515,7 +515,7 @@ const server = createServer(async (req, res) => {
       const items = await listSurveyItems(job.id);
       send(res, 200, {
         job: { code, name: job.name, board: job.monday_board_id },
-        teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
+        teams: teams.map((t) => ({ id: t.id, name: t.name })),
         items: items.map((it) => itemRow(it, job, teams)), role: ctx.role,
       });
       return;
@@ -625,7 +625,7 @@ const server = createServer(async (req, res) => {
         monday_url: s.monday_item_id && job.monday_board_id ? mondayItemUrl(job, s.monday_item_id) : null,
       }));
       send(res, 200, {
-        item: it, team: team?.name ?? null, teams: allTeams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
+        item: it, team: team?.name ?? null, teams: allTeams.map((t) => ({ id: t.id, name: t.name })),
         effective_rate: formatPennies(effectiveRatePennies(it, team ? [team] : [])),
         monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
         photos: photoOut, snags: snagOut, is_snag: (it as any).kind === 'snag',
@@ -697,12 +697,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // Room pick frequency (tenant-wide) — orders the new-item room picker, most-used first.
-    if (p === '/api/room-stats' && req.method === 'GET') {
-      send(res, 200, await roomCodeCounts(ctx.tenant_id));
-      return;
-    }
-
     // ---- teams & rates (office Stage 2) ----
     if (p === '/api/teams' && req.method === 'GET') {
       const teams = await listTeams(ctx.tenant_id);
@@ -710,7 +704,6 @@ const server = createServer(async (req, res) => {
         id: t.id, name: t.name, default_rate_pennies: t.default_rate_pennies,
         default_rate: formatPennies(t.default_rate_pennies), in_use: await countItemsUsingTeam(t.id),
         door_rate_pennies: t.door_rate_pennies, door_rate: formatPennies(t.door_rate_pennies),
-        active: t.active,
       })));
       send(res, 200, { teams: rows, canManage: can(ctx.role, 'teams.manage'), role: ctx.role });
       return;
@@ -739,7 +732,6 @@ const server = createServer(async (req, res) => {
         if ('name' in body) { if (!String(body.name).trim()) { send(res, 400, { error: 'Team name is required' }); return; } patch.name = String(body.name).trim(); }
         if ('rate_pennies' in body) { const v = Math.round(Number(body.rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Rate must be a positive number' }); return; } patch.default_rate_pennies = v; }
         if ('door_rate_pennies' in body) { const v = Math.round(Number(body.door_rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Doors rate must be a positive number' }); return; } patch.door_rate_pennies = v; }
-        if ('active' in body) patch.active = !!body.active; // retire / reactivate
         await updateTeam(id, patch);
         send(res, 200, { ok: true });
         return;
@@ -954,7 +946,7 @@ const server = createServer(async (req, res) => {
       const teams = await listTeams(ctx.tenant_id);
       send(res, 200, {
         me: ctx.id, roles: ROLES,
-        teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
+        teams: teams.map((t) => ({ id: t.id, name: t.name })),
         users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, has_login: !!u.auth_user_id, team_id: u.team_id, client_code: u.client_code ?? '' })),
       });
       return;
@@ -1320,7 +1312,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <th>FLAT<br><select id="flatFilter" class="colfilter" onchange="setFlatFilter(this.value)"></select></th>
         <th>ROOM</th><th>ITEM</th><th>STAGE</th><th>RATE (£)</th>
         <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
-        <th>TEAM<br><select id="teamFilter" class="colfilter" onchange="setTeamFilter(this.value)"></select></th><th>MONDAY</th>
+        <th>TEAM</th><th>MONDAY</th>
       </tr></thead><tbody id="rows"></tbody></table></div>
     </main>
   </div>
@@ -1328,7 +1320,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="teamsView" style="display:none">
     <main style="max-width:760px">
       <h2>Fitter teams &amp; rates</h2>
-      <div class="sub">Each team has a <b>Windows</b> rate and a <b>Doors</b> rate. Items inherit their team's rate for their category (doors are detected from the item type/code) unless a per-item override is set. The rate flows to Monday's <b>Labour Cost</b> column when an item is synced. A team with items assigned can't be deleted — <b>Retire</b> it instead: it stays on existing items and reports but disappears from new assignment lists, and can be reactivated anytime.</div>
+      <div class="sub">Each team has a <b>Windows</b> rate and a <b>Doors</b> rate. Items inherit their team's rate for their category (doors are detected from the item type/code) unless a per-item override is set. The rate flows to Monday's <b>Labour Cost</b> column when an item is synced.</div>
       <div id="addTeam" class="addrow" style="display:none">
         <input id="newTeamName" class="tinput" placeholder="Team name (e.g. Team P03)">
         <div class="pfx" title="Windows rate"><span>W £</span><input id="newTeamRate" class="tinput rate2" type="number" min="0" step="1" placeholder="80"></div>
@@ -1495,42 +1487,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
   var ISTATUS_LABEL={};ISTATUS.forEach(function(s){ISTATUS_LABEL[s[0]]=s[1];});
   function teamName(id){for(var i=0;i<teams.length;i++){if(teams[i].id===id)return teams[i].name;}return '—';}
-  // Canonical room codes (kept in step with the phone app). The picker orders these by how
-  // often each code has been used across all jobs (ROOM_STATS), most-used first.
-  var ROOMS=[
-    {name:'Living room',code:'LR'},{name:'Kitchen',code:'KT'},{name:'Bathroom',code:'BA'},
-    {name:'Bedroom',code:'BD'},{name:'Dining room',code:'DR'},{name:'Hallway',code:'HW'},
-    {name:'Home office',code:'HO'},{name:'Laundry room',code:'LA'},{name:'Pantry',code:'PA'},
-    {name:'Storage room',code:'ST'},{name:'Garage',code:'GA'},{name:'Attic',code:'AT'},
-    {name:'Basement',code:'BS'},{name:'Guest room',code:'GR'},{name:'Nursery',code:'NU'},
-    {name:'Master bedroom',code:'MB'},{name:'Balcony',code:'BL'},{name:'Terrace',code:'TE'},
-    {name:'Garden',code:'GD'},{name:'Office',code:'OF'},{name:'Common Room',code:'CR'},
-    {name:'Common Way',code:'CW'},{name:'Lounge',code:'LG'},{name:'WC',code:'WC'}
-  ];
-  var ROOM_STATS={};
-  function roomOptions(selected){
-    var counts=ROOM_STATS||{};
-    var list=ROOMS.slice();
-    // include any historical codes not in the canonical list, so nothing is lost
-    Object.keys(counts).forEach(function(c){ if(!list.some(function(r){return r.code===c;})) list.push({name:c,code:c}); });
-    list.sort(function(a,b){var ca=counts[a.code]||0,cb=counts[b.code]||0; return (cb-ca)||a.name.localeCompare(b.name);});
-    var out='<option value="">— pick room —</option>';
-    list.forEach(function(r){ out+='<option value="'+r.code+'"'+(r.code===selected?' selected':'')+'>'+esc(r.name)+' ('+r.code+')</option>'; });
-    return out;
-  }
-  // Options for a team <select>: active teams only, plus the currently-picked team even if it's retired (labelled).
-  function teamOptionList(selectedId){
-    var out='';
-    teams.forEach(function(t){
-      if(t.active===false && t.id!==selectedId) return; // hide retired unless it's this item's current team
-      out+=opt(t.id,(t.active===false?t.name+' (retired)':t.name),selectedId||'');
-    });
-    return out;
-  }
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  var flatFilter='', statusFilter='', teamFilter='';
+  var flatFilter='', statusFilter='';
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||'dashboard';
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view'};
@@ -1583,7 +1543,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
-    try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());
   }
   async function loadCustomer(){
@@ -1607,7 +1566,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadJobs(){
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});loadItems();};el.appendChild(d);}
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});loadItems();};el.appendChild(d);}
     mk('ALL','▦ All jobs');
     jobs.forEach(function(j){mk(j.code,j.code);});
   }
@@ -1649,7 +1608,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data;
-    document.getElementById('bulkTeam').innerHTML='<option value="">Assign team…</option>'+teamOptionList('');
+    document.getElementById('bulkTeam').innerHTML='<option value="">Assign team…</option>'+teams.map(function(t){return opt(t.id,t.name,'')}).join('');
     document.getElementById('bulkStatus').innerHTML='<option value="">Set status…</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('');
     document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+data.job.name;
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
@@ -1663,21 +1622,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('flatFilter').value=flatFilter;
     document.getElementById('statusFilter').innerHTML='<option value="">All statuses</option><option value="__none">— no status —</option>'+ISTATUS.filter(function(s){return s[0];}).map(function(s){return '<option value="'+s[0]+'">'+esc(s[1])+'</option>';}).join('');
     document.getElementById('statusFilter').value=statusFilter;
-    // team filter: distinct teams present on this job's items (plus "no team")
-    var tids=[], hasNoTeam=false;
-    (itemsData.items||[]).forEach(function(it){ if(it.team_id){ if(tids.indexOf(it.team_id)<0)tids.push(it.team_id); } else hasNoTeam=true; });
-    tids.sort(function(a,b){return teamName(a).localeCompare(teamName(b));});
-    if(teamFilter&&teamFilter!=='__none'&&tids.indexOf(teamFilter)<0)teamFilter='';
-    if(teamFilter==='__none'&&!hasNoTeam)teamFilter='';
-    document.getElementById('teamFilter').innerHTML='<option value="">All teams</option>'
-      +(hasNoTeam?'<option value="__none">— no team —</option>':'')
-      +tids.map(function(id){return '<option value="'+av(id)+'">'+esc(teamName(id))+'</option>';}).join('');
-    document.getElementById('teamFilter').value=teamFilter;
     renderItems();
   }
   function setFlatFilter(v){flatFilter=v;renderItems();}
   function setStatusFilter(v){statusFilter=v;renderItems();}
-  function setTeamFilter(v){teamFilter=v;renderItems();}
   var INSTALLED_SET={installed_no_snag:1,installed_snag:1};
   function matchFilter(r){
     switch(itemFilter){
@@ -1700,8 +1648,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(flatFilter&&(r.flat||'')!==flatFilter)return false;
       if(statusFilter==='__none'){if(r.install_status)return false;}
       else if(statusFilter){if(r.install_status!==statusFilter)return false;}
-      if(teamFilter==='__none'){if(r.team_id)return false;}
-      else if(teamFilter){if(r.team_id!==teamFilter)return false;}
       return true;
     });
     var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');
@@ -1721,7 +1667,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'install_status\\',this.value)">'+ISTATUS.map(function(s){return opt(s[0],s[1],r.install_status||'')}).join('')+'</select>'
         :'<span class="ro">'+curStatus+'</span>';
       var teamSel=canEdit
-        ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','—',r.team_id||'')+teamOptionList(r.team_id||'')+'</select>'
+        ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','—',r.team_id||'')+teams.map(function(t){return opt(t.id,t.name,r.team_id||'')}).join('')+'</select>'
         :'<span class="ro">'+teamName(r.team_id)+'</span>';
       var rateVal=r.rate_override_pennies!=null?(r.rate_override_pennies/100):'';
       var rateInput=canEdit
@@ -1897,20 +1843,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var name=canManage?'<input class="tname" value="'+(t.name||'').replace(/"/g,'&quot;')+'" onchange="saveTeamName(\\''+t.id+'\\',this.value)">':'<b>'+(t.name||'')+'</b>';
       var rate=canManage?'<input class="trate" type="number" min="0" step="1" value="'+(t.default_rate_pennies/100)+'" onchange="saveTeamRate(\\''+t.id+'\\',this.value)">':t.default_rate;
       var drate=canManage?'<input class="trate" type="number" min="0" step="1" value="'+(((t.door_rate_pennies!=null?t.door_rate_pennies:t.default_rate_pennies))/100)+'" onchange="saveTeamDoorRate(\\''+t.id+'\\',this.value)">':(t.door_rate||'—');
-      var retired=(t.active===false);
-      var actions='';
-      if(canManage){
-        if(retired){
-          actions='<button class="add" style="padding:5px 11px;font-size:11px" onclick="setTeamActive(\\''+t.id+'\\',true)">Reactivate</button> ';
-        } else {
-          actions='<button class="del" onclick="setTeamActive(\\''+t.id+'\\',false)" title="Hide from new assignments; keeps existing items">Retire</button> ';
-        }
-        // Hard delete is only possible when nothing references the team.
-        actions+='<button class="del" '+(t.in_use>0?'disabled title="Reassign its items first, or Retire instead"':'')+' onclick="delTeam(\\''+t.id+'\\','+t.in_use+')">Delete</button>';
-      }
-      var tag=retired?' <span class="count amber">retired</span>':'';
-      if(retired)tr.style.opacity='0.6';
-      tr.innerHTML='<td>'+name+tag+'</td><td>'+rate+'</td><td>'+drate+'</td><td><span class="count">'+t.in_use+'</span></td><td style="text-align:right;white-space:nowrap">'+actions+'</td>';
+      var del=canManage?'<button class="del" '+(t.in_use>0?'disabled title="Reassign its items first"':'')+' onclick="delTeam(\\''+t.id+'\\','+t.in_use+')">Delete</button>':'';
+      tr.innerHTML='<td>'+name+'</td><td>'+rate+'</td><td>'+drate+'</td><td><span class="count">'+t.in_use+'</span></td><td style="text-align:right">'+del+'</td>';
       tb.appendChild(tr);
     });
   }
@@ -1926,13 +1860,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function saveTeamName(id,value){if(!value.trim()){tShow('Name required');loadTeams();return;}var d=await (await api('/api/teams/'+id,{method:'PUT',body:JSON.stringify({name:value.trim()})})).json();tShow(d.ok?'Saved':(d.error||'Failed'));}
   async function saveTeamRate(id,value){if(value===''||Number(value)<0){tShow('Invalid rate');loadTeams();return;}var d=await (await api('/api/teams/'+id,{method:'PUT',body:JSON.stringify({rate_pennies:Math.round(Number(value)*100)})})).json();tShow(d.ok?'Windows rate saved':(d.error||'Failed'));}
   async function saveTeamDoorRate(id,value){if(value===''||Number(value)<0){tShow('Invalid rate');loadTeams();return;}var d=await (await api('/api/teams/'+id,{method:'PUT',body:JSON.stringify({door_rate_pennies:Math.round(Number(value)*100)})})).json();tShow(d.ok?'Doors rate saved':(d.error||'Failed'));}
-  async function setTeamActive(id,active){
-    if(!active&&!confirm('Retire this team? It stays on existing items and reports but is hidden from new assignments. You can reactivate it later.'))return;
-    var d=await (await api('/api/teams/'+id,{method:'PUT',body:JSON.stringify({active:active})})).json();
-    if(d.ok){tShow(active?'Team reactivated':'Team retired');loadTeams();loadItems();}else tShow(d.error||'Failed');
-  }
   async function delTeam(id,inUse){
-    if(inUse>0){tShow('Reassign its '+inUse+' item(s) first, or Retire it instead');return;}
+    if(inUse>0){tShow('Reassign its '+inUse+' item(s) first');return;}
     if(!confirm('Delete this team?'))return;
     var r=await api('/api/teams/'+id,{method:'DELETE'});var d=await r.json();
     if(r.ok&&d.ok){tShow('Team deleted');loadTeams();}else tShow(d.error||'Could not delete');
@@ -2132,7 +2061,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var nameInput='<input class="tname" value="'+attr(u.name)+'" onchange="saveUserField(\\''+u.id+'\\',\\'name\\',this.value)">';
       var emailInput='<input class="tname" style="width:205px" value="'+attr(u.email)+'" onchange="saveUserField(\\''+u.id+'\\',\\'email\\',this.value)">';
       var roleSel='<select class="sel" '+(self?'disabled':'')+' onchange="saveUserField(\\''+u.id+'\\',\\'role\\',this.value)">'+USER_ROLES.map(function(r){return opt(r,roleLabel(r),u.role)}).join('')+'</select>';
-      var teamOpts='<option value="">— none —</option>'+allTeams.filter(function(t){return t.active!==false||t.id===u.team_id;}).map(function(t){return '<option value="'+t.id+'"'+(u.team_id===t.id?' selected':'')+'>'+esc(t.name)+(t.active===false?' (retired)':'')+'</option>';}).join('');
+      var teamOpts='<option value="">— none —</option>'+allTeams.map(function(t){return '<option value="'+t.id+'"'+(u.team_id===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
       var teamSel='<select class="sel" onchange="saveUserField(\\''+u.id+'\\',\\'team_id\\',this.value)">'+teamOpts+'</select>';
       var clientCell=(u.role==='customer')
         ? '<input class="tname" style="width:80px;text-transform:uppercase" placeholder="e.g. AXS" value="'+attr(u.client_code||'')+'" onchange="saveUserField(\\''+u.id+'\\',\\'client_code\\',this.value)">'
@@ -2179,13 +2108,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function closeModal(){document.getElementById('modal').style.display='none';}
   function field(id,label,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" placeholder="'+(ph||'')+'"></div>';}
   function openCreate(){
-    var topts='<option value="">— no team —</option>'+teamOptionList('');
+    var topts='<option value="">— no team —</option>'+teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
     var html='<div class="fgrid">'
       +'<div class="codeprev" id="codePrev">'+current+'</div>'
       +'<div class="groupt">LOCATION</div>'
-      +field('f_block','Block','e.g. 1 → B1')+field('f_elev','Elevation','e.g. 1 → E1')
-      +field('f_flat','Flat / plot','e.g. 21 → F21')+field('f_floor','Floor','e.g. 1 → F1')
-      +'<div class="field"><label>Room *</label><select id="f_room">'+roomOptions('')+'</select></div>'+field('f_item','Item *','e.g. W02')
+      +field('f_block','Block','e.g. B1')+field('f_elev','Elevation','e.g. E1')
+      +field('f_flat','Flat / plot','e.g. 21')+field('f_floor','Floor','e.g. F1')
+      +field('f_room','Room *','e.g. LR')+field('f_item','Item *','e.g. W02')
       +'<div class="groupt">SPECIFICATION</div>'
       +'<div class="field full"><label>Design code (Clearview style)</label>'
         +'<div style="display:flex;gap:8px;align-items:center">'
@@ -2207,20 +2136,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="ferr" id="createErr"></div></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="submitCreate()">Create item</button></div>';
     openModal('New survey item',html);
-    // The code-building location fields auto-capitalise as you type. Block / Elevation / Flat
-    // also auto-prefix their letter (B / E / F) so you just type the number.
-    var PFX={f_block:'B',f_elev:'E',f_flat:'F',f_floor:'F'};
-    ['f_block','f_elev','f_flat','f_floor','f_item'].forEach(function(id){
-      var el=document.getElementById(id);
-      el.addEventListener('input',function(){
-        var v=el.value.toUpperCase();
-        var p=PFX[id];
-        if(p){ v=v.replace(new RegExp('^'+p+'+'),''); v=v?(p+v):''; }
-        if(v!==el.value){ el.value=v; try{el.setSelectionRange(v.length,v.length);}catch(_){} }
-        calcCode();
-      });
-    });
-    document.getElementById('f_room').addEventListener('change',calcCode); // room is a picker
+    ['f_block','f_elev','f_flat','f_floor','f_room','f_item'].forEach(function(id){document.getElementById(id).addEventListener('input',calcCode);});
     calcCode();
   }
   function calcCode(){
@@ -2231,9 +2147,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function submitCreate(){
     function g(id){return (document.getElementById(id).value||'').trim();}
-    // Flat is shown with an F prefix for readability, but stored as the bare number (the code adds F).
-    var flatVal=g('f_flat').replace(/^F/,'');
-    var body={job:current,block:g('f_block'),elevation:g('f_elev'),flat:flatVal,floor:g('f_floor'),room:g('f_room'),item:g('f_item'),
+    var body={job:current,block:g('f_block'),elevation:g('f_elev'),flat:g('f_flat'),floor:g('f_floor'),room:g('f_room'),item:g('f_item'),
       design_code:g('f_design'),material:g('f_material'),item_type:g('f_type'),window_type:g('f_wtype'),
       glass:g('f_glass'),safety_glass:g('f_safety'),glazing:g('f_glazing'),
       width_mm:g('f_width'),height_mm:g('f_height'),cill_depth_mm:g('f_cill'),open_in_out:g('f_openinout'),
@@ -2243,7 +2157,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       comments:g('f_comments'),team_id:document.getElementById('f_team').value};
     if(!body.room||!body.item){document.getElementById('createErr').textContent='Room and Item are required.';return;}
     var r=await api('/api/items',{method:'POST',body:JSON.stringify(body)});var d=await r.json();
-    if(r.ok&&d.ok){if(body.room)ROOM_STATS[body.room]=(ROOM_STATS[body.room]||0)+1;closeModal();tShow('Created '+d.full_code);loadItems();}
+    if(r.ok&&d.ok){closeModal();tShow('Created '+d.full_code);loadItems();}
     else document.getElementById('createErr').textContent=d.error||'Could not create item';
   }
   // ---- Install calendar (office-wide) ----
@@ -2536,8 +2450,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function pickStyle(code){
     var f=document.getElementById('f_design'); if(f)f.value=code;
     var s=(STYLES_CACHE||[]).find(function(x){return String(x.code)===String(code);});
-    // The style's product type (Window / Door) is the ITEM TYPE, not the window type.
-    var it=document.getElementById('f_type'); if(s&&it&&!it.value)it.value=s.type||'';
+    var wt=document.getElementById('f_wtype'); if(s&&wt&&!wt.value)wt.value=s.type||'';
     stylePreview(); closeStylePicker();
   }
   function closeStylePicker(){var w=document.getElementById('spOverlay');if(w)w.style.display='none';}

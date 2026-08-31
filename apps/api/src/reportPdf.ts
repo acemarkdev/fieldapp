@@ -12,7 +12,7 @@ import {
 } from './store';
 import { effectiveRatePennies, formatPennies } from '@ace/shared';
 
-export type ReportType = 'survey' | 'install';
+export type ReportType = 'survey' | 'install' | 'customer_install';
 
 export interface ReportPin { x: number; y: number; label: string; status: string | null; code?: string | null }
 export interface ReportPlan { name: string; bytes: Buffer; pins: ReportPin[] }
@@ -97,6 +97,10 @@ export function renderReportPdf(data: ReportData): Promise<Buffer> {
   if (data.job.site_address) {
     doc.font('Helvetica').fontSize(10).fillColor(MUTED).text(data.job.site_address, M, doc.y);
   }
+  // 'customer_install' is the install report WITHOUT any rates/labour (safe to send a customer).
+  const isInstall = data.type !== 'survey';
+  const hideRates = data.type === 'customer_install';
+
   const counts: Record<string, number> = {};
   let labour = 0;
   for (const it of data.items) {
@@ -109,8 +113,8 @@ export function renderReportPdf(data: ReportData): Promise<Buffer> {
   doc.font('Helvetica-Bold').fontSize(11).fillColor(INK)
     .text(`${parents.length} item${parents.length === 1 ? '' : 's'}`
       + (snags.length ? `  ·  ${snags.length} snag${snags.length === 1 ? '' : 's'}` : '')
-      + `  ·  labour ${formatPennies(labour)}`, M, doc.y);
-  if (data.type === 'install') {
+      + (hideRates ? '' : `  ·  labour ${formatPennies(labour)}`), M, doc.y);
+  if (isInstall) {
     const chips = Object.entries(counts)
       .filter(([k]) => k !== 'unset')
       .map(([k, v]) => `${v} ${STATUS_LABEL[k] ?? k}`).join('   ');
@@ -170,24 +174,33 @@ export function renderReportPdf(data: ReportData): Promise<Buffer> {
 
   const cols = data.type === 'survey'
     ? [
-        { k: 'pin', t: '#', w: 0.06 },
-        { k: 'code', t: 'Code', w: 0.22 },
-        { k: 'room', t: 'Room / Item', w: 0.13 },
-        { k: 'type', t: 'Type', w: 0.15 },
-        { k: 'size', t: 'W × H (mm)', w: 0.14 },
-        { k: 'glass', t: 'Glass', w: 0.15 },
-        { k: 'design', t: 'Design', w: 0.15 },
-      ]
-    : [
         { k: 'pin', t: '#', w: 0.05 },
-        { k: 'code', t: 'Code', w: 0.22 },
-        { k: 'room', t: 'Room / Item', w: 0.11 },
-        { k: 'type', t: 'Type', w: 0.12 },
-        { k: 'sched', t: 'Scheduled', w: 0.12 },
-        { k: 'team', t: 'Team', w: 0.11 },
-        { k: 'rate', t: 'Rate', w: 0.08 },
-        { k: 'status', t: 'Install', w: 0.19 },
-      ];
+        { k: 'code', t: 'Code', w: 0.28 },
+        { k: 'room', t: 'Room / Item', w: 0.12 },
+        { k: 'type', t: 'Type', w: 0.14 },
+        { k: 'size', t: 'W × H (mm)', w: 0.13 },
+        { k: 'glass', t: 'Glass', w: 0.14 },
+        { k: 'design', t: 'Design', w: 0.14 },
+      ]
+    : hideRates
+      ? [ // customer install — no team/rate columns
+          { k: 'pin', t: '#', w: 0.05 },
+          { k: 'code', t: 'Code', w: 0.34 },
+          { k: 'room', t: 'Room / Item', w: 0.15 },
+          { k: 'type', t: 'Type', w: 0.16 },
+          { k: 'sched', t: 'Scheduled', w: 0.13 },
+          { k: 'status', t: 'Install', w: 0.17 },
+        ]
+      : [
+          { k: 'pin', t: '#', w: 0.05 },
+          { k: 'code', t: 'Code', w: 0.27 },
+          { k: 'room', t: 'Room / Item', w: 0.11 },
+          { k: 'type', t: 'Type', w: 0.11 },
+          { k: 'sched', t: 'Scheduled', w: 0.11 },
+          { k: 'team', t: 'Team', w: 0.10 },
+          { k: 'rate', t: 'Rate', w: 0.08 },
+          { k: 'status', t: 'Install', w: 0.17 },
+        ];
   const teamName = (id: string | null) => data.teams.find((t) => t.id === id)?.name ?? '—';
   const rowsData = parents.map((it) => ({
     pin: (pinNoByCode.get(it.full_code) ?? []).join(', ') || '—',
@@ -269,19 +282,27 @@ function ensureSpace(doc: any, need: number) {
   if (doc.y + need > doc.page.height - doc.page.margins.bottom) doc.addPage();
 }
 function table(doc: any, x: number, width: number, cols: { k: string; t: string; w: number }[], rows: any[]) {
-  const pad = 4, rowH = 18;
+  const pad = 4, minRowH = 18;
   const widths = cols.map((c) => c.w * width);
   const xs: number[] = []; let cx = x; for (const w of widths) { xs.push(cx); cx += w; }
+  const codeIdx = cols.findIndex((c) => c.k === 'code');
   const drawHeader = () => {
     const hy = doc.y;
-    doc.rect(x, hy, width, rowH).fill('#efeaf9');
+    doc.rect(x, hy, width, minRowH).fill('#efeaf9');
     doc.fillColor(PRIMARY).font('Helvetica-Bold').fontSize(8.5);
     cols.forEach((c, i) => doc.text(c.t, xs[i] + pad, hy + 5, { width: widths[i] - pad * 2, ellipsis: true, lineBreak: false }));
-    doc.y = hy + rowH;
+    doc.y = hy + minRowH;
     doc.font('Helvetica').fontSize(8.5).fillColor(INK);
   };
   drawHeader();
   rows.forEach((r, ri) => {
+    // Row height grows so the full Code (which may wrap to 2 lines) always shows in full.
+    doc.font('Helvetica').fontSize(8.5);
+    let rowH = minRowH;
+    if (codeIdx >= 0) {
+      const ch = doc.heightOfString(String(r.code ?? ''), { width: widths[codeIdx] - pad * 2 });
+      rowH = Math.max(minRowH, Math.ceil(ch) + 8);
+    }
     if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) {
       doc.addPage();
       drawHeader();
@@ -291,9 +312,11 @@ function table(doc: any, x: number, width: number, cols: { k: string; t: string;
     cols.forEach((c, i) => {
       if (c.k === 'status' && r._statusRaw !== undefined) {
         doc.circle(xs[i] + pad + 3, y + 9, 3).fill(statusColor(r._statusRaw)); doc.fillColor(INK);
-        doc.text(String(r[c.k] ?? ''), xs[i] + pad + 10, y + 5, { width: widths[i] - pad * 2 - 10, ellipsis: true, lineBreak: false });
+        doc.font('Helvetica').fontSize(8.5).text(String(r[c.k] ?? ''), xs[i] + pad + 10, y + 5, { width: widths[i] - pad * 2 - 10, ellipsis: true, lineBreak: false });
+      } else if (c.k === 'code') {
+        doc.font('Helvetica').fontSize(8.5).fillColor(INK).text(String(r[c.k] ?? ''), xs[i] + pad, y + 5, { width: widths[i] - pad * 2, lineBreak: true });
       } else {
-        doc.fillColor(INK).text(String(r[c.k] ?? ''), xs[i] + pad, y + 5, { width: widths[i] - pad * 2, ellipsis: true, lineBreak: false });
+        doc.font('Helvetica').fontSize(8.5).fillColor(INK).text(String(r[c.k] ?? ''), xs[i] + pad, y + 5, { width: widths[i] - pad * 2, ellipsis: true, lineBreak: false });
       }
     });
     doc.y = y + rowH;
@@ -309,8 +332,8 @@ export async function buildJobReportPdf(clientCode: string, jobCode: string, ten
   const items = await listSurveyItems(job.id);
   const teams = await listTeams(tenantId);
 
-  // plans + their pins
-  const jobPlans = await listJobPlans(job.id);
+  // plans + their pins — only this job's plans (belt-and-braces: never another job's)
+  const jobPlans = (await listJobPlans(job.id)).filter((pl: any) => pl.job_id === job.id);
   const plans: ReportPlan[] = [];
   for (const pl of jobPlans) {
     let bytes: Buffer;

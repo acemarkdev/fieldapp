@@ -47,7 +47,9 @@ export interface FitterTeam {
   id: string;
   tenant_id: string;
   name: string;
-  default_rate_pennies: number; // £80.00 = 8000
+  default_rate_pennies: number; // WINDOWS rate. £80.00 = 8000
+  door_rate_pennies: number;    // DOORS rate. £120.00 = 12000
+  active: boolean;              // false = retired: kept on history, hidden from new assignments
   created_at: string;
 }
 

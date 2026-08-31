@@ -46,7 +46,7 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
   const [snagShots, setSnagShots] = useState<{ uri: string; base64: string }[]>([]);
   const [snagSaving, setSnagSaving] = useState(false);
   const [item, setItem] = useState<Full | null>(null);
-  const [team, setTeam] = useState<{ name: string; default_rate_pennies: number } | null>(null);
+  const [team, setTeam] = useState<{ name: string; default_rate_pennies: number; door_rate_pennies?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [photos, setPhotos] = useState<{ id: string; url: string; pending?: boolean }[]>([]);
@@ -74,7 +74,7 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
     const it = data as Full;
     setItem(it);
     if (it?.team_id) {
-      const { data: t } = await supabase.from('fitter_teams').select('name,default_rate_pennies').eq('id', it.team_id).single();
+      const { data: t } = await supabase.from('fitter_teams').select('name,default_rate_pennies,door_rate_pennies').eq('id', it.team_id).single();
       setTeam(t as any);
     } else setTeam(null);
     await loadPhotos(it?.full_code ?? undefined);
@@ -163,7 +163,11 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
     </View>
   );
 
-  const rate = item.rate_override_pennies ?? team?.default_rate_pennies ?? null;
+  // Doors use the team's door rate; windows (everything else) the default. Override wins.
+  const isDoor = (item.item_type ?? '').toLowerCase().includes('door')
+    || (item.item_code ?? '').trim().toUpperCase().startsWith('D');
+  const teamRate = team ? (isDoor ? (team.door_rate_pennies ?? team.default_rate_pennies) : team.default_rate_pennies) : null;
+  const rate = item.rate_override_pennies ?? teamRate ?? null;
   const isSnag = item.kind === 'snag';
 
   return (

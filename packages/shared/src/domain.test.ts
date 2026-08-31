@@ -19,14 +19,27 @@ t('assembleFullCode skips empty segments', () => {
   assert.strictEqual(code, 'AXS.FUR.F3.D01');
 });
 
-t('effectiveRatePennies inherits team default', () => {
-  const teams = [{ id: 't1', default_rate_pennies: 8000 }];
-  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: null, team_id: 't1' }, teams), 8000);
+const teams1 = [{ id: 't1', default_rate_pennies: 8000, door_rate_pennies: 12000 }];
+
+t('effectiveRatePennies inherits team WINDOWS rate for a window', () => {
+  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: null, team_id: 't1', item_type: 'Window', item_code: 'W01' }, teams1), 8000);
 });
 
-t('effectiveRatePennies uses override and ignores team', () => {
-  const teams = [{ id: 't1', default_rate_pennies: 8000 }];
-  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: 12000, team_id: 't1' }, teams), 12000);
+t('effectiveRatePennies uses team DOORS rate for a door (by type)', () => {
+  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: null, team_id: 't1', item_type: 'Single Door', item_code: null }, teams1), 12000);
+});
+
+t('effectiveRatePennies uses team DOORS rate for a door (by code)', () => {
+  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: null, team_id: 't1', item_type: null, item_code: 'D01' }, teams1), 12000);
+});
+
+t('effectiveRatePennies door falls back to windows rate when no door rate set', () => {
+  const teams = [{ id: 't1', default_rate_pennies: 8000, door_rate_pennies: null as any }];
+  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: null, team_id: 't1', item_type: 'Door', item_code: 'D01' }, teams), 8000);
+});
+
+t('effectiveRatePennies uses override and ignores team + category', () => {
+  assert.strictEqual(effectiveRatePennies({ rate_override_pennies: 5000, team_id: 't1', item_type: 'Door', item_code: 'D01' }, teams1), 5000);
 });
 
 t('formatPennies', () => {
