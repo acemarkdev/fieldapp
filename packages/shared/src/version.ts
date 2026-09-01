@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.58.0';
+export const APP_VERSION = '0.58.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.58.1', date: '2026-08-31', changes: [
+    'Item drawer: the Save details button is now a sticky footer, always visible while you scroll the form. Bulk toolbar tidy-up: the seven Set boxes are replaced by one Field picker + a value box + Apply, and the actions (Sync selected, Delete, Clear) sit on their own row, separated from the field editing.',
+  ] },
   { version: '0.58.0', date: '2026-08-31', changes: [
     'Full item editing in the office. The item drawer now has an editable Specification form matching the phone/New-item fields — design code (with the style picker), material, item type, window type, glass, safety glass, glazing, width/height/cill, open in/out, transoms, mullions, coupled, add-ons and comments — with a Save details button. This means an item mapped by a scanner (code only) can be completed in the office: add measures, window types and the rest. Editing marks the item for re-sync to Monday.',
   ] },

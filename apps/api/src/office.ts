@@ -1246,11 +1246,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .ro{color:var(--muted);font-size:13px}
   .bulkbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--purple);color:#fff;border-radius:12px;padding:9px 14px;margin:14px 0 10px}
   #bulkcount{font-size:12.5px;font-weight:700;margin-right:4px}
+  .bulkrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .bulkrow+.bulkrow{margin-top:9px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22)}
+  .bulklabel{font-size:12px;font-weight:700;opacity:.92;margin-right:2px}
+  .sheetfoot{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:12px 22px;z-index:2;display:flex;gap:10px;align-items:center;box-shadow:0 -6px 16px rgba(0,0,0,.06)}
   .bulk{font-size:12px;font-weight:600;border-radius:8px;padding:7px 12px;border:none;cursor:pointer}
+  .bulk.bapply{background:#fff;color:var(--purple);font-weight:800}
   .bulk.bsync{background:var(--magenta);color:#fff}
   .bulk.bsel{background:#fff;color:var(--ink);border:1px solid #cfc9ea}
-  .bulk.bdel{background:#dc2626;color:#fff;margin-left:auto}
-  .bulk.bclear{background:rgba(255,255,255,.16);color:#fff}
+  .bulk.bdel{background:#dc2626;color:#fff}
+  .bulk.bclear{background:rgba(255,255,255,.16);color:#fff;margin-left:auto}
   .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
   .snagtag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:var(--magenta);padding:2px 5px;border-radius:5px;vertical-align:middle}
   a.codelink{font-size:10.5px;color:var(--purple);cursor:pointer;text-decoration:none;border-bottom:1px dashed #cfcde0}
@@ -1451,17 +1456,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <span id="itemCount" class="itemcount"></span>
       </div>
       <div id="bulkbar" class="bulkbar" style="display:none">
-        <span id="bulkcount">0 selected</span>
-        <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
-        <select id="bulkTeam" class="bulk bsel" onchange="bulkApply('team',this)"><option value="">Assign team…</option></select>
-        <select id="bulkStatus" class="bulk bsel" onchange="bulkApply('status',this)"><option value="">Set status…</option></select>
-        <input id="bulkBlock" class="bulk" placeholder="Block" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('block')">Set</button>
-        <input id="bulkElev" class="bulk" placeholder="Elev" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('elevation')">Set</button>
-        <input id="bulkFloor" class="bulk" placeholder="Floor" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('floor')">Set</button>
-        <input id="bulkFlat" class="bulk" placeholder="Flat" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('flat')">Set</button>
-        <input id="bulkRoom" class="bulk" placeholder="Room" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('room')">Set</button>
-        <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
-        <button class="bulk bclear" onclick="clearSel()">Clear</button>
+        <div class="bulkrow">
+          <span id="bulkcount">0 selected</span>
+          <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
+          <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
+          <button class="bulk bclear" onclick="clearSel()">Clear selection</button>
+        </div>
+        <div class="bulkrow">
+          <span class="bulklabel">Set on selected:</span>
+          <select id="bulkField" class="bulk bsel" onchange="bulkFieldPick()">
+            <option value="team">Team</option><option value="status">Install status</option>
+            <option value="block">Block</option><option value="elevation">Elevation</option>
+            <option value="floor">Floor</option><option value="flat">Flat</option><option value="room">Room</option>
+          </select>
+          <span id="bulkValWrap"></span>
+          <button class="bulk bapply" onclick="bulkEditApply()">Apply</button>
+        </div>
       </div>
       <div class="card2" style="overflow:auto"><table class="itable"><thead><tr>
         <th class="cbcell"><input type="checkbox" id="selAll" onclick="toggleAll(this)"></th>
@@ -1998,8 +2008,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
-    document.getElementById('bulkTeam').innerHTML='<option value="">Assign team…</option>'+teamOptionList('');
-    document.getElementById('bulkStatus').innerHTML='<option value="">Set status…</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('');
+    bulkFieldPick(); // render the bulk value control for the selected field
     document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+data.job.name;
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
@@ -2161,21 +2170,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }catch(e){tShow('Bulk sync failed');}
     loadItems();
   }
-  async function bulkApply(action,selEl){
-    var value=selEl.value;if(!value){return;}
-    var ids=selectedIds();if(!ids.length){selEl.value='';return;}
-    var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
-    selEl.value='';
-    if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
+  function bulkFieldPick(){
+    var sel=document.getElementById('bulkField'); if(!sel)return;
+    var f=sel.value; var w=document.getElementById('bulkValWrap');
+    if(f==='team') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— team —</option>'+teamOptionList('')+'</select>';
+    else if(f==='status') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— status —</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('')+'</select>';
+    else w.innerHTML='<input id="bulkVal" class="bulk" placeholder="'+(f.charAt(0).toUpperCase()+f.slice(1))+' value" style="width:130px;text-transform:uppercase">';
   }
-  async function bulkField(field){
-    var map={block:'bulkBlock',elevation:'bulkElev',floor:'bulkFloor',flat:'bulkFlat',room:'bulkRoom'};
-    var el=document.getElementById(map[field]);
-    var ids=selectedIds();if(!ids.length){tShow('Select some items first');return;}
-    var value=el.value.trim().toUpperCase();
-    var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:field,value:value})})).json();
-    el.value='';
-    if(d.ok){tShow(d.updated+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
+  async function bulkEditApply(){
+    var f=document.getElementById('bulkField').value;
+    var vEl=document.getElementById('bulkVal'); var value=vEl?vEl.value:'';
+    var ids=selectedIds(); if(!ids.length){tShow('Select some items first');return;}
+    var action=(f==='status')?'status':f;
+    var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
+    if(vEl&&vEl.tagName==='INPUT')vEl.value='';
+    if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
   }
   async function bulkDelete(){
     var ids=selectedIds();if(!ids.length)return;
@@ -2972,7 +2981,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +row('Install date',esc(it.actual_install_date))
       +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open ↗</a>':'not synced')
       +'</dl>';
-    if(!d.is_snag&&canCap('items.edit')){
+    var specEditable=!d.is_snag&&canCap('items.edit');
+    if(specEditable){
       html+='<div class="groupt" style="padding:12px 22px 0">SPECIFICATION</div><div class="fgrid" style="padding:6px 22px 12px">'
         +'<div class="field full"><label>Design code (Clearview style)</label><div style="display:flex;gap:8px;align-items:center">'
           +'<input id="f_design" type="text" value="'+attr(it.design_code)+'" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
@@ -2988,7 +2998,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +fieldV('f_m2','Mullion 2 (mm)',it.mullion2_mm,'','number')+fieldV('f_m3','Mullion 3 (mm)',it.mullion3_mm,'','number')
         +fieldV('f_coupled','Coupled',it.coupled,'e.g. to W03')+fieldV('f_addons','Add-ons',it.add_ons,'Trickle vents / etc')
         +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2">'+esc(it.comments||'')+'</textarea></div>'
-        +'</div><div style="padding:0 22px 16px"><button class="save" onclick="saveDetail(\\''+it.id+'\\')">Save details</button></div>';
+        +'</div>';
     }
     if(d.photos&&d.photos.length){
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
@@ -3026,6 +3036,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'</div>';
     } else {
       html+='<div class="empty">This is a snag item — set its team and labour cost above, then sync and fit it like any item.</div>';
+    }
+    if(specEditable){ // sticky Save pinned to the bottom of the drawer, always visible while scrolling
+      html+='<div class="sheetfoot"><button class="save" onclick="saveDetail(\\''+it.id+'\\')">Save details</button><span class="sub" style="margin:0">Changes mark the item to re-sync to Monday.</span></div>';
     }
     document.getElementById('modalTitle').innerHTML=(d.is_snag?'Snag ':'Item ')+'<span class="mono">'+esc(it.full_code)+'</span>';
     document.getElementById('modalBody').innerHTML=html;
