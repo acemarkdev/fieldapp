@@ -1481,7 +1481,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <th>FLAT<br><select id="flatFilter" class="colfilter" onchange="setFlatFilter(this.value)"></select></th>
         <th>FLOOR<br><select id="floorFilter" class="colfilter" onchange="setFloorFilter(this.value)"></select></th>
         <th>ROOM<br><select id="roomFilter" class="colfilter" onchange="setRoomFilter(this.value)"></select></th>
-        <th>ITEM</th><th>STAGE</th><th>RATE (£)</th>
+        <th>ITEM</th>
+        <th>STAGE<br><select id="stageFilter" class="colfilter" onchange="setStageFilter(this.value)"></select></th>
+        <th>RATE (£)</th>
         <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
         <th>TEAM<br><select id="teamFilter" class="colfilter" onchange="setTeamFilter(this.value)"></select></th><th>MONDAY</th>
       </tr></thead><tbody id="rows"></tbody></table></div>
@@ -1701,7 +1703,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='';
+  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='', stageFilter='';
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
@@ -1964,7 +1966,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     JOB_STATUS={}; JOB_MAPDATE={};
     jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs');
     jobs.forEach(function(j){mk(j.code,j.code);});
     // Scanner (or an empty current) lands on the first available job.
@@ -2036,6 +2038,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fillColFilter('elevFilter','elevation',function(v){elevFilter=v;},elevFilter,'All elevations');
     fillColFilter('floorFilter','floor',function(v){floorFilter=v;},floorFilter,'All floors');
     fillColFilter('roomFilter','room',function(v){roomFilter=v;},roomFilter,'All rooms');
+    // stage filter: distinct stages present, shown with their labels
+    var stages=[]; (itemsData.items||[]).forEach(function(it){var st=it.stage||''; if(st&&stages.indexOf(st)<0)stages.push(st);});
+    if(stageFilter&&stages.indexOf(stageFilter)<0)stageFilter='';
+    document.getElementById('stageFilter').innerHTML='<option value="">All stages</option>'+stages.map(function(st){return '<option value="'+av(st)+'">'+esc(STAGE[st]||st)+'</option>';}).join('');
+    document.getElementById('stageFilter').value=stageFilter;
     renderItems();
   }
   function setFlatFilter(v){flatFilter=v;renderItems();}
@@ -2045,6 +2052,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function setElevFilter(v){elevFilter=v;renderItems();}
   function setFloorFilter(v){floorFilter=v;renderItems();}
   function setRoomFilter(v){roomFilter=v;renderItems();}
+  function setStageFilter(v){stageFilter=v;renderItems();}
   function fillColFilter(selId,field,setFn,cur,allLabel){
     var vals=[], hasNone=false;
     (itemsData.items||[]).forEach(function(it){ var v=it[field]||''; if(v){ if(vals.indexOf(v)<0)vals.push(v); } else hasNone=true; });
@@ -2084,6 +2092,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(elevFilter==='__none'){if(r.elevation)return false;} else if(elevFilter){if((r.elevation||'')!==elevFilter)return false;}
       if(floorFilter==='__none'){if(r.floor)return false;} else if(floorFilter){if((r.floor||'')!==floorFilter)return false;}
       if(roomFilter==='__none'){if(r.room)return false;} else if(roomFilter){if((r.room||'')!==roomFilter)return false;}
+      if(stageFilter&&(r.stage||'')!==stageFilter)return false;
       return true;
     });
     var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');

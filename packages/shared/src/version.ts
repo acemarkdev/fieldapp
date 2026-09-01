@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.58.1';
+export const APP_VERSION = '0.58.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.58.2', date: '2026-08-31', changes: [
+    'Items tab: the STAGE column header now has a filter too (Scanned / In survey / Surveyed / Synced), matching the other column filters.',
+  ] },
   { version: '0.58.1', date: '2026-08-31', changes: [
     'Item drawer: the Save details button is now a sticky footer, always visible while you scroll the form. Bulk toolbar tidy-up: the seven Set boxes are replaced by one Field picker + a value box + Apply, and the actions (Sync selected, Delete, Clear) sit on their own row, separated from the field editing.',
   ] },
