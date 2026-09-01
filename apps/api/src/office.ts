@@ -646,13 +646,27 @@ const server = createServer(async (req, res) => {
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
-      if (action === 'block' || action === 'elevation') {
+      if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'room') {
         if (!allow('items.edit')) return;
-        // Sets the Block/Elevation field for filtering & reporting. Does not rewrite existing item codes.
-        const v = String(value ?? '').trim().toUpperCase() || null;
-        const patch = action === 'block' ? { block: v } : { elevation: v };
-        const n = await bulkUpdateItems(allowed, patch, ctx.tenant_id);
-        send(res, 200, { ok: true, updated: n }); return;
+        // Sets the field AND rebuilds each item's code — skipped for items already synced to Monday.
+        const raw = String(value ?? '').trim();
+        const jobCache: Record<string, any> = {};
+        let updated = 0, locked = 0, dupes = 0;
+        for (const id of allowed) {
+          const it: any = await getSurveyItem(id);
+          if (it.monday_item_id) { locked++; continue; } // code locked after sync
+          const job = jobCache[it.job_id] || (jobCache[it.job_id] = await getJob(it.job_id));
+          let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code;
+          if (action === 'block') block = raw.toUpperCase() || null;
+          else if (action === 'elevation') elevation = raw.toUpperCase() || null;
+          else if (action === 'floor') { floor = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; if (floor) flat = null; } // floor becomes the level
+          else if (action === 'room') room = raw.toUpperCase() || null;
+          const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
+          if (await codeExists(ctx.tenant_id, full_code, id)) { dupes++; continue; }
+          const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, full_code }).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          if (!error) updated++;
+        }
+        send(res, 200, { ok: true, updated, skipped: locked + dupes, locked, dupes }); return;
       }
       if (action === 'delete') {
         // Destructive — managers only (matches the DB delete policy: admin/office).
@@ -1223,7 +1237,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   th.cbcell,td.cbcell{width:34px;text-align:center;padding-left:14px}
   .rowcb,#selAll{width:15px;height:15px;cursor:pointer;accent-color:var(--magenta)}
   .ro{color:var(--muted);font-size:13px}
-  .bulkbar{display:flex;align-items:center;gap:10px;background:var(--purple);color:#fff;border-radius:12px;padding:9px 14px;margin:14px 0 10px}
+  .bulkbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--purple);color:#fff;border-radius:12px;padding:9px 14px;margin:14px 0 10px}
   #bulkcount{font-size:12.5px;font-weight:700;margin-right:4px}
   .bulk{font-size:12px;font-weight:600;border-radius:8px;padding:7px 12px;border:none;cursor:pointer}
   .bulk.bsync{background:var(--magenta);color:#fff}
@@ -1434,8 +1448,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
         <select id="bulkTeam" class="bulk bsel" onchange="bulkApply('team',this)"><option value="">Assign team…</option></select>
         <select id="bulkStatus" class="bulk bsel" onchange="bulkApply('status',this)"><option value="">Set status…</option></select>
-        <input id="bulkBlock" class="bulk" placeholder="Block" style="width:78px;text-transform:uppercase"><button class="bulk" onclick="bulkField('block')">Set</button>
-        <input id="bulkElev" class="bulk" placeholder="Elev" style="width:78px;text-transform:uppercase"><button class="bulk" onclick="bulkField('elevation')">Set</button>
+        <input id="bulkBlock" class="bulk" placeholder="Block" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('block')">Set</button>
+        <input id="bulkElev" class="bulk" placeholder="Elev" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('elevation')">Set</button>
+        <input id="bulkFloor" class="bulk" placeholder="Floor" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('floor')">Set</button>
+        <input id="bulkRoom" class="bulk" placeholder="Room" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('room')">Set</button>
         <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
         <button class="bulk bclear" onclick="clearSel()">Clear</button>
       </div>
@@ -2145,12 +2161,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
   }
   async function bulkField(field){
-    var el=document.getElementById(field==='block'?'bulkBlock':'bulkElev');
+    var map={block:'bulkBlock',elevation:'bulkElev',floor:'bulkFloor',room:'bulkRoom'};
+    var el=document.getElementById(map[field]);
     var ids=selectedIds();if(!ids.length){tShow('Select some items first');return;}
     var value=el.value.trim().toUpperCase();
     var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:field,value:value})})).json();
     el.value='';
-    if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
+    if(d.ok){tShow(d.updated+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
   }
   async function bulkDelete(){
     var ids=selectedIds();if(!ids.length)return;
