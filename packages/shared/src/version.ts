@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.57.0';
+export const APP_VERSION = '0.57.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.57.1', date: '2026-08-31', changes: [
+    'Bulk assign now includes Flat as well (Block, Elevation, Floor, Flat, Room). Setting Flat in bulk rebuilds each item code with the Flat as the F-segment; synced items and code clashes are skipped.',
+  ] },
   { version: '0.57.0', date: '2026-08-31', changes: [
     'Bulk assign now covers Floor and Room too (not just Block/Elevation). Select items, type a value in the toolbar and press Set. Because Floor and Room are part of the code, bulk-setting them rebuilds each item code (Floor becomes the F-segment); items already synced to Monday are skipped, as are any that would clash with an existing code. The toolbar wraps so all the Set boxes fit.',
   ] },

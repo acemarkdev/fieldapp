@@ -646,7 +646,7 @@ const server = createServer(async (req, res) => {
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
-      if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'room') {
+      if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'flat' || action === 'room') {
         if (!allow('items.edit')) return;
         // Sets the field AND rebuilds each item's code — skipped for items already synced to Monday.
         const raw = String(value ?? '').trim();
@@ -660,6 +660,7 @@ const server = createServer(async (req, res) => {
           if (action === 'block') block = raw.toUpperCase() || null;
           else if (action === 'elevation') elevation = raw.toUpperCase() || null;
           else if (action === 'floor') { floor = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; if (floor) flat = null; } // floor becomes the level
+          else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; if (flat) floor = null; } // flat becomes the level
           else if (action === 'room') room = raw.toUpperCase() || null;
           const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
           if (await codeExists(ctx.tenant_id, full_code, id)) { dupes++; continue; }
@@ -1451,6 +1452,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <input id="bulkBlock" class="bulk" placeholder="Block" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('block')">Set</button>
         <input id="bulkElev" class="bulk" placeholder="Elev" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('elevation')">Set</button>
         <input id="bulkFloor" class="bulk" placeholder="Floor" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('floor')">Set</button>
+        <input id="bulkFlat" class="bulk" placeholder="Flat" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('flat')">Set</button>
         <input id="bulkRoom" class="bulk" placeholder="Room" style="width:70px;text-transform:uppercase"><button class="bulk" onclick="bulkField('room')">Set</button>
         <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
         <button class="bulk bclear" onclick="clearSel()">Clear</button>
@@ -2161,7 +2163,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
   }
   async function bulkField(field){
-    var map={block:'bulkBlock',elevation:'bulkElev',floor:'bulkFloor',room:'bulkRoom'};
+    var map={block:'bulkBlock',elevation:'bulkElev',floor:'bulkFloor',flat:'bulkFlat',room:'bulkRoom'};
     var el=document.getElementById(map[field]);
     var ids=selectedIds();if(!ids.length){tShow('Select some items first');return;}
     var value=el.value.trim().toUpperCase();
