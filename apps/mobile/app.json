@@ -2,7 +2,7 @@
   "expo": {
     "name": "ACE Field",
     "slug": "ace-field",
-    "version": "0.59.0",
+    "version": "0.60.0",
     "orientation": "portrait",
     "scheme": "acefield",
     "userInterfaceStyle": "light",

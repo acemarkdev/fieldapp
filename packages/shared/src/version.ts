@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.59.0';
+export const APP_VERSION = '0.60.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.60.0', date: '2026-08-31', changes: [
+    'Mapping table: added a manual Flat column next to Floor. If you fill Flat it becomes the F-segment of the code (replacing the mapping floor); leave it blank to keep the floor. Both Floor and Flat are saved on the item. Added a Clear all button on the table (alongside the per-row delete). And switching to the Items tab now always refreshes the list, so items you just saved from Mapping show up immediately.',
+  ] },
   { version: '0.59.0', date: '2026-08-31', changes: [
     'Auto-provision Monday columns on board link. When you link a Monday board to a job (Sync tab), the app now checks the board and creates any missing required columns automatically — Picture Before/After, Design Sketch, Labour Cost, and every item field the sync writes (Block, Elevation, Flat/Plot No., Floor, Item, Room, Item Type, Window Type, Material, Glass, sizes, transoms, mullions, comments, install status, fitters, etc.). It matches by column title and only creates the ones that are absent, then tells you how many it added. No more prepping each real job board by hand.',
   ] },

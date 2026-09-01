@@ -518,17 +518,17 @@ const server = createServer(async (req, res) => {
       const seen = new Set<string>();
       const fields: Record<string, unknown>[] = [];
       for (const r of rows) {
-        // Floor: strip a leading F only before a number ("F1"->"1"); labels like GF are kept.
+        // Strip a leading F only before a number ("F1"->"1"); labels like GF are kept.
+        const floor = String(r.floor ?? '').trim().replace(/^F(?=[0-9])/i, '');
         const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
         const item = String(r.item ?? '').trim().toUpperCase();
         if (!item) continue;
-        const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, floor: flat, item });
+        // Flat (if set) is the level segment in the code, else the mapping Floor. Both are stored.
+        const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, item });
         if (seen.has(full_code)) continue; seen.add(full_code);
         fields.push({
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
-          // The mapping "floor" is stored in the floor field (not flat), so the Items tab's
-          // Flat column stays empty for mapped items. The full_code above keeps F{floor} in place.
-          block, elevation, floor: flat || null, item_code: item,
+          block, elevation, floor: floor || null, flat: flat || null, item_code: item,
           item_type: String(r.item_type ?? '').trim() || null, full_code,
         });
       }
@@ -1889,9 +1889,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   // Floor segment: prefix F only for a plain number (1 -> F1); leave labels like GF as-is.
   function floorSeg(flat){ if(!flat) return ''; return /^[0-9]+$/.test(flat) ? ('F'+flat) : flat.toUpperCase(); }
-  function mapCode(block,elev,flat,item){
+  function levelOf(floor,flat){ return (flat&&String(flat).trim()!=='')?flat:floor; }
+  function mapCode(block,elev,floor,flat,item){
     var parts=current.split('.');
-    return [parts[0],parts[1],block,elev,floorSeg(flat),item].filter(function(x){return x;}).join('.');
+    return [parts[0],parts[1],block,elev,floorSeg(levelOf(floor,flat)),item].filter(function(x){return x;}).join('.');
   }
   function stripF(v){ return String(v||'').trim().replace(/^F(?=[0-9])/i,''); } // "F1"->"1", "GF" stays
   function mapPreload(){
@@ -1905,18 +1906,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!floors.length){tShow('Add at least one floor with windows or doors');return;}
     var rows=[];
     floors.forEach(function(fl){
-      for(var i=1;i<=fl.windows;i++) rows.push({flat:fl.floor,item:'W'+i,type:'Window'});
-      for(var j=1;j<=fl.doors;j++) rows.push({flat:fl.floor,item:'D'+j,type:'Door'});
+      for(var i=1;i<=fl.windows;i++) rows.push({floor:fl.floor,flat:'',item:'W'+i,type:'Window'});
+      for(var j=1;j<=fl.doors;j++) rows.push({floor:fl.floor,flat:'',item:'D'+j,type:'Door'});
     });
     renderMapRows(rows);
   }
   function renderMapRows(rows){
     var wrap=document.getElementById('mapTableWrap');
-    var head='<tr><th>CODE</th><th>FLOOR</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>#</th><th></th><th></th></tr>';
-    wrap.innerHTML='<div class="groupt" style="padding:0 0 6px">PRELOADED ITEMS &mdash; review, edit, split couples, then Save</div>'
+    var head='<tr><th>CODE</th><th>FLOOR</th><th>FLAT</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>#</th><th></th><th></th></tr>';
+    wrap.innerHTML='<div class="groupt" style="padding:0 0 6px;display:flex;justify-content:space-between;align-items:center">'
+      +'<span>PRELOADED ITEMS &mdash; review, edit, split couples, then Save</span>'
+      +'<button class="del" id="mapClearBtn" title="Remove every row">Clear all</button></div>'
       +'<div class="card2" style="padding:0;overflow:auto"><table id="mapTable"><thead>'+head+'</thead><tbody id="mapTbody"></tbody></table></div>';
     var tb=document.getElementById('mapTbody');
     rows.forEach(function(r){ tb.appendChild(makeMapRow(r)); });
+    document.getElementById('mapClearBtn').addEventListener('click',function(){ if(document.querySelectorAll('#mapTbody tr').length&&confirm('Clear all rows from the table?')){ document.getElementById('mapTbody').innerHTML=''; updateSaveCount(); } });
     document.getElementById('mapFooter').style.display='flex';
     updateSaveCount();
   }
@@ -1924,9 +1928,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var be=getMapBE();
     var tr=document.createElement('tr');
     tr.innerHTML=''
-      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(mapCode(be.block.trim(),be.elev.trim(),r.flat,r.item))+'</td>'
-      +'<td><input class="mr-flat" value="'+esc(r.flat)+'" style="width:64px"></td>'
-      +'<td><input class="mr-item" value="'+esc(r.item)+'" style="width:90px"></td>'
+      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(mapCode(be.block.trim(),be.elev.trim(),r.floor,r.flat,r.item))+'</td>'
+      +'<td><input class="mr-floor" value="'+esc(r.floor||'')+'" style="width:58px" title="Floor"></td>'
+      +'<td><input class="mr-flat" value="'+esc(r.flat||'')+'" style="width:58px" title="Flat / plot (optional — replaces floor in the code)"></td>'
+      +'<td><input class="mr-item" value="'+esc(r.item||'')+'" style="width:90px"></td>'
       +'<td><select class="mr-type"><option'+(r.type==='Window'?' selected':'')+'>Window</option><option'+(r.type==='Door'?' selected':'')+'>Door</option></select></td>'
       +'<td style="text-align:center"><input type="checkbox" class="mr-couple"></td>'
       +'<td><input type="number" min="2" value="2" class="mr-n" style="width:52px" disabled></td>'
@@ -1936,7 +1941,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     return tr;
   }
   function wireMapRow(tr){
-    function recode(){ var be=getMapBE(); tr.querySelector('.mapcode').textContent=mapCode(be.block.trim(),be.elev.trim(),stripF(tr.querySelector('.mr-flat').value),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
+    function recode(){ var be=getMapBE(); tr.querySelector('.mapcode').textContent=mapCode(be.block.trim(),be.elev.trim(),stripF(tr.querySelector('.mr-floor').value),stripF(tr.querySelector('.mr-flat').value),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
+    tr.querySelector('.mr-floor').addEventListener('input',recode);
     tr.querySelector('.mr-flat').addEventListener('input',recode);
     tr.querySelector('.mr-item').addEventListener('input',function(){var s=this.selectionStart;this.value=this.value.toUpperCase();try{this.setSelectionRange(s,s);}catch(_){}recode();});
     var cp=tr.querySelector('.mr-couple'), n=tr.querySelector('.mr-n'), sp=tr.querySelector('.mr-split');
@@ -1947,27 +1953,29 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function splitMapRow(tr){
     var n=parseInt(tr.querySelector('.mr-n').value,10)||0;
     if(n<2){tShow('Set a couple count of 2 or more');return;}
+    var floor=tr.querySelector('.mr-floor').value.trim();
     var flat=tr.querySelector('.mr-flat').value.trim();
     var base=tr.querySelector('.mr-item').value.trim().toUpperCase();
     var type=tr.querySelector('.mr-type').value;
     if(!base){tShow('Enter an item code first');return;}
-    for(var i=1;i<=n;i++){ tr.parentNode.insertBefore(makeMapRow({flat:flat,item:base+'.'+i,type:type}),tr); }
+    for(var i=1;i<=n;i++){ tr.parentNode.insertBefore(makeMapRow({floor:floor,flat:flat,item:base+'.'+i,type:type}),tr); }
     tr.remove(); updateSaveCount();
   }
-  function mapAddRow(){ var tb=document.getElementById('mapTbody'); if(!tb)return; tb.appendChild(makeMapRow({flat:'',item:'',type:'Window'})); updateSaveCount(); }
+  function mapAddRow(){ var tb=document.getElementById('mapTbody'); if(!tb)return; tb.appendChild(makeMapRow({floor:'',flat:'',item:'',type:'Window'})); updateSaveCount(); }
   function updateSaveCount(){ var n=document.querySelectorAll('#mapTbody tr').length; var b=document.getElementById('mapSaveBtn'); if(b)b.textContent='Save '+n+' item'+(n===1?'':'s'); }
   async function mapSave(){
     var be=getMapBE(); var block=be.block.trim(), elev=be.elev.trim();
     var out=[];
     document.querySelectorAll('#mapTbody tr').forEach(function(tr){
+      var floor=stripF(tr.querySelector('.mr-floor').value);
       var flat=stripF(tr.querySelector('.mr-flat').value);
       var item=tr.querySelector('.mr-item').value.trim().toUpperCase();
       var type=tr.querySelector('.mr-type').value;
       if(!item) return;
       var couple=tr.querySelector('.mr-couple').checked;
       var nn=parseInt(tr.querySelector('.mr-n').value,10)||0;
-      if(couple&&nn>=2){ for(var i=1;i<=nn;i++) out.push({flat:flat,item:item+'.'+i,item_type:type}); }
-      else out.push({flat:flat,item:item,item_type:type});
+      if(couple&&nn>=2){ for(var i=1;i<=nn;i++) out.push({floor:floor,flat:flat,item:item+'.'+i,item_type:type}); }
+      else out.push({floor:floor,flat:flat,item:item,item_type:type});
     });
     if(!out.length){tShow('Nothing to save');return;}
     tShow('Saving '+out.length+' item(s)…');
@@ -2252,6 +2260,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabTests').classList.toggle('on',name==='tests');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
+    if(name==='items')loadItems(); // always refresh (e.g. after saving in Mapping)
     if(name==='dashboard')loadDashboard();
     if(name==='mapping')loadMapping();
     if(name==='teams')loadTeams();
