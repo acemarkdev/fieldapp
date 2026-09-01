@@ -788,8 +788,12 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       const item = await getSurveyItem(id);
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      // Editable specification fields (mirrors the New-item / mobile form).
+      const SPEC_STR = ['material', 'item_type', 'window_type', 'glass', 'safety_glass', 'glazing', 'open_in_out', 'add_ons', 'coupled', 'design_code', 'comments'];
+      const SPEC_NUM = ['width_mm', 'height_mm', 'cill_depth_mm', 'transom1_mm', 'transom2_mm', 'transom3_mm', 'mullion1_mm', 'mullion2_mm', 'mullion3_mm'];
       // Spec/rate/team edits need items.edit; a status-only change needs items.fit (or edit).
-      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body);
+      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body)
+        || SPEC_STR.some((k) => k in body) || SPEC_NUM.some((k) => k in body);
       if (touchesSpec) { if (!allow('items.edit')) return; }
       else if ('install_status' in body) {
         if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
@@ -799,6 +803,8 @@ const server = createServer(async (req, res) => {
         patch.rate_override_pennies = (body.rate_override_pennies === '' || body.rate_override_pennies == null) ? null : Math.round(Number(body.rate_override_pennies));
       if ('install_status' in body) patch.install_status = body.install_status || null;
       if ('team_id' in body) patch.team_id = body.team_id || null;
+      for (const k of SPEC_STR) if (k in body) patch[k] = (String(body[k] ?? '').trim()) || null;
+      for (const k of SPEC_NUM) if (k in body) { const v = body[k]; patch[k] = (v === '' || v == null) ? null : Math.round(Number(v)); }
       // Editing Flat / Room rebuilds the item code — allowed only until it's synced to Monday.
       if ('flat' in body || 'room' in body) {
         if (!allow('items.edit')) return;
@@ -2955,22 +2961,35 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal('Loading…','<div class="empty">Loading…</div>');
     var d=await (await api('/api/item/'+id+'/detail')).json(); var it=d.item;
     function row(k,v){return (v==null||v==='')?'':'<div class="drow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
+    function attr(v){return (v==null?'':esc(String(v))).replace(/"/g,'&quot;');}
+    function fieldV(id,label,val,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+attr(val)+'" placeholder="'+(ph||'')+'"></div>';}
     var html='<dl class="dl">'
       +row('Full code','<span class="mono">'+esc(it.full_code)+'</span>')
       +row('Stage',esc(STAGE[it.stage]||it.stage))
-      +row('Room / Item',esc(it.room_code||'—')+' / '+esc(it.item_code||'—'))
-      +row('Block · Elev · Flat',[it.block,it.elevation,it.flat].map(function(x){return esc(x||'—');}).join(' · '))
-      +row('Floor',esc(it.floor))
-      +row('Material',esc(it.material))+row('Type',esc(it.item_type))
-      +row('Glass',esc(it.glass))+row('Glazing',esc(it.glazing))
-      +row('Size (mm)',(it.width_mm||it.height_mm)?(esc(it.width_mm||'?')+' × '+esc(it.height_mm||'?')):'')
-      +row('Design code',esc(it.design_code))
-      +row('Comments',esc(it.comments))
+      +row('Location',[it.block,it.elevation,(it.flat?('Flat '+it.flat):''),(it.floor?('Floor '+it.floor):''),it.room_code,it.item_code].filter(function(x){return x;}).map(esc).join(' · '))
       +row('Team',esc(d.team||'—'))+row('Fitting rate',esc(d.effective_rate))
       +row('Install status',esc(istatLabel(it.install_status)))
       +row('Install date',esc(it.actual_install_date))
       +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open ↗</a>':'not synced')
       +'</dl>';
+    if(!d.is_snag&&canCap('items.edit')){
+      html+='<div class="groupt" style="padding:12px 22px 0">SPECIFICATION</div><div class="fgrid" style="padding:6px 22px 12px">'
+        +'<div class="field full"><label>Design code (Clearview style)</label><div style="display:flex;gap:8px;align-items:center">'
+          +'<input id="f_design" type="text" value="'+attr(it.design_code)+'" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
+          +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
+          +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff"></div></div>'
+        +fieldV('f_material','Material',it.material,'uPVC / Alu / Timber')+fieldV('f_type','Item type',it.item_type,'Window / Door')
+        +fieldV('f_wtype','Window type',it.window_type,'e.g. Casement')+fieldV('f_glass','Glass',it.glass,'e.g. 4-20-4')
+        +fieldV('f_safety','Safety glass',it.safety_glass,'Toughened / Laminated')+fieldV('f_glazing','Glazing',it.glazing,'Double / Triple')
+        +fieldV('f_width','Width (mm)',it.width_mm,'','number')+fieldV('f_height','Height inc cill (mm)',it.height_mm,'','number')
+        +fieldV('f_cill','Cill depth (mm)',it.cill_depth_mm,'','number')+fieldV('f_openinout','Open in / out',it.open_in_out,'In / Out')
+        +fieldV('f_t1','Transom 1 (mm)',it.transom1_mm,'','number')+fieldV('f_t2','Transom 2 (mm)',it.transom2_mm,'','number')
+        +fieldV('f_t3','Transom 3 (mm)',it.transom3_mm,'','number')+fieldV('f_m1','Mullion 1 (mm)',it.mullion1_mm,'','number')
+        +fieldV('f_m2','Mullion 2 (mm)',it.mullion2_mm,'','number')+fieldV('f_m3','Mullion 3 (mm)',it.mullion3_mm,'','number')
+        +fieldV('f_coupled','Coupled',it.coupled,'e.g. to W03')+fieldV('f_addons','Add-ons',it.add_ons,'Trickle vents / etc')
+        +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2">'+esc(it.comments||'')+'</textarea></div>'
+        +'</div><div style="padding:0 22px 16px"><button class="save" onclick="saveDetail(\\''+it.id+'\\')">Save details</button></div>';
+    }
     if(d.photos&&d.photos.length){
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
     } else { html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="empty">No photos yet — add one below, or they arrive from the mobile survey / install flow.</div>'; }
@@ -3010,6 +3029,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }
     document.getElementById('modalTitle').innerHTML=(d.is_snag?'Snag ':'Item ')+'<span class="mono">'+esc(it.full_code)+'</span>';
     document.getElementById('modalBody').innerHTML=html;
+    if(document.getElementById('f_design'))stylePreview(); // show the design sketch if a code is set
+  }
+  async function saveDetail(id){
+    function g(x){var e=document.getElementById(x);return e?e.value:undefined;}
+    var body={material:g('f_material'),item_type:g('f_type'),window_type:g('f_wtype'),glass:g('f_glass'),
+      safety_glass:g('f_safety'),glazing:g('f_glazing'),open_in_out:g('f_openinout'),add_ons:g('f_addons'),
+      coupled:g('f_coupled'),design_code:g('f_design'),comments:g('f_comments'),
+      width_mm:g('f_width'),height_mm:g('f_height'),cill_depth_mm:g('f_cill'),
+      transom1_mm:g('f_t1'),transom2_mm:g('f_t2'),transom3_mm:g('f_t3'),
+      mullion1_mm:g('f_m1'),mullion2_mm:g('f_m2'),mullion3_mm:g('f_m3')};
+    var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
+    if(d.ok){tShow('Details saved');loadItems();openDetail(id);}else tShow(d.error||'Save failed');
   }
   function fileToDataUrl(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result)};r.onerror=rej;r.readAsDataURL(file);});}
   async function logSnag(id){
