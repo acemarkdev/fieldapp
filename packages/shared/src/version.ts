@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.55.0';
+export const APP_VERSION = '0.56.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.56.0', date: '2026-08-31', changes: [
+    'Items tab: Flat and Room are now editable inline (with a Room column filter too), and editing them rebuilds the item code — the Flat becomes the F-segment (replacing the mapping floor) and the Room slots in before the item, e.g. AXS.LAB.B1.E1.F1.W1 -> after Flat 2 + Room LR -> AXS.LAB.B1.E1.F2.LR.W1. Codes can be edited until the item is synced to Monday, after which Flat/Room lock (un-sync to change). Duplicate codes are blocked.',
+    'Items tab layout: the left Jobs panel can be hidden/shown with the "Jobs" toggle, and the items table scrolls horizontally, so the extra Block/Elevation/Floor/Room columns fit on smaller screens.',
+  ] },
   { version: '0.55.0', date: '2026-08-31', changes: [
     'Items tab: Block, Elevation and Floor columns, each with a header filter (like Flat/Status/Team). And a bulk assign-to-all: select items, type a Block and/or Elevation in the toolbar and press Set to apply it across them (sets the field for filtering/reporting; it does not rewrite existing item codes).',
     'Fix: mapped items no longer show Flat=1. The mapping "floor" is now stored in the Floor field instead of Flat, so the Items tab reads correctly; the code still shows F{floor} (e.g. AXS.LAB.B1.E1.F1.W1). Applies to items mapped from this version on.',

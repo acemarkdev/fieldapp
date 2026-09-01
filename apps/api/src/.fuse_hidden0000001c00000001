@@ -1973,7 +1973,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else document.getElementById('njErr').textContent=d.error||'Could not create job';
   }
   async function loadItems(){
-    var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
+    var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data;
     document.getElementById('bulkTeam').innerHTML='<option value="">Assign team…</option>'+teamOptionList('');
     document.getElementById('bulkStatus').innerHTML='<option value="">Set status…</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('');
     document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+data.job.name;

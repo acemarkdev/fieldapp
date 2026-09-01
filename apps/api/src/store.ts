@@ -158,6 +158,14 @@ export async function listJobs(tenantId: string): Promise<Job[]> {
   return (data ?? []) as Job[];
 }
 
+// Does another item in this tenant already use this full_code? (excludes exceptId — the item being edited.)
+export async function codeExists(tenantId: string, fullCode: string, exceptId: string): Promise<boolean> {
+  const { data, error } = await db().from('survey_items')
+    .select('id').eq('tenant_id', tenantId).eq('full_code', fullCode).neq('id', exceptId).limit(1);
+  if (error) throw error;
+  return !!(data && data.length);
+}
+
 // Admin assigns a mapping start date → job becomes 'pending_mapping' (visible to scanners).
 export async function setJobMappingDate(id: string, date: string | null, tenantId: string): Promise<void> {
   const { error } = await db().from('jobs')
