@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.58.2';
+export const APP_VERSION = '0.58.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.58.3', date: '2026-08-31', changes: [
+    'Plan PDFs: the numbered pins are smaller and semi-transparent, so the window they mark stays visible underneath instead of being hidden behind a solid dot.',
+  ] },
   { version: '0.58.2', date: '2026-08-31', changes: [
     'Items tab: the STAGE column header now has a filter too (Scanned / In survey / Surveyed / Synced), matching the other column filters.',
   ] },

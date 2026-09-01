@@ -150,10 +150,13 @@ export function renderReportPdf(data: ReportData): Promise<Buffer> {
         const n = ++pinCounter;
         if (pin.code) { const arr = pinNoByCode.get(pin.code) ?? []; arr.push(n); pinNoByCode.set(pin.code, arr); }
         const px = x0 + pin.x * w, py = y0 + pin.y * h;
-        doc.circle(px, py, 9).fill(statusColor(pin.status));
-        doc.circle(px, py, 9).lineWidth(1).strokeColor('#ffffff').stroke();
-        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8)
-          .text(String(n), px - 9, py - 4, { width: 18, align: 'center' });
+        // Small, semi-transparent pin so the window beneath stays visible.
+        const r = 6;
+        doc.fillOpacity(0.55).circle(px, py, r).fill(statusColor(pin.status));
+        doc.fillOpacity(1);
+        doc.circle(px, py, r).lineWidth(0.75).strokeColor('#ffffff').stroke();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7)
+          .text(String(n), px - r, py - 3.3, { width: r * 2, align: 'center' });
         doc.fillColor(INK);
       });
       doc.y = y0 + h + 8;
