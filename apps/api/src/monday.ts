@@ -100,6 +100,17 @@ export class Monday {
     return d.create_item.id;
   }
 
+  /** Create a new column on a board (used to auto-provision required columns on link). */
+  async createColumn(boardId: string, title: string, columnType: string): Promise<string> {
+    const d = await this.gql<{ create_column: { id: string } }>(
+      `mutation ($b: ID!, $t: String!, $ct: ColumnType!) {
+         create_column(board_id: $b, title: $t, column_type: $ct) { id }
+       }`,
+      { b: boardId, t: title, ct: columnType },
+    );
+    return d.create_column.id;
+  }
+
   /** Duplicate an item on the same board (used for snags); returns the new item id. */
   async duplicateItem(boardId: string, itemId: string, withUpdates = false): Promise<string> {
     const d = await this.gql<{ duplicate_item: { id: string } }>(

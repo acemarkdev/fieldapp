@@ -32,6 +32,7 @@ import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
 import { Monday } from './monday';
+import { REQUIRED_MONDAY_COLUMNS, norm as normColTitle } from './mapItem';
 
 // Normalise a column title for loose matching (Fitters pull, etc.).
 const normTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -916,7 +917,21 @@ const server = createServer(async (req, res) => {
       const { board } = await readJson(req);
       const { board: boardId, slug } = parseMondayRef(board);
       await setJobBoard(job.id, boardId, slug);
-      send(res, 200, { ok: true, board: boardId, slug });
+      // On link, ensure the board has every required column — create any that are missing.
+      let columnsCreated: string[] = []; let columnsError: string | undefined;
+      if (boardId) {
+        try {
+          const monday = new Monday();
+          const existing = await monday.getColumns(boardId);
+          const have = new Set(existing.map((c) => normColTitle(c.title)));
+          for (const req of REQUIRED_MONDAY_COLUMNS) {
+            if (have.has(normColTitle(req.title))) continue;
+            try { await monday.createColumn(boardId, req.title, req.type); columnsCreated.push(req.title); }
+            catch (e: any) { columnsError = e?.message ?? String(e); }
+          }
+        } catch (e: any) { columnsError = e?.message ?? String(e); }
+      }
+      send(res, 200, { ok: true, board: boardId, slug, columnsCreated, columnsError });
       return;
     }
 
@@ -2381,7 +2396,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       tb.appendChild(tr);
     });
   }
-  async function saveBoard(code,value){var d=await (await api('/api/job/'+encodeURIComponent(code)+'/board',{method:'PUT',body:JSON.stringify({board:value})})).json();if(d.ok){tShow(d.board?'Board linked':'Board unlinked');loadSync();}else tShow(d.error||'Failed');}
+  async function saveBoard(code,value){var d=await (await api('/api/job/'+encodeURIComponent(code)+'/board',{method:'PUT',body:JSON.stringify({board:value})})).json();
+    if(d.ok){
+      var n=(d.columnsCreated||[]).length;
+      tShow(d.board?('Board linked'+(n?(' · '+n+' column'+(n===1?'':'s')+' created'):' · columns OK')):'Board unlinked');
+      loadSync();
+    } else tShow(d.error||'Failed');}
   async function syncJob(code,btn){
     btn.disabled=true;var old=btn.textContent;btn.textContent='Syncing…';tShow('Syncing '+code+'…');
     try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/sync',{method:'POST'})).json();

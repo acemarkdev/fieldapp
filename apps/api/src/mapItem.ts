@@ -20,7 +20,25 @@ export const INSTALL_STATUS_LABEL: Record<InstallStatus, string> = {
   delayed: 'Delayed',
 };
 
-const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+export const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+
+// The columns the sync + photo push rely on, by TITLE and Monday column_type. When a board is
+// linked to a job, any of these that are missing (by normalised title) are auto-created.
+export const REQUIRED_MONDAY_COLUMNS: { title: string; type: string }[] = [
+  { title: 'Block', type: 'text' }, { title: 'Elevation', type: 'text' }, { title: 'Flat / Plot No.', type: 'text' },
+  { title: 'Room', type: 'text' }, { title: 'Item', type: 'text' }, { title: 'Floor', type: 'text' },
+  { title: 'Item Type', type: 'text' }, { title: 'Window Type', type: 'text' }, { title: 'Design Code', type: 'text' },
+  { title: 'Glass', type: 'text' }, { title: 'Safety Glass', type: 'text' }, { title: 'Glazing', type: 'text' },
+  { title: 'Open In / Open Out', type: 'text' }, { title: 'Add-Ons Required', type: 'text' }, { title: 'Coupled', type: 'text' },
+  { title: 'Comments', type: 'long_text' }, { title: 'Full Location Ref', type: 'long_text' },
+  { title: 'Width', type: 'numbers' }, { title: 'Height (inc Cill)', type: 'numbers' }, { title: 'Cill Depth', type: 'numbers' },
+  { title: 'Transom 1 (from top)', type: 'numbers' }, { title: 'Transom 2 (from top)', type: 'numbers' },
+  { title: 'Mullion 1 (from left)', type: 'numbers' }, { title: 'Mullion 2 (from left)', type: 'numbers' },
+  { title: 'Labour Cost', type: 'numbers' },
+  { title: 'Material', type: 'dropdown' }, { title: 'Fitters', type: 'dropdown' },
+  { title: 'Install Status', type: 'status' },
+  { title: 'Picture Before', type: 'file' }, { title: 'Picture After', type: 'file' }, { title: 'Design Sketch', type: 'file' },
+];
 
 // Column types we must never write to (read-only / not settable via column_values).
 // Boards often have several columns sharing a title (e.g. a real "Install Status"

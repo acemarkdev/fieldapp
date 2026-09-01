@@ -1,3 +1,3 @@
 // Bump this on every mobile change so the running app shows what's actually loaded.
 // Displayed on the login screen and in the top bar.
-export const APP_VERSION = '0.58.3';
+export const APP_VERSION = '0.59.0';
