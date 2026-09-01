@@ -173,7 +173,8 @@ async function dashboardData(tenantId: string) {
 
 // One item row for the Items table (shared by single-job and All-jobs views).
 const itemRow = (it: any, job: any, teams: any[]) => ({
-  id: it.id, full_code: it.full_code, flat: it.flat, room: it.room_code, item: it.item_code, stage: it.stage,
+  id: it.id, full_code: it.full_code, block: it.block ?? null, elevation: it.elevation ?? null, floor: it.floor ?? null,
+  flat: it.flat, room: it.room_code, item: it.item_code, stage: it.stage,
   kind: it.kind ?? 'item', snag_comment: it.snag_comment ?? null,
   install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
   effective_rate: formatPennies(effectiveRatePennies(it, teams)),
@@ -478,8 +479,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-date') && req.method === 'POST') {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
-      let job; try { job = await getJobByCode(c, j); } catch { send(res, 404, { error: `Job ${code} not found.` }); return; }
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const date = String(b.date ?? '').trim() || null;
@@ -493,8 +493,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-items') && req.method === 'POST') {
       if (!allow('items.create')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
-      let job; try { job = await getJobByCode(c, j); } catch { send(res, 404, { error: `Job ${code} not found.` }); return; }
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const block = String(b.block ?? '').trim().toUpperCase() || null;
@@ -513,7 +512,9 @@ const server = createServer(async (req, res) => {
         if (seen.has(full_code)) continue; seen.add(full_code);
         fields.push({
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
-          block, elevation, flat: flat || null, item_code: item,
+          // The mapping "floor" is stored in the floor field (not flat), so the Items tab's
+          // Flat column stays empty for mapped items. The full_code above keeps F{floor} in place.
+          block, elevation, floor: flat || null, item_code: item,
           item_type: String(r.item_type ?? '').trim() || null, full_code,
         });
       }
@@ -630,6 +631,14 @@ const server = createServer(async (req, res) => {
       if (action === 'status') {
         if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
+        send(res, 200, { ok: true, updated: n }); return;
+      }
+      if (action === 'block' || action === 'elevation') {
+        if (!allow('items.edit')) return;
+        // Sets the Block/Elevation field for filtering & reporting. Does not rewrite existing item codes.
+        const v = String(value ?? '').trim().toUpperCase() || null;
+        const patch = action === 'block' ? { block: v } : { elevation: v };
+        const n = await bulkUpdateItems(allowed, patch, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
       if (action === 'delete') {
@@ -1393,13 +1402,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
         <select id="bulkTeam" class="bulk bsel" onchange="bulkApply('team',this)"><option value="">Assign team…</option></select>
         <select id="bulkStatus" class="bulk bsel" onchange="bulkApply('status',this)"><option value="">Set status…</option></select>
+        <input id="bulkBlock" class="bulk" placeholder="Block" style="width:78px;text-transform:uppercase"><button class="bulk" onclick="bulkField('block')">Set</button>
+        <input id="bulkElev" class="bulk" placeholder="Elev" style="width:78px;text-transform:uppercase"><button class="bulk" onclick="bulkField('elevation')">Set</button>
         <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
         <button class="bulk bclear" onclick="clearSel()">Clear</button>
       </div>
       <div class="card2"><table><thead><tr>
         <th class="cbcell"><input type="checkbox" id="selAll" onclick="toggleAll(this)"></th>
         <th>FULL CODE</th>
+        <th>BLOCK<br><select id="blockFilter" class="colfilter" onchange="setBlockFilter(this.value)"></select></th>
+        <th>ELEV<br><select id="elevFilter" class="colfilter" onchange="setElevFilter(this.value)"></select></th>
         <th>FLAT<br><select id="flatFilter" class="colfilter" onchange="setFlatFilter(this.value)"></select></th>
+        <th>FLOOR<br><select id="floorFilter" class="colfilter" onchange="setFloorFilter(this.value)"></select></th>
         <th>ROOM</th><th>ITEM</th><th>STAGE</th><th>RATE (£)</th>
         <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
         <th>TEAM<br><select id="teamFilter" class="colfilter" onchange="setTeamFilter(this.value)"></select></th><th>MONDAY</th>
@@ -1620,7 +1634,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  var flatFilter='', statusFilter='', teamFilter='';
+  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='';
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
@@ -1698,7 +1712,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- Mapping (scanner pre-load) ----
   function loadMapping(){
     var box=document.getElementById('mapBody');
-    if(!current||current==='ALL'||!JOB_STATUS[current]){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
+    if(!current||current==='ALL'){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
     var status=JOB_STATUS[current]||'';
     document.getElementById('mapSub').innerHTML='Job <b>'+esc(current)+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
     if(status!=='pending_mapping'){
@@ -1883,7 +1897,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     JOB_STATUS={}; JOB_MAPDATE={};
     jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs');
     jobs.forEach(function(j){mk(j.code,j.code);});
     // Scanner (or an empty current) lands on the first available job.
@@ -1951,11 +1965,29 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +(hasNoTeam?'<option value="__none">— no team —</option>':'')
       +tids.map(function(id){return '<option value="'+av(id)+'">'+esc(teamName(id))+'</option>';}).join('');
     document.getElementById('teamFilter').value=teamFilter;
+    // block / elevation / floor filters: distinct values on this job's items (+ "none")
+    fillColFilter('blockFilter','block',function(v){blockFilter=v;},blockFilter,'All blocks');
+    fillColFilter('elevFilter','elevation',function(v){elevFilter=v;},elevFilter,'All elevations');
+    fillColFilter('floorFilter','floor',function(v){floorFilter=v;},floorFilter,'All floors');
     renderItems();
   }
   function setFlatFilter(v){flatFilter=v;renderItems();}
   function setStatusFilter(v){statusFilter=v;renderItems();}
   function setTeamFilter(v){teamFilter=v;renderItems();}
+  function setBlockFilter(v){blockFilter=v;renderItems();}
+  function setElevFilter(v){elevFilter=v;renderItems();}
+  function setFloorFilter(v){floorFilter=v;renderItems();}
+  function fillColFilter(selId,field,setFn,cur,allLabel){
+    var vals=[], hasNone=false;
+    (itemsData.items||[]).forEach(function(it){ var v=it[field]||''; if(v){ if(vals.indexOf(v)<0)vals.push(v); } else hasNone=true; });
+    vals.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});
+    if(cur&&cur!=='__none'&&vals.indexOf(cur)<0){ setFn(''); cur=''; }
+    if(cur==='__none'&&!hasNone){ setFn(''); cur=''; }
+    var sel=document.getElementById(selId); if(!sel)return;
+    sel.innerHTML='<option value="">'+allLabel+'</option>'+(hasNone?'<option value="__none">— none —</option>':'')
+      +vals.map(function(v){return '<option value="'+av(v)+'">'+esc(v)+'</option>';}).join('');
+    sel.value=cur;
+  }
   var INSTALLED_SET={installed_no_snag:1,installed_snag:1};
   function matchFilter(r){
     switch(itemFilter){
@@ -1980,6 +2012,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       else if(statusFilter){if(r.install_status!==statusFilter)return false;}
       if(teamFilter==='__none'){if(r.team_id)return false;}
       else if(teamFilter){if(r.team_id!==teamFilter)return false;}
+      if(blockFilter==='__none'){if(r.block)return false;} else if(blockFilter){if((r.block||'')!==blockFilter)return false;}
+      if(elevFilter==='__none'){if(r.elevation)return false;} else if(elevFilter){if((r.elevation||'')!==elevFilter)return false;}
+      if(floorFilter==='__none'){if(r.floor)return false;} else if(floorFilter){if((r.floor||'')!==floorFilter)return false;}
       return true;
     });
     var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');
@@ -2010,7 +2045,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         :(canSync?'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>':'<span class="ro">not synced</span>');
       var snagTag=r.kind==='snag'?'<span class="snagtag">SNAG</span> ':'';
       tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
-        '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td><td>'+(r.flat||'—')+'</td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
+        '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td>'+
+        '<td>'+(r.block||'—')+'</td><td>'+(r.elevation||'—')+'</td><td>'+(r.flat||'—')+'</td><td>'+(r.floor||'—')+'</td><td>'+(r.room||'—')+'</td><td>'+(r.item||'—')+'</td>'+
         '<td><span class="pill '+r.stage+'">'+(STAGE[r.stage]||r.stage)+'</span></td>'+
         '<td>'+rateInput+'</td><td>'+statusSel+'</td><td>'+teamSel+'</td><td>'+monday+'</td>';
       tb.appendChild(tr);
@@ -2052,6 +2088,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var ids=selectedIds();if(!ids.length){selEl.value='';return;}
     var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
     selEl.value='';
+    if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
+  }
+  async function bulkField(field){
+    var el=document.getElementById(field==='block'?'bulkBlock':'bulkElev');
+    var ids=selectedIds();if(!ids.length){tShow('Select some items first');return;}
+    var value=el.value.trim().toUpperCase();
+    var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:field,value:value})})).json();
+    el.value='';
     if(d.ok){tShow(d.updated+' item(s) updated');loadItems();}else tShow(d.error||'Update failed');
   }
   async function bulkDelete(){
