@@ -3224,12 +3224,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +selField('f_wtype','Window type',it.window_type,WINDOW_TYPES)
         +selField('f_glazing','Glass (panes)',it.glazing,GLASS_PANES)+selField('f_glass','Glass texture',it.glass,GLASS_TEXTURES)
         +selField('f_glazingbars','Glazing (bars)',it.glazing_bars,GLAZING_BARS)+selField('f_safety','Safety glass',it.safety_glass,SAFETY_GLASS)
-        +fieldV('f_width','Width (mm)',it.width_mm,'','number')+fieldV('f_height','Height inc cill (mm)',it.height_mm,'','number')
+        +'<div class="field full" style="background:#faf9fd;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:4px 0">'
+          +'<label style="display:block;margin:0 0 7px;font-weight:600">Dimensions (mm)</label>'
+          +'<div style="display:flex;gap:14px">'
+            +'<div style="flex:1"><div style="font-size:11px;color:var(--muted);margin-bottom:3px">Width</div><input id="f_width" type="number" value="'+attr(it.width_mm)+'" style="width:100%;font-size:16px;font-weight:600;padding:9px 11px"></div>'
+            +'<div style="flex:1"><div style="font-size:11px;color:var(--muted);margin-bottom:3px">Height inc cill</div><input id="f_height" type="number" value="'+attr(it.height_mm)+'" style="width:100%;font-size:16px;font-weight:600;padding:9px 11px"></div>'
+          +'</div></div>'
         +selField('f_cilldepth','Cill depth',it.cill_depth,CILL_DEPTHS)+fieldV('f_openinout','Open in / out',it.open_in_out,'In / Out')
+        +'<div class="field full" style="border-top:1px solid var(--line);margin:8px 0 2px"></div>'
         +chkField('f_teq','Transoms',it.transom_equal)
         +fieldV('f_t1','Transom 1 (mm)',it.transom1_mm,'','number')+fieldV('f_t2','Transom 2 (mm)',it.transom2_mm,'','number')+fieldV('f_t3','Transom 3 (mm)',it.transom3_mm,'','number')
+        +'<div class="field full" style="border-top:1px solid var(--line);margin:8px 0 2px"></div>'
         +chkField('f_meq','Mullions',it.mullion_equal)
         +fieldV('f_m1','Mullion 1 (mm)',it.mullion1_mm,'','number')+fieldV('f_m2','Mullion 2 (mm)',it.mullion2_mm,'','number')+fieldV('f_m3','Mullion 3 (mm)',it.mullion3_mm,'','number')
+        +'<div class="field full" style="border-top:1px solid var(--line);margin:8px 0 2px"></div>'
         +fieldV('f_coupled','Coupled (optional)',it.coupled,'e.g. to W03')+fieldV('f_addons','Add-ons (optional)',it.add_ons,'Trickle vents / etc')
         +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2">'+esc(it.comments||'')+'</textarea></div>'
         +'</div>';
@@ -3244,7 +3252,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<button class="save" onclick="uploadItemPhoto(\\''+it.id+'\\')">Add photo</button>'
         +'<span style="font-size:11px;color:var(--muted)">→ syncs to Monday <b>'+pcol+'</b></span></div>';
     }
-    if(!d.is_snag){
+    if(d.is_snag){
+      html+='<div class="empty">This is a snag item — set its team and labour cost above, then sync and fit it like any item.</div>';
+    } else if(myRole!=='surveyor'&&myRole!=='scanner'){
       html+='<div class="groupt" style="padding:10px 22px 0">SNAGS (remedial items)</div>';
       if(d.snags&&d.snags.length){
         html+='<div style="padding:2px 22px 0">'+d.snags.map(function(s){
@@ -3268,8 +3278,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'</div>'
         +'<div style="font-size:11px;color:var(--muted);margin-top:6px">Creates a separate item ('+esc(it.full_code)+'-S…) you can cost, assign a team, sync and fit like any other.</div>'
         +'</div>';
-    } else {
-      html+='<div class="empty">This is a snag item — set its team and labour cost above, then sync and fit it like any item.</div>';
     }
     if(specEditable){ // sticky Save pinned to the bottom of the drawer, always visible while scrolling
       html+='<div class="sheetfoot"><button class="save" onclick="saveDetail(\\''+it.id+'\\')">Save details</button>'

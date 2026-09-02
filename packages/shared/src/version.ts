@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.64.0';
+export const APP_VERSION = '0.64.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.64.1', date: '2026-09-02', changes: [
+    'Item edit screen tidy-up. Width and Height now sit side by side in a highlighted Dimensions box so they stand out. Transoms (button + 3 fields) and Mullions (button + 3 fields) are each grouped and separated by a thin divider line. The Snags section is hidden for surveyor and scanner roles (still shown for admin/office).',
+  ] },
   { version: '0.64.0', date: '2026-09-02', changes: [
     'Job file attachments. When creating a job you can now attach drawings/files (jpg, pdf, zip; up to 25MB each). On any job, a Files button (in the Items header) and a ... on the job in the left list open a Files window: images and PDFs preview/open in the browser, everything else downloads. Managers can add more files or delete them there. Requires migration 0027 (adds job_files + the jobfiles storage bucket is auto-created).',
   ] },
