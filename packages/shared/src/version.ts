@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.62.0';
+export const APP_VERSION = '0.62.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.62.1', date: '2026-09-01', changes: [
+    'QA: added 48 test scenarios (T-107..T-154) to the in-app Test tab covering everything since v0.44 - reports & customer install PDF, customer portal, doors rate, retire team, the new-item prefixes/room picker, Items filters and inline code editing, bulk field apply, photo routing (office + mobile), the scanner mapping workflow, full item spec editing, Monday column auto-provisioning and the activity log.',
+  ] },
   { version: '0.62.0', date: '2026-09-01', changes: [
     'Activity log (first step). A new admin-only Logs tab records who did the high-value actions: item created / edited / deleted, items synced to Monday, mapping saved, jobs created / deleted, and board linked. Each entry shows when, which user, their role, the action and a short summary, with a search box. Backed by a small audit_log table (migration 0025); more actions can be added over time.',
   ] },

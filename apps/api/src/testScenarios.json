@@ -1,1062 +1,1542 @@
 [
-{
-"code": "T-001",
-"area": "Auth & session",
-"feature": "Login OK",
-"steps": "Enter a valid ACE email + password, click Sign in",
-"expected": "App loads; your name shows top-right; header shows 'v{v} · <role>'",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-002",
-"area": "Auth & session",
-"feature": "Login wrong password",
-"steps": "Enter valid email, wrong password",
-"expected": "Clear 'Invalid email or password' error; stays on login",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-003",
-"area": "Auth & session",
-"feature": "Login unknown email",
-"steps": "Enter an email with no ACE account",
-"expected": "Error telling you to ask an admin; no access",
-"role": "Any",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-004",
-"area": "Auth & session",
-"feature": "Microsoft SSO button",
-"steps": "Check login page",
-"expected": "'Sign in with Microsoft' shows only if SSO is enabled on the server",
-"role": "Any",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-005",
-"area": "Auth & session",
-"feature": "SSO login",
-"steps": "Click Sign in with Microsoft, complete Microsoft login",
-"expected": "Lands in the app with the correct role",
-"role": "Any",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-006",
-"area": "Auth & session",
-"feature": "Logout",
-"steps": "Click Sign out",
-"expected": "Returns to login; refreshing does not re-enter the app",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-007",
-"area": "Auth & session",
-"feature": "Session persists",
-"steps": "Log in, refresh the browser",
-"expected": "Stays logged in (no need to re-enter password)",
-"role": "Any",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-008",
-"area": "Auth & session",
-"feature": "Role shown",
-"steps": "After login, read the header chip",
-"expected": "Shows your role (admin/office/etc.) next to the version",
-"role": "Any",
-"priority": "Med",
-"added": "0.33.1"
-},
-{
-"code": "T-009",
-"area": "Auth & session",
-"feature": "What's new",
-"steps": "Click the version chip",
-"expected": "'What's new' modal lists the changelog by version",
-"role": "Any",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-010",
-"area": "Access",
-"feature": "Admin tabs",
-"steps": "Log in as admin",
-"expected": "Sees Dashboard, Items, Teams & rates, Monday sync, Plans, Calendar, Budget, Users, Roles",
-"role": "Admin",
-"priority": "High",
-"added": "0.35"
-},
-{
-"code": "T-011",
-"area": "Access",
-"feature": "Office tabs",
-"steps": "Log in as office",
-"expected": "Sees Dashboard, Items, Teams, Monday sync, Plans, Calendar. NO Budget, Users or Roles",
-"role": "Office",
-"priority": "High",
-"added": "0.35"
-},
-{
-"code": "T-012",
-"area": "Access",
-"feature": "Surveyor tabs",
-"steps": "Log in as surveyor",
-"expected": "Sees Items (no Dashboard/Teams/Sync/Budget/Users)",
-"role": "Surveyor",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-013",
-"area": "Access",
-"feature": "Fitter tabs",
-"steps": "Log in as fitter",
-"expected": "Minimal access; no manager tabs, no Budget",
-"role": "Fitter",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-014",
-"area": "Access",
-"feature": "Invoice manager",
-"steps": "Log in as invoice_manager",
-"expected": "Sees the Budget area; no operational management tabs",
-"role": "Invoice mgr",
-"priority": "High",
-"added": "0.34"
-},
-{
-"code": "T-015",
-"area": "Access",
-"feature": "Budget hidden",
-"steps": "Log in as office/surveyor/fitter",
-"expected": "Budget tab is NOT shown for any of them",
-"role": "Office",
-"priority": "High",
-"added": "0.35"
-},
-{
-"code": "T-016",
-"area": "Access",
-"feature": "Users/Roles admin-only",
-"steps": "Log in as office",
-"expected": "Users and Roles tabs are hidden",
-"role": "Office",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-017",
-"area": "Access",
-"feature": "Finance API guard",
-"steps": "(Advanced) As office, call /api/pricing-rules",
-"expected": "Server returns 403 (blocked); no pricing data",
-"role": "Office",
-"priority": "Med",
-"added": "0.35"
-},
-{
-"code": "T-018",
-"area": "Dashboard",
-"feature": "Loads",
-"steps": "Open Dashboard",
-"expected": "Shows counts: jobs, items, synced, installed, snags, labour total",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-019",
-"area": "Dashboard",
-"feature": "Numbers match",
-"steps": "Compare dashboard item count with the Items list",
-"expected": "Totals agree",
-"role": "Admin/Office",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-020",
-"area": "Jobs",
-"feature": "List",
-"steps": "Open Items tab",
-"expected": "Left sidebar lists all jobs plus 'All jobs'",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-021",
-"area": "Jobs",
-"feature": "Open job",
-"steps": "Click a job in the sidebar",
-"expected": "Items table filters to that job; title updates",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-022",
-"area": "Jobs",
-"feature": "New job button",
-"steps": "As admin/office, view the Items header",
-"expected": "'+ New job' link shows by the JOBS list",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.37"
-},
-{
-"code": "T-023",
-"area": "Jobs",
-"feature": "New job not shown",
-"steps": "As surveyor, view Items header",
-"expected": "No '+ New job' link",
-"role": "Surveyor",
-"priority": "Med",
-"added": "0.37"
-},
-{
-"code": "T-024",
-"area": "Jobs",
-"feature": "Create job",
-"steps": "+ New job, enter client=AXS, job=TST, name; watch preview",
-"expected": "Preview shows AXS.TST; on save the job appears in the list",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.37"
-},
-{
-"code": "T-025",
-"area": "Jobs",
-"feature": "Create validation",
-"steps": "+ New job, leave name blank, Save",
-"expected": "Blocked with 'Job name is required'",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.37"
-},
-{
-"code": "T-026",
-"area": "Jobs",
-"feature": "Duplicate job",
-"steps": "Create a job code that already exists",
-"expected": "409 error 'Job X already exists'; not created",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.37"
-},
-{
-"code": "T-027",
-"area": "Jobs",
-"feature": "New job rule picker",
-"steps": "As admin, open + New job",
-"expected": "A 'Pricing rule' dropdown is present",
-"role": "Admin",
-"priority": "Med",
-"added": "0.37.1"
-},
-{
-"code": "T-028",
-"area": "Jobs",
-"feature": "New job rule picker hidden",
-"steps": "As plain office, open + New job",
-"expected": "No pricing rule dropdown",
-"role": "Office",
-"priority": "Med",
-"added": "0.37.1"
-},
-{
-"code": "T-029",
-"area": "Jobs",
-"feature": "Assign rule on create",
-"steps": "As admin, create a job and pick a rule",
-"expected": "In Budget, that job shows the chosen rule assigned",
-"role": "Admin",
-"priority": "Med",
-"added": "0.37.1"
-},
-{
-"code": "T-030",
-"area": "Jobs",
-"feature": "Delete job button",
-"steps": "Open a specific job as admin/office",
-"expected": "'Delete job' button shows (not on 'All jobs')",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.40"
-},
-{
-"code": "T-031",
-"area": "Jobs",
-"feature": "Delete empty job",
-"steps": "Create a job with no items, Delete job, confirm",
-"expected": "Job removed; view returns to All jobs",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.40"
-},
-{
-"code": "T-032",
-"area": "Jobs",
-"feature": "Delete non-empty blocked",
-"steps": "Try to delete a job that has items",
-"expected": "Refused with a message stating how many items to clear first; job stays",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.40"
-},
-{
-"code": "T-033",
-"area": "Items",
-"feature": "Table",
-"steps": "Open a job",
-"expected": "Rows show full code, room, item, stage, rate, status, team, Monday",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-034",
-"area": "Items",
-"feature": "Filter chips",
-"steps": "Click each filter: All/Synced/Not synced/Installed/Needs re-sync/Snags/Open snags",
-"expected": "Each filter shows only matching rows",
-"role": "Any",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-035",
-"area": "Items",
-"feature": "Counter total",
-"steps": "Read the counter by the filter chips",
-"expected": "Shows 'N items' (and 'N of M' when a filter is active)",
-"role": "Any",
-"priority": "Med",
-"added": "0.40"
-},
-{
-"code": "T-036",
-"area": "Items",
-"feature": "Counter changed/not synced",
-"steps": "With some edited + some unsynced items",
-"expected": "Counter shows 'N changed' and 'N not synced'",
-"role": "Any",
-"priority": "Med",
-"added": "0.40"
-},
-{
-"code": "T-037",
-"area": "Items",
-"feature": "Snag tag",
-"steps": "Find a snag row",
-"expected": "Row shows a SNAG tag",
-"role": "Any",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-038",
-"area": "Items",
-"feature": "Detail drawer",
-"steps": "Click an item's code",
-"expected": "Opens detail with spec fields and any photos",
-"role": "Any",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-039",
-"area": "Items",
-"feature": "Edit rate",
-"steps": "Change a rate value inline",
-"expected": "Saves; effective rate placeholder reflects team default when blank",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-040",
-"area": "Items",
-"feature": "Edit status",
-"steps": "Change install status dropdown",
-"expected": "Saves",
-"role": "Admin/Office/Fitter",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-041",
-"area": "Items",
-"feature": "Edit team",
-"steps": "Change team dropdown",
-"expected": "Saves",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-042",
-"area": "New item",
-"feature": "Open form",
-"steps": "+ New item on a job",
-"expected": "Location fields + full spec fields present",
-"role": "Admin/Office/Surveyor",
-"priority": "High",
-"added": "0.31"
-},
-{
-"code": "T-043",
-"area": "New item",
-"feature": "Spec fields",
-"steps": "Inspect the form",
-"expected": "Has window type, safety glass, cill depth, transoms x3, mullions x3, open in/out, coupled, add-ons, design code",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.31"
-},
-{
-"code": "T-044",
-"area": "New item",
-"feature": "Code preview",
-"steps": "Type block/flat/room/item",
-"expected": "CLIENT.JOB... code preview updates live",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-045",
-"area": "New item",
-"feature": "Style picker open",
-"steps": "Click 'Choose style...'",
-"expected": "Grid of Clearview sketches opens",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.31"
-},
-{
-"code": "T-046",
-"area": "New item",
-"feature": "Style filters",
-"steps": "Use Type / Wide / High chips and code search",
-"expected": "Grid narrows accordingly",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.31"
-},
-{
-"code": "T-047",
-"area": "New item",
-"feature": "Pick style",
-"steps": "Click a sketch",
-"expected": "Design code fills, window type auto-fills, thumbnail shows; picker closes",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.31.1"
-},
-{
-"code": "T-048",
-"area": "New item",
-"feature": "Create",
-"steps": "Fill room+item, Save",
-"expected": "Item appears in the list",
-"role": "Admin/Office",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-049",
-"area": "New item",
-"feature": "Duplicate code",
-"steps": "Create an item with an existing code",
-"expected": "409 error; not created",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-050",
-"area": "New item",
-"feature": "Validation",
-"steps": "Save with no room/item",
-"expected": "Blocked 'Room and Item are required'",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-051",
-"area": "Bulk",
-"feature": "Select rows",
-"steps": "Tick a few row checkboxes",
-"expected": "Bulk bar appears with 'N selected'",
-"role": "Admin/Office",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-052",
-"area": "Bulk",
-"feature": "Select all",
-"steps": "Tick the header checkbox",
-"expected": "All visible rows selected",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-053",
-"area": "Bulk",
-"feature": "Assign team",
-"steps": "Select rows, choose a team in bulk bar",
-"expected": "Selected items get that team",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-054",
-"area": "Bulk",
-"feature": "Set status",
-"steps": "Select rows, choose a status",
-"expected": "Selected items updated",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-055",
-"area": "Bulk",
-"feature": "Sync selected",
-"steps": "Select rows, Sync selected (board linked)",
-"expected": "Items pushed to Monday; toast reports created/updated",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-056",
-"area": "Bulk",
-"feature": "Delete selected",
-"steps": "Select rows, click Delete, confirm",
-"expected": "Rows removed (snags/photos/pricing cascade)",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.40"
-},
-{
-"code": "T-057",
-"area": "Bulk",
-"feature": "Delete hidden for non-managers",
-"steps": "As surveyor/fitter, select rows",
-"expected": "No Delete button in the bulk bar",
-"role": "Surveyor",
-"priority": "Med",
-"added": "0.40"
-},
-{
-"code": "T-058",
-"area": "Bulk",
-"feature": "Clear",
-"steps": "Click Clear",
-"expected": "Selection cleared; bulk bar hides",
-"role": "Any",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-059",
-"area": "Teams",
-"feature": "List",
-"steps": "Open Teams & rates",
-"expected": "Shows teams, default rate, items-using count",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-060",
-"area": "Teams",
-"feature": "Add team",
-"steps": "Enter name + rate, Add team",
-"expected": "New team appears",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-061",
-"area": "Teams",
-"feature": "Edit name/rate",
-"steps": "Change a team's name or rate",
-"expected": "Saves",
-"role": "Admin",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-062",
-"area": "Teams",
-"feature": "Delete in use",
-"steps": "Delete a team that items reference",
-"expected": "Blocked with 'reassign its items first'",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-063",
-"area": "Teams",
-"feature": "Delete unused",
-"steps": "Delete a team with 0 items",
-"expected": "Removed",
-"role": "Admin",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-064",
-"area": "Monday sync",
-"feature": "List",
-"steps": "Open Monday sync",
-"expected": "Jobs listed with board, items, synced, to-sync",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-065",
-"area": "Monday sync",
-"feature": "Link board",
-"steps": "Paste a board id or URL, save",
-"expected": "Board linked to the job",
-"role": "Admin/Office",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-066",
-"area": "Monday sync",
-"feature": "Unlink",
-"steps": "Clear the board",
-"expected": "Board unlinked",
-"role": "Admin/Office",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-067",
-"area": "Monday sync",
-"feature": "Pull fitters + dates",
-"steps": "Click 'Pull fitters + dates'",
-"expected": "Teams assigned from Fitters column; planned dates read from the date column; toast reports counts + which date column",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.29"
-},
-{
-"code": "T-068",
-"area": "Monday sync",
-"feature": "Sync one item",
-"steps": "Click Sync on an item",
-"expected": "Item created/updated on Monday; link appears",
-"role": "Admin/Office",
-"priority": "High",
-"added": "<=0.30"
-},
-{
-"code": "T-069",
-"area": "Monday sync",
-"feature": "Re-sync dirty",
-"steps": "Edit a synced item, then Re-sync",
-"expected": "'changed' tag clears after re-sync",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-070",
-"area": "Plans",
-"feature": "Upload plan",
-"steps": "Plans tab, pick job, Upload plan (image)",
-"expected": "Plan image shows",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.23"
-},
-{
-"code": "T-071",
-"area": "Plans",
-"feature": "Pin item",
-"steps": "Click an item on the right, click the plan",
-"expected": "Pin dropped at that spot, colour-coded by status",
-"role": "Admin/Office",
-"priority": "High",
-"added": "0.23"
-},
-{
-"code": "T-072",
-"area": "Plans",
-"feature": "Placed/Unplaced filter",
-"steps": "Toggle All/Unplaced/Placed",
-"expected": "Unplaced = items not pinned on ANY plan",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.26.2"
-},
-{
-"code": "T-073",
-"area": "Plans",
-"feature": "Multi-plan toggle",
-"steps": "Toggle 'Item can be on multiple plans'",
-"expected": "When off, placing an already-placed item on another plan is blocked with a message",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.26"
-},
-{
-"code": "T-074",
-"area": "Plans",
-"feature": "Delete plan",
-"steps": "Delete a plan",
-"expected": "Plan removed",
-"role": "Admin/Office",
-"priority": "Low",
-"added": "0.23"
-},
-{
-"code": "T-075",
-"area": "Plans",
-"feature": "Survey PDF",
-"steps": "Click Survey PDF",
-"expected": "Downloads a survey report PDF",
-"role": "Admin/Office/Surveyor",
-"priority": "Med",
-"added": "0.28"
-},
-{
-"code": "T-076",
-"area": "Plans",
-"feature": "Install PDF",
-"steps": "Click Install PDF",
-"expected": "Downloads an install report PDF",
-"role": "Admin/Office/Surveyor",
-"priority": "Med",
-"added": "0.28"
-},
-{
-"code": "T-077",
-"area": "Plans",
-"feature": "PDF pin numbers",
-"steps": "Open the PDF; compare plan pins to the table",
-"expected": "Pin numbers match the '#' column in the items table",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.29.2"
-},
-{
-"code": "T-078",
-"area": "Plans",
-"feature": "Install PDF dates",
-"steps": "Open Install PDF",
-"expected": "Has a 'Scheduled' column and a scheduled date range in the summary",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.32"
-},
-{
-"code": "T-079",
-"area": "Calendar",
-"feature": "Month grid",
-"steps": "Open Calendar",
-"expected": "Month grid with weekday headers",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.33"
-},
-{
-"code": "T-080",
-"area": "Calendar",
-"feature": "Day counts",
-"steps": "View days with scheduled installs",
-"expected": "Coloured count badge per day (green all installed, magenta snag/misfit, amber else)",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.33"
-},
-{
-"code": "T-081",
-"area": "Calendar",
-"feature": "Month paging",
-"steps": "Click the arrows",
-"expected": "Moves between months",
-"role": "Admin/Office",
-"priority": "Low",
-"added": "0.33"
-},
-{
-"code": "T-082",
-"area": "Calendar",
-"feature": "Team filter",
-"steps": "Choose a team",
-"expected": "Counts and day list narrow to that team",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.33"
-},
-{
-"code": "T-083",
-"area": "Calendar",
-"feature": "Day detail",
-"steps": "Click a day",
-"expected": "Lists that day's installs (job, code, team, status)",
-"role": "Admin/Office",
-"priority": "Med",
-"added": "0.33"
-},
-{
-"code": "T-084",
-"area": "Calendar",
-"feature": "Open item",
-"steps": "Click an item in the day list",
-"expected": "Opens the item detail",
-"role": "Admin/Office",
-"priority": "Low",
-"added": "0.33"
-},
-{
-"code": "T-085",
-"area": "Budget",
-"feature": "Tab hidden",
-"steps": "As non-finance role",
-"expected": "Budget tab absent",
-"role": "Office",
-"priority": "High",
-"added": "0.35"
-},
-{
-"code": "T-086",
-"area": "Budget",
-"feature": "Rules list",
-"steps": "Open Budget as admin",
-"expected": "Lists pricing rules with rates",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.35"
-},
-{
-"code": "T-087",
-"area": "Budget",
-"feature": "Create rule",
-"steps": "+ New rule, fill material/labour/sale (in £), Save",
-"expected": "Rule saved; appears in the list",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.35"
-},
-{
-"code": "T-088",
-"area": "Budget",
-"feature": "Edit rule",
-"steps": "Edit a rule, change a rate, Save, reopen",
-"expected": "Value persists (correct £)",
-"role": "Admin/Invoice mgr",
-"priority": "Med",
-"added": "0.35"
-},
-{
-"code": "T-089",
-"area": "Budget",
-"feature": "Delete rule",
-"steps": "Delete a rule",
-"expected": "Removed",
-"role": "Admin/Invoice mgr",
-"priority": "Low",
-"added": "0.35"
-},
-{
-"code": "T-090",
-"area": "Budget",
-"feature": "Assign rule",
-"steps": "Job pricing: pick a job, choose a rule",
-"expected": "Breakdown appears",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.36"
-},
-{
-"code": "T-091",
-"area": "Budget",
-"feature": "Breakdown cards",
-"steps": "View an assigned job",
-"expected": "Three cards: Customer price, Our cost, Margin (%)",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.36"
-},
-{
-"code": "T-092",
-"area": "Budget",
-"feature": "Per-flat table",
-"steps": "Check the flat rows",
-"expected": "Base rate covers 5 smallest windows; biggest extras billed per m2; flat total correct",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.36"
-},
-{
-"code": "T-093",
-"area": "Budget",
-"feature": "Doors/communal",
-"steps": "Check summary lines",
-"expected": "Doors flat-rate, communal windows per m2 shown",
-"role": "Admin/Invoice mgr",
-"priority": "Med",
-"added": "0.36"
-},
-{
-"code": "T-094",
-"area": "Budget",
-"feature": "Variation toggle",
-"steps": "Tick an item as variation, enter an amount",
-"expected": "Item leaves the flat scope; a variation line adds the amount; totals/margin update",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.38"
-},
-{
-"code": "T-095",
-"area": "Budget",
-"feature": "Customer price PDF",
-"steps": "Click 'Customer price PDF'",
-"expected": "Downloads a branded quote",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.39"
-},
-{
-"code": "T-096",
-"area": "Budget",
-"feature": "PDF hides cost",
-"steps": "Open the customer PDF",
-"expected": "Shows ONLY the sale side — no cost or margin anywhere",
-"role": "Admin/Invoice mgr",
-"priority": "High",
-"added": "0.39"
-},
-{
-"code": "T-097",
-"area": "Budget",
-"feature": "PDF no rule",
-"steps": "Try the PDF on a job with no rule",
-"expected": "Clear error asking to assign a rule first",
-"role": "Admin/Invoice mgr",
-"priority": "Low",
-"added": "0.39"
-},
-{
-"code": "T-098",
-"area": "Users",
-"feature": "List",
-"steps": "Open Users (admin)",
-"expected": "Lists users with role + active state",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-099",
-"area": "Users",
-"feature": "Invite",
-"steps": "Invite a user with an email + role",
-"expected": "User created/invited",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-100",
-"area": "Users",
-"feature": "Change role",
-"steps": "Change a user's role",
-"expected": "Saved; their access changes on next login",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-101",
-"area": "Users",
-"feature": "Deactivate",
-"steps": "Toggle a user inactive",
-"expected": "They can no longer sign in",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-102",
-"area": "Users",
-"feature": "Reset password",
-"steps": "Reset a user's password",
-"expected": "New password works on next login",
-"role": "Admin",
-"priority": "Med",
-"added": "<=0.30"
-},
-{
-"code": "T-103",
-"area": "Roles",
-"feature": "Matrix",
-"steps": "Open Roles (admin)",
-"expected": "Read-only capability matrix by role",
-"role": "Admin",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-104",
-"area": "General",
-"feature": "Toasts",
-"steps": "Perform a save/delete",
-"expected": "A brief confirmation toast appears",
-"role": "Any",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-105",
-"area": "General",
-"feature": "Columns readable",
-"steps": "Resize the window / view Users & Items",
-"expected": "All columns visible or scrollable; nothing clipped",
-"role": "Any",
-"priority": "Low",
-"added": "<=0.30"
-},
-{
-"code": "T-106",
-"area": "General",
-"feature": "Live wallboard",
-"steps": "(If LIVE_KEY set) open /live?key=...",
-"expected": "Auto-refreshing status wallboard shows",
-"role": "Admin",
-"priority": "Low",
-"added": "<=0.30"
-}
+ {
+  "code": "T-001",
+  "area": "Auth & session",
+  "feature": "Login OK",
+  "steps": "Enter a valid ACE email + password, click Sign in",
+  "expected": "App loads; your name shows top-right; header shows 'v{v} \u00b7 <role>'",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-002",
+  "area": "Auth & session",
+  "feature": "Login wrong password",
+  "steps": "Enter valid email, wrong password",
+  "expected": "Clear 'Invalid email or password' error; stays on login",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-003",
+  "area": "Auth & session",
+  "feature": "Login unknown email",
+  "steps": "Enter an email with no ACE account",
+  "expected": "Error telling you to ask an admin; no access",
+  "role": "Any",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-004",
+  "area": "Auth & session",
+  "feature": "Microsoft SSO button",
+  "steps": "Check login page",
+  "expected": "'Sign in with Microsoft' shows only if SSO is enabled on the server",
+  "role": "Any",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-005",
+  "area": "Auth & session",
+  "feature": "SSO login",
+  "steps": "Click Sign in with Microsoft, complete Microsoft login",
+  "expected": "Lands in the app with the correct role",
+  "role": "Any",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-006",
+  "area": "Auth & session",
+  "feature": "Logout",
+  "steps": "Click Sign out",
+  "expected": "Returns to login; refreshing does not re-enter the app",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-007",
+  "area": "Auth & session",
+  "feature": "Session persists",
+  "steps": "Log in, refresh the browser",
+  "expected": "Stays logged in (no need to re-enter password)",
+  "role": "Any",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-008",
+  "area": "Auth & session",
+  "feature": "Role shown",
+  "steps": "After login, read the header chip",
+  "expected": "Shows your role (admin/office/etc.) next to the version",
+  "role": "Any",
+  "priority": "Med",
+  "added": "0.33.1"
+ },
+ {
+  "code": "T-009",
+  "area": "Auth & session",
+  "feature": "What's new",
+  "steps": "Click the version chip",
+  "expected": "'What's new' modal lists the changelog by version",
+  "role": "Any",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-010",
+  "area": "Access",
+  "feature": "Admin tabs",
+  "steps": "Log in as admin",
+  "expected": "Sees Dashboard, Items, Teams & rates, Monday sync, Plans, Calendar, Budget, Users, Roles",
+  "role": "Admin",
+  "priority": "High",
+  "added": "0.35"
+ },
+ {
+  "code": "T-011",
+  "area": "Access",
+  "feature": "Office tabs",
+  "steps": "Log in as office",
+  "expected": "Sees Dashboard, Items, Teams, Monday sync, Plans, Calendar. NO Budget, Users or Roles",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.35"
+ },
+ {
+  "code": "T-012",
+  "area": "Access",
+  "feature": "Surveyor tabs",
+  "steps": "Log in as surveyor",
+  "expected": "Sees Items (no Dashboard/Teams/Sync/Budget/Users)",
+  "role": "Surveyor",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-013",
+  "area": "Access",
+  "feature": "Fitter tabs",
+  "steps": "Log in as fitter",
+  "expected": "Minimal access; no manager tabs, no Budget",
+  "role": "Fitter",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-014",
+  "area": "Access",
+  "feature": "Invoice manager",
+  "steps": "Log in as invoice_manager",
+  "expected": "Sees the Budget area; no operational management tabs",
+  "role": "Invoice mgr",
+  "priority": "High",
+  "added": "0.34"
+ },
+ {
+  "code": "T-015",
+  "area": "Access",
+  "feature": "Budget hidden",
+  "steps": "Log in as office/surveyor/fitter",
+  "expected": "Budget tab is NOT shown for any of them",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.35"
+ },
+ {
+  "code": "T-016",
+  "area": "Access",
+  "feature": "Users/Roles admin-only",
+  "steps": "Log in as office",
+  "expected": "Users and Roles tabs are hidden",
+  "role": "Office",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-017",
+  "area": "Access",
+  "feature": "Finance API guard",
+  "steps": "(Advanced) As office, call /api/pricing-rules",
+  "expected": "Server returns 403 (blocked); no pricing data",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.35"
+ },
+ {
+  "code": "T-018",
+  "area": "Dashboard",
+  "feature": "Loads",
+  "steps": "Open Dashboard",
+  "expected": "Shows counts: jobs, items, synced, installed, snags, labour total",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-019",
+  "area": "Dashboard",
+  "feature": "Numbers match",
+  "steps": "Compare dashboard item count with the Items list",
+  "expected": "Totals agree",
+  "role": "Admin/Office",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-020",
+  "area": "Jobs",
+  "feature": "List",
+  "steps": "Open Items tab",
+  "expected": "Left sidebar lists all jobs plus 'All jobs'",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-021",
+  "area": "Jobs",
+  "feature": "Open job",
+  "steps": "Click a job in the sidebar",
+  "expected": "Items table filters to that job; title updates",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-022",
+  "area": "Jobs",
+  "feature": "New job button",
+  "steps": "As admin/office, view the Items header",
+  "expected": "'+ New job' link shows by the JOBS list",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.37"
+ },
+ {
+  "code": "T-023",
+  "area": "Jobs",
+  "feature": "New job not shown",
+  "steps": "As surveyor, view Items header",
+  "expected": "No '+ New job' link",
+  "role": "Surveyor",
+  "priority": "Med",
+  "added": "0.37"
+ },
+ {
+  "code": "T-024",
+  "area": "Jobs",
+  "feature": "Create job",
+  "steps": "+ New job, enter client=AXS, job=TST, name; watch preview",
+  "expected": "Preview shows AXS.TST; on save the job appears in the list",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.37"
+ },
+ {
+  "code": "T-025",
+  "area": "Jobs",
+  "feature": "Create validation",
+  "steps": "+ New job, leave name blank, Save",
+  "expected": "Blocked with 'Job name is required'",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.37"
+ },
+ {
+  "code": "T-026",
+  "area": "Jobs",
+  "feature": "Duplicate job",
+  "steps": "Create a job code that already exists",
+  "expected": "409 error 'Job X already exists'; not created",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.37"
+ },
+ {
+  "code": "T-027",
+  "area": "Jobs",
+  "feature": "New job rule picker",
+  "steps": "As admin, open + New job",
+  "expected": "A 'Pricing rule' dropdown is present",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.37.1"
+ },
+ {
+  "code": "T-028",
+  "area": "Jobs",
+  "feature": "New job rule picker hidden",
+  "steps": "As plain office, open + New job",
+  "expected": "No pricing rule dropdown",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.37.1"
+ },
+ {
+  "code": "T-029",
+  "area": "Jobs",
+  "feature": "Assign rule on create",
+  "steps": "As admin, create a job and pick a rule",
+  "expected": "In Budget, that job shows the chosen rule assigned",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.37.1"
+ },
+ {
+  "code": "T-030",
+  "area": "Jobs",
+  "feature": "Delete job button",
+  "steps": "Open a specific job as admin/office",
+  "expected": "'Delete job' button shows (not on 'All jobs')",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.40"
+ },
+ {
+  "code": "T-031",
+  "area": "Jobs",
+  "feature": "Delete empty job",
+  "steps": "Create a job with no items, Delete job, confirm",
+  "expected": "Job removed; view returns to All jobs",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.40"
+ },
+ {
+  "code": "T-032",
+  "area": "Jobs",
+  "feature": "Delete non-empty blocked",
+  "steps": "Try to delete a job that has items",
+  "expected": "Refused with a message stating how many items to clear first; job stays",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.40"
+ },
+ {
+  "code": "T-033",
+  "area": "Items",
+  "feature": "Table",
+  "steps": "Open a job",
+  "expected": "Rows show full code, room, item, stage, rate, status, team, Monday",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-034",
+  "area": "Items",
+  "feature": "Filter chips",
+  "steps": "Click each filter: All/Synced/Not synced/Installed/Needs re-sync/Snags/Open snags",
+  "expected": "Each filter shows only matching rows",
+  "role": "Any",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-035",
+  "area": "Items",
+  "feature": "Counter total",
+  "steps": "Read the counter by the filter chips",
+  "expected": "Shows 'N items' (and 'N of M' when a filter is active)",
+  "role": "Any",
+  "priority": "Med",
+  "added": "0.40"
+ },
+ {
+  "code": "T-036",
+  "area": "Items",
+  "feature": "Counter changed/not synced",
+  "steps": "With some edited + some unsynced items",
+  "expected": "Counter shows 'N changed' and 'N not synced'",
+  "role": "Any",
+  "priority": "Med",
+  "added": "0.40"
+ },
+ {
+  "code": "T-037",
+  "area": "Items",
+  "feature": "Snag tag",
+  "steps": "Find a snag row",
+  "expected": "Row shows a SNAG tag",
+  "role": "Any",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-038",
+  "area": "Items",
+  "feature": "Detail drawer",
+  "steps": "Click an item's code",
+  "expected": "Opens detail with spec fields and any photos",
+  "role": "Any",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-039",
+  "area": "Items",
+  "feature": "Edit rate",
+  "steps": "Change a rate value inline",
+  "expected": "Saves; effective rate placeholder reflects team default when blank",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-040",
+  "area": "Items",
+  "feature": "Edit status",
+  "steps": "Change install status dropdown",
+  "expected": "Saves",
+  "role": "Admin/Office/Fitter",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-041",
+  "area": "Items",
+  "feature": "Edit team",
+  "steps": "Change team dropdown",
+  "expected": "Saves",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-042",
+  "area": "New item",
+  "feature": "Open form",
+  "steps": "+ New item on a job",
+  "expected": "Location fields + full spec fields present",
+  "role": "Admin/Office/Surveyor",
+  "priority": "High",
+  "added": "0.31"
+ },
+ {
+  "code": "T-043",
+  "area": "New item",
+  "feature": "Spec fields",
+  "steps": "Inspect the form",
+  "expected": "Has window type, safety glass, cill depth, transoms x3, mullions x3, open in/out, coupled, add-ons, design code",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.31"
+ },
+ {
+  "code": "T-044",
+  "area": "New item",
+  "feature": "Code preview",
+  "steps": "Type block/flat/room/item",
+  "expected": "CLIENT.JOB... code preview updates live",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-045",
+  "area": "New item",
+  "feature": "Style picker open",
+  "steps": "Click 'Choose style...'",
+  "expected": "Grid of Clearview sketches opens",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.31"
+ },
+ {
+  "code": "T-046",
+  "area": "New item",
+  "feature": "Style filters",
+  "steps": "Use Type / Wide / High chips and code search",
+  "expected": "Grid narrows accordingly",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.31"
+ },
+ {
+  "code": "T-047",
+  "area": "New item",
+  "feature": "Pick style",
+  "steps": "Click a sketch",
+  "expected": "Design code fills, window type auto-fills, thumbnail shows; picker closes",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.31.1"
+ },
+ {
+  "code": "T-048",
+  "area": "New item",
+  "feature": "Create",
+  "steps": "Fill room+item, Save",
+  "expected": "Item appears in the list",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-049",
+  "area": "New item",
+  "feature": "Duplicate code",
+  "steps": "Create an item with an existing code",
+  "expected": "409 error; not created",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-050",
+  "area": "New item",
+  "feature": "Validation",
+  "steps": "Save with no room/item",
+  "expected": "Blocked 'Room and Item are required'",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-051",
+  "area": "Bulk",
+  "feature": "Select rows",
+  "steps": "Tick a few row checkboxes",
+  "expected": "Bulk bar appears with 'N selected'",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-052",
+  "area": "Bulk",
+  "feature": "Select all",
+  "steps": "Tick the header checkbox",
+  "expected": "All visible rows selected",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-053",
+  "area": "Bulk",
+  "feature": "Assign team",
+  "steps": "Select rows, choose a team in bulk bar",
+  "expected": "Selected items get that team",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-054",
+  "area": "Bulk",
+  "feature": "Set status",
+  "steps": "Select rows, choose a status",
+  "expected": "Selected items updated",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-055",
+  "area": "Bulk",
+  "feature": "Sync selected",
+  "steps": "Select rows, Sync selected (board linked)",
+  "expected": "Items pushed to Monday; toast reports created/updated",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-056",
+  "area": "Bulk",
+  "feature": "Delete selected",
+  "steps": "Select rows, click Delete, confirm",
+  "expected": "Rows removed (snags/photos/pricing cascade)",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.40"
+ },
+ {
+  "code": "T-057",
+  "area": "Bulk",
+  "feature": "Delete hidden for non-managers",
+  "steps": "As surveyor/fitter, select rows",
+  "expected": "No Delete button in the bulk bar",
+  "role": "Surveyor",
+  "priority": "Med",
+  "added": "0.40"
+ },
+ {
+  "code": "T-058",
+  "area": "Bulk",
+  "feature": "Clear",
+  "steps": "Click Clear",
+  "expected": "Selection cleared; bulk bar hides",
+  "role": "Any",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-059",
+  "area": "Teams",
+  "feature": "List",
+  "steps": "Open Teams & rates",
+  "expected": "Shows teams, default rate, items-using count",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-060",
+  "area": "Teams",
+  "feature": "Add team",
+  "steps": "Enter name + rate, Add team",
+  "expected": "New team appears",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-061",
+  "area": "Teams",
+  "feature": "Edit name/rate",
+  "steps": "Change a team's name or rate",
+  "expected": "Saves",
+  "role": "Admin",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-062",
+  "area": "Teams",
+  "feature": "Delete in use",
+  "steps": "Delete a team that items reference",
+  "expected": "Blocked with 'reassign its items first'",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-063",
+  "area": "Teams",
+  "feature": "Delete unused",
+  "steps": "Delete a team with 0 items",
+  "expected": "Removed",
+  "role": "Admin",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-064",
+  "area": "Monday sync",
+  "feature": "List",
+  "steps": "Open Monday sync",
+  "expected": "Jobs listed with board, items, synced, to-sync",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-065",
+  "area": "Monday sync",
+  "feature": "Link board",
+  "steps": "Paste a board id or URL, save",
+  "expected": "Board linked to the job",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-066",
+  "area": "Monday sync",
+  "feature": "Unlink",
+  "steps": "Clear the board",
+  "expected": "Board unlinked",
+  "role": "Admin/Office",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-067",
+  "area": "Monday sync",
+  "feature": "Pull fitters + dates",
+  "steps": "Click 'Pull fitters + dates'",
+  "expected": "Teams assigned from Fitters column; planned dates read from the date column; toast reports counts + which date column",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.29"
+ },
+ {
+  "code": "T-068",
+  "area": "Monday sync",
+  "feature": "Sync one item",
+  "steps": "Click Sync on an item",
+  "expected": "Item created/updated on Monday; link appears",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-069",
+  "area": "Monday sync",
+  "feature": "Re-sync dirty",
+  "steps": "Edit a synced item, then Re-sync",
+  "expected": "'changed' tag clears after re-sync",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-070",
+  "area": "Plans",
+  "feature": "Upload plan",
+  "steps": "Plans tab, pick job, Upload plan (image)",
+  "expected": "Plan image shows",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.23"
+ },
+ {
+  "code": "T-071",
+  "area": "Plans",
+  "feature": "Pin item",
+  "steps": "Click an item on the right, click the plan",
+  "expected": "Pin dropped at that spot, colour-coded by status",
+  "role": "Admin/Office",
+  "priority": "High",
+  "added": "0.23"
+ },
+ {
+  "code": "T-072",
+  "area": "Plans",
+  "feature": "Placed/Unplaced filter",
+  "steps": "Toggle All/Unplaced/Placed",
+  "expected": "Unplaced = items not pinned on ANY plan",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.26.2"
+ },
+ {
+  "code": "T-073",
+  "area": "Plans",
+  "feature": "Multi-plan toggle",
+  "steps": "Toggle 'Item can be on multiple plans'",
+  "expected": "When off, placing an already-placed item on another plan is blocked with a message",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.26"
+ },
+ {
+  "code": "T-074",
+  "area": "Plans",
+  "feature": "Delete plan",
+  "steps": "Delete a plan",
+  "expected": "Plan removed",
+  "role": "Admin/Office",
+  "priority": "Low",
+  "added": "0.23"
+ },
+ {
+  "code": "T-075",
+  "area": "Plans",
+  "feature": "Survey PDF",
+  "steps": "Click Survey PDF",
+  "expected": "Downloads a survey report PDF",
+  "role": "Admin/Office/Surveyor",
+  "priority": "Med",
+  "added": "0.28"
+ },
+ {
+  "code": "T-076",
+  "area": "Plans",
+  "feature": "Install PDF",
+  "steps": "Click Install PDF",
+  "expected": "Downloads an install report PDF",
+  "role": "Admin/Office/Surveyor",
+  "priority": "Med",
+  "added": "0.28"
+ },
+ {
+  "code": "T-077",
+  "area": "Plans",
+  "feature": "PDF pin numbers",
+  "steps": "Open the PDF; compare plan pins to the table",
+  "expected": "Pin numbers match the '#' column in the items table",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.29.2"
+ },
+ {
+  "code": "T-078",
+  "area": "Plans",
+  "feature": "Install PDF dates",
+  "steps": "Open Install PDF",
+  "expected": "Has a 'Scheduled' column and a scheduled date range in the summary",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.32"
+ },
+ {
+  "code": "T-079",
+  "area": "Calendar",
+  "feature": "Month grid",
+  "steps": "Open Calendar",
+  "expected": "Month grid with weekday headers",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.33"
+ },
+ {
+  "code": "T-080",
+  "area": "Calendar",
+  "feature": "Day counts",
+  "steps": "View days with scheduled installs",
+  "expected": "Coloured count badge per day (green all installed, magenta snag/misfit, amber else)",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.33"
+ },
+ {
+  "code": "T-081",
+  "area": "Calendar",
+  "feature": "Month paging",
+  "steps": "Click the arrows",
+  "expected": "Moves between months",
+  "role": "Admin/Office",
+  "priority": "Low",
+  "added": "0.33"
+ },
+ {
+  "code": "T-082",
+  "area": "Calendar",
+  "feature": "Team filter",
+  "steps": "Choose a team",
+  "expected": "Counts and day list narrow to that team",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.33"
+ },
+ {
+  "code": "T-083",
+  "area": "Calendar",
+  "feature": "Day detail",
+  "steps": "Click a day",
+  "expected": "Lists that day's installs (job, code, team, status)",
+  "role": "Admin/Office",
+  "priority": "Med",
+  "added": "0.33"
+ },
+ {
+  "code": "T-084",
+  "area": "Calendar",
+  "feature": "Open item",
+  "steps": "Click an item in the day list",
+  "expected": "Opens the item detail",
+  "role": "Admin/Office",
+  "priority": "Low",
+  "added": "0.33"
+ },
+ {
+  "code": "T-085",
+  "area": "Budget",
+  "feature": "Tab hidden",
+  "steps": "As non-finance role",
+  "expected": "Budget tab absent",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.35"
+ },
+ {
+  "code": "T-086",
+  "area": "Budget",
+  "feature": "Rules list",
+  "steps": "Open Budget as admin",
+  "expected": "Lists pricing rules with rates",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.35"
+ },
+ {
+  "code": "T-087",
+  "area": "Budget",
+  "feature": "Create rule",
+  "steps": "+ New rule, fill material/labour/sale (in \u00a3), Save",
+  "expected": "Rule saved; appears in the list",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.35"
+ },
+ {
+  "code": "T-088",
+  "area": "Budget",
+  "feature": "Edit rule",
+  "steps": "Edit a rule, change a rate, Save, reopen",
+  "expected": "Value persists (correct \u00a3)",
+  "role": "Admin/Invoice mgr",
+  "priority": "Med",
+  "added": "0.35"
+ },
+ {
+  "code": "T-089",
+  "area": "Budget",
+  "feature": "Delete rule",
+  "steps": "Delete a rule",
+  "expected": "Removed",
+  "role": "Admin/Invoice mgr",
+  "priority": "Low",
+  "added": "0.35"
+ },
+ {
+  "code": "T-090",
+  "area": "Budget",
+  "feature": "Assign rule",
+  "steps": "Job pricing: pick a job, choose a rule",
+  "expected": "Breakdown appears",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.36"
+ },
+ {
+  "code": "T-091",
+  "area": "Budget",
+  "feature": "Breakdown cards",
+  "steps": "View an assigned job",
+  "expected": "Three cards: Customer price, Our cost, Margin (%)",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.36"
+ },
+ {
+  "code": "T-092",
+  "area": "Budget",
+  "feature": "Per-flat table",
+  "steps": "Check the flat rows",
+  "expected": "Base rate covers 5 smallest windows; biggest extras billed per m2; flat total correct",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.36"
+ },
+ {
+  "code": "T-093",
+  "area": "Budget",
+  "feature": "Doors/communal",
+  "steps": "Check summary lines",
+  "expected": "Doors flat-rate, communal windows per m2 shown",
+  "role": "Admin/Invoice mgr",
+  "priority": "Med",
+  "added": "0.36"
+ },
+ {
+  "code": "T-094",
+  "area": "Budget",
+  "feature": "Variation toggle",
+  "steps": "Tick an item as variation, enter an amount",
+  "expected": "Item leaves the flat scope; a variation line adds the amount; totals/margin update",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.38"
+ },
+ {
+  "code": "T-095",
+  "area": "Budget",
+  "feature": "Customer price PDF",
+  "steps": "Click 'Customer price PDF'",
+  "expected": "Downloads a branded quote",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.39"
+ },
+ {
+  "code": "T-096",
+  "area": "Budget",
+  "feature": "PDF hides cost",
+  "steps": "Open the customer PDF",
+  "expected": "Shows ONLY the sale side \u2014 no cost or margin anywhere",
+  "role": "Admin/Invoice mgr",
+  "priority": "High",
+  "added": "0.39"
+ },
+ {
+  "code": "T-097",
+  "area": "Budget",
+  "feature": "PDF no rule",
+  "steps": "Try the PDF on a job with no rule",
+  "expected": "Clear error asking to assign a rule first",
+  "role": "Admin/Invoice mgr",
+  "priority": "Low",
+  "added": "0.39"
+ },
+ {
+  "code": "T-098",
+  "area": "Users",
+  "feature": "List",
+  "steps": "Open Users (admin)",
+  "expected": "Lists users with role + active state",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-099",
+  "area": "Users",
+  "feature": "Invite",
+  "steps": "Invite a user with an email + role",
+  "expected": "User created/invited",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-100",
+  "area": "Users",
+  "feature": "Change role",
+  "steps": "Change a user's role",
+  "expected": "Saved; their access changes on next login",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-101",
+  "area": "Users",
+  "feature": "Deactivate",
+  "steps": "Toggle a user inactive",
+  "expected": "They can no longer sign in",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-102",
+  "area": "Users",
+  "feature": "Reset password",
+  "steps": "Reset a user's password",
+  "expected": "New password works on next login",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-103",
+  "area": "Roles",
+  "feature": "Matrix",
+  "steps": "Open Roles (admin)",
+  "expected": "Read-only capability matrix by role",
+  "role": "Admin",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-104",
+  "area": "General",
+  "feature": "Toasts",
+  "steps": "Perform a save/delete",
+  "expected": "A brief confirmation toast appears",
+  "role": "Any",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-105",
+  "area": "General",
+  "feature": "Columns readable",
+  "steps": "Resize the window / view Users & Items",
+  "expected": "All columns visible or scrollable; nothing clipped",
+  "role": "Any",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-106",
+  "area": "General",
+  "feature": "Live wallboard",
+  "steps": "(If LIVE_KEY set) open /live?key=...",
+  "expected": "Auto-refreshing status wallboard shows",
+  "role": "Admin",
+  "priority": "Low",
+  "added": "<=0.30"
+ },
+ {
+  "code": "T-107",
+  "area": "Reports",
+  "feature": "Full code in Code column",
+  "steps": "Open Plans tab, generate Survey PDF and Internal install PDF for a job with long codes",
+  "expected": "The Code column shows the full item code in full (wraps to next line), not truncated",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.44"
+ },
+ {
+  "code": "T-108",
+  "area": "Reports",
+  "feature": "Internal install PDF has rates",
+  "steps": "Plans tab -> Internal install PDF",
+  "expected": "PDF lists items with Team and Rate columns and a labour total",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.44"
+ },
+ {
+  "code": "T-109",
+  "area": "Reports",
+  "feature": "Customer install PDF is rate-free",
+  "steps": "Plans tab -> Customer install PDF",
+  "expected": "PDF has NO Team, NO Rate and NO labour total - safe to send a customer",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.44"
+ },
+ {
+  "code": "T-110",
+  "area": "Customer portal",
+  "feature": "Customer sees only own jobs",
+  "steps": "Log in as a Customer whose CLIENT code is AXS",
+  "expected": "Only AXS.* jobs are listed; no other clients' jobs; no Dashboard/Items/Teams tabs",
+  "role": "Customer",
+  "priority": "High",
+  "added": "0.45"
+ },
+ {
+  "code": "T-111",
+  "area": "Customer portal",
+  "feature": "Customer downloads install report",
+  "steps": "As Customer, click Download install report on a job",
+  "expected": "The rate-free Customer install PDF downloads",
+  "role": "Customer",
+  "priority": "High",
+  "added": "0.45"
+ },
+ {
+  "code": "T-112",
+  "area": "Customer portal",
+  "feature": "Customer with no/again unmatched client code",
+  "steps": "Admin creates a Customer user but leaves CLIENT blank; log in",
+  "expected": "Portal loads but shows 'No jobs shared with you yet'",
+  "role": "Customer",
+  "priority": "Med",
+  "added": "0.45"
+ },
+ {
+  "code": "T-113",
+  "area": "Customer portal",
+  "feature": "Customer cannot reach other endpoints",
+  "steps": "As Customer, attempt to open a non-customer URL/tab",
+  "expected": "Blocked (403); only the portal + own customer_install PDF are allowed",
+  "role": "Customer",
+  "priority": "High",
+  "added": "0.45"
+ },
+ {
+  "code": "T-114",
+  "area": "Access",
+  "feature": "Assign CLIENT to a customer",
+  "steps": "Users tab: set a user's role to Customer, then set the CLIENT column",
+  "expected": "CLIENT input only appears for Customer role; value saved",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.45"
+ },
+ {
+  "code": "T-115",
+  "area": "Teams",
+  "feature": "Separate Doors rate",
+  "steps": "Teams tab: set Windows rate and a different Doors rate; view a door item's fitting rate",
+  "expected": "Door items are priced at the Doors rate; window items at the Windows rate",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.46"
+ },
+ {
+  "code": "T-116",
+  "area": "Teams",
+  "feature": "Per-item override beats team rates",
+  "steps": "Set a per-item rate override on a door item",
+  "expected": "The override is used, ignoring both team rates",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.46"
+ },
+ {
+  "code": "T-117",
+  "area": "Teams",
+  "feature": "Retire a team with items",
+  "steps": "Teams tab: click Retire on a team that has items",
+  "expected": "Team goes greyed with 'retired' tag; stays on its existing items; disappears from new-assignment dropdowns",
+  "role": "Admin",
+  "priority": "High",
+  "added": "0.47"
+ },
+ {
+  "code": "T-118",
+  "area": "Teams",
+  "feature": "Reactivate a retired team",
+  "steps": "Click Reactivate on a retired team",
+  "expected": "Team returns to active and reappears in assignment dropdowns",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.47"
+ },
+ {
+  "code": "T-119",
+  "area": "Teams",
+  "feature": "Retired team still shown on its items",
+  "steps": "Open an item still assigned to a retired team (Items row team dropdown)",
+  "expected": "The retired team is shown, labelled '(retired)', so the row isn't blank",
+  "role": "Office",
+  "priority": "Low",
+  "added": "0.47"
+ },
+ {
+  "code": "T-120",
+  "area": "Teams",
+  "feature": "Delete blocked when in use",
+  "steps": "Try to Delete a team that has items",
+  "expected": "Delete is blocked; Retire is offered instead",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.47"
+ },
+ {
+  "code": "T-121",
+  "area": "New item",
+  "feature": "Auto letter prefixes",
+  "steps": "New item: type 1 in Block, Elevation, Flat, Floor",
+  "expected": "Fields become B1, E1, F1, F1 automatically; code preview updates",
+  "role": "Surveyor",
+  "priority": "Med",
+  "added": "0.49"
+ },
+ {
+  "code": "T-122",
+  "area": "New item",
+  "feature": "GF floor keeps no F",
+  "steps": "New item: type GF in Floor (or Flat)",
+  "expected": "Stays GF (not FGF); numbers still get F",
+  "role": "Surveyor",
+  "priority": "Med",
+  "added": "0.61"
+ },
+ {
+  "code": "T-123",
+  "area": "New item",
+  "feature": "Code fields auto-uppercase",
+  "steps": "Type lowercase into Room/Item/Block etc.",
+  "expected": "Values are uppercased as you type",
+  "role": "Surveyor",
+  "priority": "Low",
+  "added": "0.49"
+ },
+ {
+  "code": "T-124",
+  "area": "New item",
+  "feature": "Style picker fills Item type",
+  "steps": "New item: click Choose style, pick a Window (or Door) style",
+  "expected": "Item type is filled with Window/Door (NOT Window type); design code + preview set",
+  "role": "Surveyor",
+  "priority": "Med",
+  "added": "0.49"
+ },
+ {
+  "code": "T-125",
+  "area": "New item",
+  "feature": "Room picker sorted by use",
+  "steps": "Open the Room dropdown",
+  "expected": "Rooms shown as 'Name (CODE)', ordered by how often each is used across jobs; includes Lounge (LG) and WC",
+  "role": "Surveyor",
+  "priority": "Med",
+  "added": "0.50"
+ },
+ {
+  "code": "T-126",
+  "area": "Items",
+  "feature": "Column filters",
+  "steps": "Items tab: use the Team, Block, Elevation, Flat, Floor, Room, Item and Stage header dropdowns",
+  "expected": "Each filters the list; filters combine and reset when you switch jobs",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.55"
+ },
+ {
+  "code": "T-127",
+  "area": "Items",
+  "feature": "Inline edit Flat rebuilds code",
+  "steps": "Items tab: change an unsynced item's Flat",
+  "expected": "Code rebuilds with Flat as the F-segment; Floor cleared; Items list refreshes",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.56"
+ },
+ {
+  "code": "T-128",
+  "area": "Items",
+  "feature": "Inline edit Room rebuilds code",
+  "steps": "Change an unsynced item's Room",
+  "expected": "Room is inserted before the item in the code",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.56"
+ },
+ {
+  "code": "T-129",
+  "area": "Items",
+  "feature": "Code locked after sync",
+  "steps": "Try to edit Flat/Room on an item already synced to Monday",
+  "expected": "Blocked with a 'synced - code locked' message",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.56"
+ },
+ {
+  "code": "T-130",
+  "area": "Items",
+  "feature": "Duplicate code blocked",
+  "steps": "Edit Flat/Room so the code would clash with an existing item",
+  "expected": "Rejected with 'Code ... already exists'",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.56"
+ },
+ {
+  "code": "T-131",
+  "area": "Items",
+  "feature": "Jobs panel toggle",
+  "steps": "Items tab: click the Jobs toggle",
+  "expected": "Left Jobs panel hides/shows; state persists across the session",
+  "role": "Office",
+  "priority": "Low",
+  "added": "0.56"
+ },
+ {
+  "code": "T-132",
+  "area": "Bulk",
+  "feature": "Field picker apply",
+  "steps": "Select items; in the toolbar pick a Field, enter a value, click Apply",
+  "expected": "The chosen field (Team/Status/Block/Elevation/Floor/Flat/Room) is set on all selected",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.58"
+ },
+ {
+  "code": "T-133",
+  "area": "Bulk",
+  "feature": "Bulk Floor/Flat/Room rebuild codes",
+  "steps": "Bulk-set Floor (or Flat/Room) on selected items",
+  "expected": "Each item's code is rebuilt; synced items and code clashes are skipped (count reported)",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.57"
+ },
+ {
+  "code": "T-134",
+  "area": "Bulk",
+  "feature": "Actions separated",
+  "steps": "View the bulk toolbar",
+  "expected": "Sync selected / Delete / Clear sit on their own row, separate from the field editing row",
+  "role": "Office",
+  "priority": "Low",
+  "added": "0.58"
+ },
+ {
+  "code": "T-135",
+  "area": "Photos",
+  "feature": "Add photo in office",
+  "steps": "Open an item drawer as surveyor; use Add photo",
+  "expected": "Photo uploads and appears in the drawer; hint shows target Monday column",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.51"
+ },
+ {
+  "code": "T-136",
+  "area": "Photos",
+  "feature": "Office photo routes by role",
+  "steps": "Surveyor adds a photo then syncs the item; fitter adds a photo then syncs",
+  "expected": "Surveyor/scanner photo -> Picture Before; fitter photo -> Picture After (needs those file columns)",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.52"
+ },
+ {
+  "code": "T-137",
+  "area": "Photos",
+  "feature": "Mobile photo routes by role",
+  "steps": "On the phone, a surveyor takes an item photo; a fitter takes one",
+  "expected": "Surveyor -> Picture Before, fitter -> Picture After on sync; snag defect photo -> Design Sketch",
+  "role": "Surveyor",
+  "priority": "High",
+  "added": "0.53"
+ },
+ {
+  "code": "T-138",
+  "area": "Mapping",
+  "feature": "New job hidden from scanner",
+  "steps": "Create a job (status New); log in as Scanner",
+  "expected": "The new job does NOT appear in the scanner's job list",
+  "role": "Scanner",
+  "priority": "High",
+  "added": "0.54"
+ },
+ {
+  "code": "T-139",
+  "area": "Mapping",
+  "feature": "Admin releases for mapping",
+  "steps": "Admin: Mapping tab -> assign a mapping start date to a New job",
+  "expected": "Job becomes Pending mapping and now shows for scanners",
+  "role": "Admin",
+  "priority": "High",
+  "added": "0.54"
+ },
+ {
+  "code": "T-140",
+  "area": "Mapping",
+  "feature": "Floor rows auto-add",
+  "steps": "Scanner: set Block + Elevation, then fill a floor row (floor, windows, doors)",
+  "expected": "A new empty floor row opens automatically; the totals line updates",
+  "role": "Scanner",
+  "priority": "Med",
+  "added": "0.54"
+ },
+ {
+  "code": "T-141",
+  "area": "Mapping",
+  "feature": "Preload builds items",
+  "steps": "Fill floors and click Preload (e.g. Floor 1 = 3 windows + 1 door)",
+  "expected": "Table gets AXS.LAB.B1.E1.F1.W1..W3 and .D1 rows",
+  "role": "Scanner",
+  "priority": "High",
+  "added": "0.54"
+ },
+ {
+  "code": "T-142",
+  "area": "Mapping",
+  "feature": "Couple split",
+  "steps": "On a preloaded row, tick Couple, set 2, press Add",
+  "expected": "Row splits into W2.1 and W2.2",
+  "role": "Scanner",
+  "priority": "Med",
+  "added": "0.54"
+ },
+ {
+  "code": "T-143",
+  "area": "Mapping",
+  "feature": "Manual Flat column",
+  "steps": "Type a Flat on a mapping row",
+  "expected": "Flat becomes the code's F-segment (replacing the floor); both saved",
+  "role": "Scanner",
+  "priority": "Med",
+  "added": "0.60"
+ },
+ {
+  "code": "T-144",
+  "area": "Mapping",
+  "feature": "Clear all",
+  "steps": "Click Clear all on the mapping table",
+  "expected": "All rows removed (after confirm)",
+  "role": "Scanner",
+  "priority": "Low",
+  "added": "0.60"
+ },
+ {
+  "code": "T-145",
+  "area": "Mapping",
+  "feature": "Save creates items",
+  "steps": "Click Save",
+  "expected": "Items created; job stays Pending mapping; re-save skips codes that already exist",
+  "role": "Scanner",
+  "priority": "High",
+  "added": "0.54"
+ },
+ {
+  "code": "T-146",
+  "area": "Mapping",
+  "feature": "Items refresh after save",
+  "steps": "After saving in Mapping, switch to the Items tab",
+  "expected": "The newly created items appear immediately",
+  "role": "Scanner",
+  "priority": "Med",
+  "added": "0.60"
+ },
+ {
+  "code": "T-147",
+  "area": "Items",
+  "feature": "Full spec editing in drawer",
+  "steps": "Open an item drawer as office/surveyor; edit Specification fields; click Save details",
+  "expected": "All spec fields save; item marked to re-sync to Monday",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.58"
+ },
+ {
+  "code": "T-148",
+  "area": "Items",
+  "feature": "Sticky Save details",
+  "steps": "Scroll a long item drawer",
+  "expected": "The Save details button stays pinned at the bottom (always visible)",
+  "role": "Office",
+  "priority": "Low",
+  "added": "0.58"
+ },
+ {
+  "code": "T-149",
+  "area": "Monday sync",
+  "feature": "Auto-provision columns on link",
+  "steps": "Sync tab: link a Monday board that is missing some required columns",
+  "expected": "Missing columns are created automatically; toast reports how many",
+  "role": "Office",
+  "priority": "High",
+  "added": "0.59"
+ },
+ {
+  "code": "T-150",
+  "area": "Monday sync",
+  "feature": "Board already complete",
+  "steps": "Link a board that already has all required columns",
+  "expected": "Toast says linked, columns OK; nothing duplicated",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.59"
+ },
+ {
+  "code": "T-151",
+  "area": "Logs",
+  "feature": "Admin sees activity log",
+  "steps": "Log in as Admin, open the Logs tab",
+  "expected": "Recent actions listed with When / User / Role / Action / Details",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.62"
+ },
+ {
+  "code": "T-152",
+  "area": "Logs",
+  "feature": "Log records who did what",
+  "steps": "Do an item edit, a delete, a sync, a mapping save, a job create/delete and a board link",
+  "expected": "Each appears in the log attributed to your user and role",
+  "role": "Admin",
+  "priority": "Med",
+  "added": "0.62"
+ },
+ {
+  "code": "T-153",
+  "area": "Logs",
+  "feature": "Log search",
+  "steps": "Type in the Logs search box",
+  "expected": "List filters by user, action, entity or details",
+  "role": "Admin",
+  "priority": "Low",
+  "added": "0.62"
+ },
+ {
+  "code": "T-154",
+  "area": "Access",
+  "feature": "Logs is admin only",
+  "steps": "Log in as a non-admin",
+  "expected": "No Logs tab; the /api/logs request returns 403",
+  "role": "Office",
+  "priority": "Med",
+  "added": "0.62"
+ }
 ]
