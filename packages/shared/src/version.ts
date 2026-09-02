@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.60.0';
+export const APP_VERSION = '0.61.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.61.0', date: '2026-09-01', changes: [
+    'Items tab: the ITEM column header now has a filter too.',
+    'Floor no longer forces an F. In the New survey item form and the Mapping table, the auto-F only applies to a plain number (1 -> F1); type a label like GF and it stays GF (no more FGF). Same smart behaviour for Block/Elevation/Flat letters.',
+  ] },
   { version: '0.60.0', date: '2026-08-31', changes: [
     'Mapping table: added a manual Flat column next to Floor. If you fill Flat it becomes the F-segment of the code (replacing the mapping floor); leave it blank to keep the floor. Both Floor and Flat are saved on the item. Added a Clear all button on the table (alongside the per-row delete). And switching to the Items tab now always refreshes the list, so items you just saved from Mapping show up immediately.',
   ] },

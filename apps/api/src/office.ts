@@ -1496,7 +1496,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <th>FLAT<br><select id="flatFilter" class="colfilter" onchange="setFlatFilter(this.value)"></select></th>
         <th>FLOOR<br><select id="floorFilter" class="colfilter" onchange="setFloorFilter(this.value)"></select></th>
         <th>ROOM<br><select id="roomFilter" class="colfilter" onchange="setRoomFilter(this.value)"></select></th>
-        <th>ITEM</th>
+        <th>ITEM<br><select id="itemColFilter" class="colfilter" onchange="setItemColFilter(this.value)"></select></th>
         <th>STAGE<br><select id="stageFilter" class="colfilter" onchange="setStageFilter(this.value)"></select></th>
         <th>RATE (£)</th>
         <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
@@ -1718,7 +1718,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='', stageFilter='';
+  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='', stageFilter='', itemColFilter='';
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
@@ -1818,13 +1818,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(d.ok){JOB_STATUS[current]='pending_mapping';JOB_MAPDATE[current]=date;tShow('Released for mapping');loadMapping();}
     else tShow(d.error||'Failed');
   }
+  // Auto-prefix a letter only when the value is a plain number ("1"->"F1"); labels like GF stay as typed.
+  function smartPfx(raw,p){
+    raw=String(raw||'').toUpperCase();
+    if(!p)return raw;
+    if(/^[0-9]+$/.test(raw))return p+raw;
+    if(new RegExp('^'+p+'[0-9]+$').test(raw))return raw;
+    return raw;
+  }
+  function applyPfx(el,p){ var v=smartPfx(el.value,p); if(v!==el.value){el.value=v;try{el.setSelectionRange(v.length,v.length);}catch(_){}} }
   function mapWirePrefix(id,p){
     var el=document.getElementById(id);
-    el.addEventListener('input',function(){
-      var v=el.value.toUpperCase().replace(new RegExp('^'+p+'+'),''); v=v?(p+v):'';
-      if(v!==el.value){el.value=v;try{el.setSelectionRange(v.length,v.length);}catch(_){}}
-      maybeRevealFloors();
-    });
+    el.addEventListener('input',function(){ applyPfx(el,p); maybeRevealFloors(); });
   }
   function renderMapBuilder(box){
     box.innerHTML=''
@@ -1881,6 +1886,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     div.querySelector('.fr-del').addEventListener('click',function(){ if(document.querySelectorAll('#floorRows .frow').length>1) div.remove(); });
   }
   function onFloorInput(div){
+    applyPfx(div.querySelector('.fr-floor'),'F'); // "1"->"F1", GF stays GF
     updateFloorTotals();
     var rows=document.querySelectorAll('#floorRows .frow');
     if(div!==rows[rows.length-1]) return;
@@ -1942,8 +1948,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function wireMapRow(tr){
     function recode(){ var be=getMapBE(); tr.querySelector('.mapcode').textContent=mapCode(be.block.trim(),be.elev.trim(),stripF(tr.querySelector('.mr-floor').value),stripF(tr.querySelector('.mr-flat').value),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
-    tr.querySelector('.mr-floor').addEventListener('input',recode);
-    tr.querySelector('.mr-flat').addEventListener('input',recode);
+    tr.querySelector('.mr-floor').addEventListener('input',function(){applyPfx(this,'F');recode();});
+    tr.querySelector('.mr-flat').addEventListener('input',function(){applyPfx(this,'F');recode();});
     tr.querySelector('.mr-item').addEventListener('input',function(){var s=this.selectionStart;this.value=this.value.toUpperCase();try{this.setSelectionRange(s,s);}catch(_){}recode();});
     var cp=tr.querySelector('.mr-couple'), n=tr.querySelector('.mr-n'), sp=tr.querySelector('.mr-split');
     cp.addEventListener('change',function(){ n.disabled=!cp.checked; sp.disabled=!cp.checked; });
@@ -1989,7 +1995,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     JOB_STATUS={}; JOB_MAPDATE={};
     jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs');
     jobs.forEach(function(j){mk(j.code,j.code);});
     // Scanner (or an empty current) lands on the first available job.
@@ -2061,6 +2067,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fillColFilter('elevFilter','elevation',function(v){elevFilter=v;},elevFilter,'All elevations');
     fillColFilter('floorFilter','floor',function(v){floorFilter=v;},floorFilter,'All floors');
     fillColFilter('roomFilter','room',function(v){roomFilter=v;},roomFilter,'All rooms');
+    fillColFilter('itemColFilter','item',function(v){itemColFilter=v;},itemColFilter,'All items');
     // stage filter: distinct stages present, shown with their labels
     var stages=[]; (itemsData.items||[]).forEach(function(it){var st=it.stage||''; if(st&&stages.indexOf(st)<0)stages.push(st);});
     if(stageFilter&&stages.indexOf(stageFilter)<0)stageFilter='';
@@ -2076,6 +2083,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function setFloorFilter(v){floorFilter=v;renderItems();}
   function setRoomFilter(v){roomFilter=v;renderItems();}
   function setStageFilter(v){stageFilter=v;renderItems();}
+  function setItemColFilter(v){itemColFilter=v;renderItems();}
   function fillColFilter(selId,field,setFn,cur,allLabel){
     var vals=[], hasNone=false;
     (itemsData.items||[]).forEach(function(it){ var v=it[field]||''; if(v){ if(vals.indexOf(v)<0)vals.push(v); } else hasNone=true; });
@@ -2116,6 +2124,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(floorFilter==='__none'){if(r.floor)return false;} else if(floorFilter){if((r.floor||'')!==floorFilter)return false;}
       if(roomFilter==='__none'){if(r.room)return false;} else if(roomFilter){if((r.room||'')!==roomFilter)return false;}
       if(stageFilter&&(r.stage||'')!==stageFilter)return false;
+      if(itemColFilter==='__none'){if(r.item)return false;} else if(itemColFilter){if((r.item||'')!==itemColFilter)return false;}
       return true;
     });
     var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');
@@ -2665,10 +2674,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     ['f_block','f_elev','f_flat','f_floor','f_item'].forEach(function(id){
       var el=document.getElementById(id);
       el.addEventListener('input',function(){
-        var v=el.value.toUpperCase();
         var p=PFX[id];
-        if(p){ v=v.replace(new RegExp('^'+p+'+'),''); v=v?(p+v):''; }
-        if(v!==el.value){ el.value=v; try{el.setSelectionRange(v.length,v.length);}catch(_){} }
+        if(p){ applyPfx(el,p); } else { var u=el.value.toUpperCase(); if(u!==el.value){var s=el.selectionStart;el.value=u;try{el.setSelectionRange(s,s);}catch(_){}} }
         calcCode();
       });
     });
