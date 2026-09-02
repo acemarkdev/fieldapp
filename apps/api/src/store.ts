@@ -158,6 +158,22 @@ export async function listJobs(tenantId: string): Promise<Job[]> {
   return (data ?? []) as Job[];
 }
 
+// ---- audit log (who did what) ----
+export interface AuditEntry {
+  tenant_id: string; actor_user_id?: string | null; actor_name?: string | null; actor_role?: string | null;
+  action: string; entity?: string | null; entity_id?: string | null; summary?: string | null;
+}
+export async function insertAuditLog(e: AuditEntry): Promise<void> {
+  const { error } = await db().from('audit_log').insert(e);
+  if (error) throw error;
+}
+export async function listAuditLog(tenantId: string, limit = 300): Promise<any[]> {
+  const { data, error } = await db().from('audit_log')
+    .select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
 // Does another item in this tenant already use this full_code? (excludes exceptId — the item being edited.)
 export async function codeExists(tenantId: string, fullCode: string, exceptId: string): Promise<boolean> {
   const { data, error } = await db().from('survey_items')

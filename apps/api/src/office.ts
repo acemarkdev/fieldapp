@@ -17,7 +17,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists } from './store';
+import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
@@ -218,6 +218,12 @@ async function context(req: any): Promise<{ id: string; tenant_id: string; role:
   }
   if (!u || !u.active) return null;
   return u as any;
+}
+
+// Fire-and-forget audit entry (never blocks or breaks the main request).
+function audit(ctx: any, action: string, entity: string | null, entityId: string | null, summary: string | null): void {
+  insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action, entity, entity_id: entityId, summary })
+    .catch((e) => console.warn('[audit]', e?.message ?? e));
 }
 
 const server = createServer(async (req, res) => {
@@ -534,6 +540,7 @@ const server = createServer(async (req, res) => {
       }
       try {
         const inserted = await bulkInsertSurveyItems(fields);
+        audit(ctx, 'mapping.save', 'job', code, `Mapped ${inserted} item(s) on ${code}${block ? ' · ' + block : ''}${elevation ? '/' + elevation : ''}`);
         send(res, 200, { ok: true, inserted, skipped: fields.length - inserted });
       } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
       return;
@@ -548,6 +555,7 @@ const server = createServer(async (req, res) => {
       if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
       try {
         const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null });
+        audit(ctx, 'job.create', 'job', `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} — ${name}`);
         send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
       } catch (err: any) {
         if (err?.code === '23505') { send(res, 409, { error: `Job ${client_code}.${job_code} already exists.` }); return; }
@@ -565,6 +573,7 @@ const server = createServer(async (req, res) => {
       const n = await countItemsForJob(job.id);
       if (n > 0) { send(res, 409, { error: `This job has ${n} item${n === 1 ? '' : 's'}. Delete or move them first — a job can only be removed when it's empty.` }); return; }
       await deleteJob(job.id, ctx.tenant_id);
+      audit(ctx, 'job.delete', 'job', code, `Deleted job ${code}`);
       send(res, 200, { ok: true });
       return;
     }
@@ -622,6 +631,7 @@ const server = createServer(async (req, res) => {
       };
       try {
         const created = await insertSurveyItem(fields);
+        audit(ctx, 'item.create', 'item', created.id, `Created ${full_code}`);
         send(res, 200, { ok: true, id: created.id, full_code });
       } catch (err: any) {
         if (err?.code === '23505') { send(res, 409, { error: `An item with code ${full_code} already exists.` }); return; }
@@ -674,6 +684,7 @@ const server = createServer(async (req, res) => {
         // Destructive — managers only (matches the DB delete policy: admin/office).
         if (!(ctx.role === 'admin' || ctx.role === 'office')) { send(res, 403, { error: `Your role (${ctx.role}) can't delete items.` }); return; }
         const n = await bulkDeleteItems(allowed, ctx.tenant_id);
+        audit(ctx, 'item.delete', 'item', null, `Deleted ${n} item(s)`);
         send(res, 200, { ok: true, deleted: n }); return;
       }
       if (action === 'sync') {
@@ -683,6 +694,7 @@ const server = createServer(async (req, res) => {
           try { const r = await promoteItem(id); r.action === 'created' ? created++ : updated++; }
           catch (err: any) { failed++; if (errors.length < 3) errors.push(err?.message ?? String(err)); }
         }
+        audit(ctx, 'item.sync', 'item', null, `Synced ${created + updated} item(s) to Monday${failed ? ' (' + failed + ' failed)' : ''}`);
         send(res, 200, { ok: true, total: allowed.length, created, updated, failed, errors }); return;
       }
       send(res, 400, { error: 'Unknown bulk action.' }); return;
@@ -821,6 +833,8 @@ const server = createServer(async (req, res) => {
       }
       const { error } = await db().from('survey_items').update(patch).eq('id', id);
       if (error) { send(res, 500, { error: error.message }); return; }
+      const fieldsChanged = Object.keys(patch);
+      if (fieldsChanged.length) audit(ctx, 'item.update', 'item', id, `${(patch.full_code as string) || item.full_code}: ${fieldsChanged.join(', ')}`);
       send(res, 200, { ok: true });
       return;
     }
@@ -831,7 +845,15 @@ const server = createServer(async (req, res) => {
       const item = await getSurveyItem(id);
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const r = await promoteItem(id);
+      audit(ctx, 'item.sync', 'item', id, `Synced ${item.full_code} to Monday (${r.action})`);
       send(res, 200, { ok: true, action: r.action, mondayItemId: r.mondayItemId, photosPushed: r.photosPushed, photoError: r.photoError });
+      return;
+    }
+
+    // Audit log (admin only).
+    if (p === '/api/logs' && req.method === 'GET') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      send(res, 200, await listAuditLog(ctx.tenant_id, 300));
       return;
     }
 
@@ -931,6 +953,7 @@ const server = createServer(async (req, res) => {
           }
         } catch (e: any) { columnsError = e?.message ?? String(e); }
       }
+      audit(ctx, 'job.board', 'job', code, boardId ? `Linked board ${boardId} to ${code}${columnsCreated.length ? ' · ' + columnsCreated.length + ' columns created' : ''}` : `Unlinked board from ${code}`);
       send(res, 200, { ok: true, board: boardId, slug, columnsCreated, columnsError });
       return;
     }
@@ -1427,6 +1450,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
       <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
       <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
+      <button id="tabLogs" class="tab" style="display:none" onclick="showTab('logs')">Logs</button>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
@@ -1655,6 +1679,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="logsView" style="display:none">
+    <main style="max-width:1000px">
+      <h2>Activity log</h2>
+      <div class="sub">Recent high-value actions across the tenant (most recent first). Search filters the list.</div>
+      <div class="addrow" style="margin:4px 0 12px"><input id="logSearch" class="tinput" placeholder="Filter by user, action, entity or details…" style="width:340px" oninput="renderLogs()"></div>
+      <div class="card2" style="overflow:auto"><table style="min-width:760px"><thead><tr>
+        <th>WHEN</th><th>USER</th><th>ROLE</th><th>ACTION</th><th>DETAILS</th>
+      </tr></thead><tbody id="logRows"></tbody></table></div>
+    </main>
+  </div>
+
   <div id="mappingView" style="display:none">
     <main style="max-width:1000px">
       <h2>Mapping</h2>
@@ -1722,7 +1757,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
-    if((t==='users'||t==='roles')&&myRole!=='admin')t='items';
+    if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
   }
@@ -2258,6 +2293,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
+    document.getElementById('logsView').style.display=name==='logs'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
@@ -2269,6 +2305,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabTests').classList.toggle('on',name==='tests');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
+    document.getElementById('tabLogs').classList.toggle('on',name==='logs');
     if(name==='items')loadItems(); // always refresh (e.g. after saving in Mapping)
     if(name==='dashboard')loadDashboard();
     if(name==='mapping')loadMapping();
@@ -2280,9 +2317,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
+    if(name==='logs')loadLogs();
   }
   var ROLE_MATRIX=__ROLE_MATRIX_JSON__;
   function canCap(cap){if(myRole==='admin')return true;return (ROLE_MATRIX.matrix[myRole]||[]).indexOf(cap)>=0;}
+  var LOGS=[];
+  async function loadLogs(){
+    var tb=document.getElementById('logRows'); tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
+    try{ LOGS=await (await api('/api/logs')).json(); }catch(e){ tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">Could not load logs.</td></tr>'; return; }
+    renderLogs();
+  }
+  function fmtWhen(iso){ try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});}catch(e){return iso||'';} }
+  function renderLogs(){
+    var q=(document.getElementById('logSearch').value||'').trim().toLowerCase();
+    var rows=(LOGS||[]).filter(function(l){
+      if(!q)return true;
+      return [l.actor_name,l.actor_role,l.action,l.entity,l.entity_id,l.summary].join(' ').toLowerCase().indexOf(q)>=0;
+    });
+    var tb=document.getElementById('logRows');
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">No activity'+(q?' matches your search':' yet')+'.</td></tr>'; return; }
+    tb.innerHTML=rows.map(function(l){
+      return '<tr><td style="white-space:nowrap;color:var(--muted)">'+esc(fmtWhen(l.created_at))+'</td>'
+        +'<td>'+esc(l.actor_name||'—')+'</td>'
+        +'<td><span class="count">'+esc(l.actor_role||'')+'</span></td>'
+        +'<td><span class="mono" style="font-size:11px">'+esc(l.action||'')+'</span></td>'
+        +'<td>'+esc(l.summary||'')+'</td></tr>';
+    }).join('');
+  }
   function loadRoles(){
     var m=ROLE_MATRIX;
     var head='<tr><th style="text-align:left">CAPABILITY</th>'+m.roles.map(function(r){return '<th>'+esc(m.labels[r]||r)+'</th>';}).join('')+'</tr>';
@@ -2332,6 +2393,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
+    show('tabLogs',isAdmin);
     show('tabDash',canCap('dashboard.view'));
     show('tabTeams',canCap('teams.manage'));
     show('tabSync',canCap('monday.sync'));
