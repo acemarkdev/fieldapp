@@ -87,14 +87,18 @@ export interface SurveyItem {
   material: string | null;
   item_type: string | null;
   window_type: string | null;   // opening style: Casement, Tilt & Turn, Sliding Sash, …
-  glass: string | null;
-  safety_glass: string | null;
-  glazing: string | null;
+  glass: string | null;          // texture: Clear, Obscure, Contara, Satin, Stipolite
+  safety_glass: string | null;   // Toughened / Laminated
+  glazing: string | null;        // panes: Double / Triple
+  glazing_bars: string | null;   // bars/pattern: None / Astragal / Georgian / Leaded / Diamonds
   width_mm: number | null;
   height_mm: number | null;
-  cill_depth_mm: number | null;
+  cill_depth_mm: number | null;  // legacy numeric (kept)
+  cill_depth: string | null;     // choice: Stub / 155mm / 85mm / 180mm
   transom1_mm: number | null; transom2_mm: number | null; transom3_mm: number | null;
+  transom_equal: boolean;        // transoms equally spaced
   mullion1_mm: number | null; mullion2_mm: number | null; mullion3_mm: number | null;
+  mullion_equal: boolean;        // mullions equally spaced
   open_in_out: string | null;
   add_ons: string | null;
   coupled: string | null;

@@ -802,11 +802,13 @@ const server = createServer(async (req, res) => {
       const item = await getSurveyItem(id);
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       // Editable specification fields (mirrors the New-item / mobile form).
-      const SPEC_STR = ['material', 'item_type', 'window_type', 'glass', 'safety_glass', 'glazing', 'open_in_out', 'add_ons', 'coupled', 'design_code', 'comments'];
+      const SPEC_STR = ['material', 'item_type', 'window_type', 'glass', 'safety_glass', 'glazing', 'glazing_bars', 'cill_depth', 'open_in_out', 'add_ons', 'coupled', 'design_code', 'comments'];
       const SPEC_NUM = ['width_mm', 'height_mm', 'cill_depth_mm', 'transom1_mm', 'transom2_mm', 'transom3_mm', 'mullion1_mm', 'mullion2_mm', 'mullion3_mm'];
-      // Spec/rate/team edits need items.edit; a status-only change needs items.fit (or edit).
-      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body)
-        || SPEC_STR.some((k) => k in body) || SPEC_NUM.some((k) => k in body);
+      const SPEC_BOOL = ['transom_equal', 'mullion_equal'];
+      const STAGES = ['scanned', 'in_survey', 'surveyed', 'synced'];
+      // Spec/rate/team/stage edits need items.edit; a status-only change needs items.fit (or edit).
+      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body) || ('stage' in body)
+        || SPEC_STR.some((k) => k in body) || SPEC_NUM.some((k) => k in body) || SPEC_BOOL.some((k) => k in body);
       if (touchesSpec) { if (!allow('items.edit')) return; }
       else if ('install_status' in body) {
         if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
@@ -818,6 +820,8 @@ const server = createServer(async (req, res) => {
       if ('team_id' in body) patch.team_id = body.team_id || null;
       for (const k of SPEC_STR) if (k in body) patch[k] = (String(body[k] ?? '').trim()) || null;
       for (const k of SPEC_NUM) if (k in body) { const v = body[k]; patch[k] = (v === '' || v == null) ? null : Math.round(Number(v)); }
+      for (const k of SPEC_BOOL) if (k in body) patch[k] = !!body[k];
+      if ('stage' in body) { if (!STAGES.includes(String(body.stage))) { send(res, 400, { error: 'Invalid stage.' }); return; } patch.stage = body.stage; }
       // Editing Flat / Room rebuilds the item code — allowed only until it's synced to Monday.
       if ('flat' in body || 'room' in body) {
         if (!allow('items.edit')) return;
@@ -1233,6 +1237,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .tab:hover{background:rgba(255,255,255,.1);color:#fff}
   .tab.on{background:rgba(255,255,255,.16);color:#fff}
   .who{margin-left:auto;font-size:12px;color:#cfc9ea}.who button{margin-left:12px;background:rgba(255,255,255,.15);border:none;color:#fff;padding:6px 12px;border-radius:9px;font-size:12px;cursor:pointer}
+  #whoName{position:relative;cursor:default}
+  #whoName[data-role]:hover::after{content:attr(data-role);position:absolute;top:150%;right:0;background:var(--purple);color:#fff;font-size:11px;font-weight:600;padding:5px 9px;border-radius:7px;white-space:nowrap;z-index:40;box-shadow:0 6px 18px rgba(0,0,0,.28)}
   #teamsView main{padding:22px 26px}
   .addrow{display:flex;gap:10px;align-items:center;margin-top:16px}
   .tinput{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px}
@@ -1731,6 +1737,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     {name:'Common Way',code:'CW'},{name:'Lounge',code:'LG'},{name:'WC',code:'WC'}
   ];
   var ROOM_STATS={};
+  function roomLabel(code){ if(!code)return '—'; for(var i=0;i<ROOMS.length;i++){if(ROOMS[i].code===code)return ROOMS[i].name+' ('+code+')';} return code; }
+  // Spec dropdown options (office item edit screen).
+  var MATERIALS=['uPVC','Aluminium','Timber','Composite'];
+  var WINDOW_TYPES=['Casement','Fixed','Tilt & Turn','Sash'];
+  var GLASS_PANES=['Double','Triple'];
+  var GLASS_TEXTURES=['Clear','Obscure','Contara','Satin','Stipolite'];
+  var GLAZING_BARS=['None','Astragal','Georgian','Leaded','Diamonds'];
+  var SAFETY_GLASS=['Toughened','Laminated'];
+  var CILL_DEPTHS=['Stub','155mm','85mm','180mm'];
   function roomOptions(selected){
     var counts=ROOM_STATS||{};
     var list=ROOMS.slice();
@@ -2192,7 +2207,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       // Flat & Room are editable until the item is synced to Monday (editing rebuilds the code).
       var editable=canEdit&&!r.synced;
       var flatCell=editable?'<input class="cedit" value="'+(r.flat||'')+'" placeholder="—" onchange="saveCode(\\''+r.id+'\\',\\'flat\\',this.value)">':(r.flat||'—');
-      var roomCell=editable?'<input class="cedit" value="'+(r.room||'')+'" placeholder="—" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">':(r.room||'—');
+      var roomCell=editable?'<select class="sel" style="min-width:150px" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">'+roomOptions(r.room||'')+'</select>':roomLabel(r.room);
       tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
         '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td>'+
         '<td>'+(r.block||'—')+'</td><td>'+(r.elevation||'—')+'</td><td>'+flatCell+'</td><td>'+(r.floor||'—')+'</td><td>'+roomCell+'</td><td>'+(r.item||'—')+'</td>'+
@@ -2386,6 +2401,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function applyRole(){
     var isAdmin=(myRole==='admin');
+    // Hover the name (top-right) to see the signed-in role.
+    var wn=document.getElementById('whoName'); if(wn){var lbl=(ROLE_MATRIX&&ROLE_MATRIX.labels&&ROLE_MATRIX.labels[myRole])||myRole; wn.setAttribute('data-role','Role: '+lbl); wn.title='Role: '+lbl;}
     function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
@@ -3079,6 +3096,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function row(k,v){return (v==null||v==='')?'':'<div class="drow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
     function attr(v){return (v==null?'':esc(String(v))).replace(/"/g,'&quot;');}
     function fieldV(id,label,val,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+attr(val)+'" placeholder="'+(ph||'')+'"></div>';}
+    function selField(id,label,val,opts){var o='<option value="">—</option>'+opts.map(function(x){return '<option'+(String(val==null?'':val)===x?' selected':'')+'>'+esc(x)+'</option>';}).join('');return '<div class="field"><label>'+label+'</label><select id="'+id+'">'+o+'</select></div>';}
+    function chkField(id,label,checked){return '<div class="field"><label>'+label+'</label><label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:400;color:var(--ink)"><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'> equally spaced</label></div>';}
     var html='<dl class="dl">'
       +row('Full code','<span class="mono">'+esc(it.full_code)+'</span>')
       +row('Stage',esc(STAGE[it.stage]||it.stage))
@@ -3095,15 +3114,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           +'<input id="f_design" type="text" value="'+attr(it.design_code)+'" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
           +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
           +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff"></div></div>'
-        +fieldV('f_material','Material',it.material,'uPVC / Alu / Timber')+fieldV('f_type','Item type',it.item_type,'Window / Door')
-        +fieldV('f_wtype','Window type',it.window_type,'e.g. Casement')+fieldV('f_glass','Glass',it.glass,'e.g. 4-20-4')
-        +fieldV('f_safety','Safety glass',it.safety_glass,'Toughened / Laminated')+fieldV('f_glazing','Glazing',it.glazing,'Double / Triple')
+        +selField('f_material','Material',it.material,MATERIALS)+fieldV('f_type','Item type',it.item_type,'Window / Door')
+        +selField('f_wtype','Window type',it.window_type,WINDOW_TYPES)
+        +selField('f_glazing','Glass (panes)',it.glazing,GLASS_PANES)+selField('f_glass','Glass texture',it.glass,GLASS_TEXTURES)
+        +selField('f_glazingbars','Glazing (bars)',it.glazing_bars,GLAZING_BARS)+selField('f_safety','Safety glass',it.safety_glass,SAFETY_GLASS)
         +fieldV('f_width','Width (mm)',it.width_mm,'','number')+fieldV('f_height','Height inc cill (mm)',it.height_mm,'','number')
-        +fieldV('f_cill','Cill depth (mm)',it.cill_depth_mm,'','number')+fieldV('f_openinout','Open in / out',it.open_in_out,'In / Out')
-        +fieldV('f_t1','Transom 1 (mm)',it.transom1_mm,'','number')+fieldV('f_t2','Transom 2 (mm)',it.transom2_mm,'','number')
-        +fieldV('f_t3','Transom 3 (mm)',it.transom3_mm,'','number')+fieldV('f_m1','Mullion 1 (mm)',it.mullion1_mm,'','number')
-        +fieldV('f_m2','Mullion 2 (mm)',it.mullion2_mm,'','number')+fieldV('f_m3','Mullion 3 (mm)',it.mullion3_mm,'','number')
-        +fieldV('f_coupled','Coupled',it.coupled,'e.g. to W03')+fieldV('f_addons','Add-ons',it.add_ons,'Trickle vents / etc')
+        +selField('f_cilldepth','Cill depth',it.cill_depth,CILL_DEPTHS)+fieldV('f_openinout','Open in / out',it.open_in_out,'In / Out')
+        +chkField('f_teq','Transoms',it.transom_equal)
+        +fieldV('f_t1','Transom 1 (mm)',it.transom1_mm,'','number')+fieldV('f_t2','Transom 2 (mm)',it.transom2_mm,'','number')+fieldV('f_t3','Transom 3 (mm)',it.transom3_mm,'','number')
+        +chkField('f_meq','Mullions',it.mullion_equal)
+        +fieldV('f_m1','Mullion 1 (mm)',it.mullion1_mm,'','number')+fieldV('f_m2','Mullion 2 (mm)',it.mullion2_mm,'','number')+fieldV('f_m3','Mullion 3 (mm)',it.mullion3_mm,'','number')
+        +fieldV('f_coupled','Coupled (optional)',it.coupled,'e.g. to W03')+fieldV('f_addons','Add-ons (optional)',it.add_ons,'Trickle vents / etc')
         +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2">'+esc(it.comments||'')+'</textarea></div>'
         +'</div>';
     }
@@ -3145,22 +3166,32 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       html+='<div class="empty">This is a snag item — set its team and labour cost above, then sync and fit it like any item.</div>';
     }
     if(specEditable){ // sticky Save pinned to the bottom of the drawer, always visible while scrolling
-      html+='<div class="sheetfoot"><button class="save" onclick="saveDetail(\\''+it.id+'\\')">Save details</button><span class="sub" style="margin:0">Changes mark the item to re-sync to Monday.</span></div>';
+      html+='<div class="sheetfoot"><button class="save" onclick="saveDetail(\\''+it.id+'\\')">Save details</button>'
+        +'<button class="add" onclick="markSurveyed(\\''+it.id+'\\')">Save &amp; mark Surveyed</button>'
+        +'<span class="sub" style="margin:0">Save keeps this open; changes mark the item to re-sync to Monday.</span></div>';
     }
     document.getElementById('modalTitle').innerHTML=(d.is_snag?'Snag ':'Item ')+'<span class="mono">'+esc(it.full_code)+'</span>';
     document.getElementById('modalBody').innerHTML=html;
     if(document.getElementById('f_design'))stylePreview(); // show the design sketch if a code is set
   }
-  async function saveDetail(id){
+  function collectDetail(){
     function g(x){var e=document.getElementById(x);return e?e.value:undefined;}
-    var body={material:g('f_material'),item_type:g('f_type'),window_type:g('f_wtype'),glass:g('f_glass'),
-      safety_glass:g('f_safety'),glazing:g('f_glazing'),open_in_out:g('f_openinout'),add_ons:g('f_addons'),
-      coupled:g('f_coupled'),design_code:g('f_design'),comments:g('f_comments'),
-      width_mm:g('f_width'),height_mm:g('f_height'),cill_depth_mm:g('f_cill'),
-      transom1_mm:g('f_t1'),transom2_mm:g('f_t2'),transom3_mm:g('f_t3'),
-      mullion1_mm:g('f_m1'),mullion2_mm:g('f_m2'),mullion3_mm:g('f_m3')};
+    function chk(x){var e=document.getElementById(x);return e?!!e.checked:undefined;}
+    return {material:g('f_material'),item_type:g('f_type'),window_type:g('f_wtype'),
+      glazing:g('f_glazing'),glass:g('f_glass'),glazing_bars:g('f_glazingbars'),safety_glass:g('f_safety'),
+      open_in_out:g('f_openinout'),add_ons:g('f_addons'),coupled:g('f_coupled'),design_code:g('f_design'),comments:g('f_comments'),
+      cill_depth:g('f_cilldepth'),width_mm:g('f_width'),height_mm:g('f_height'),
+      transom1_mm:g('f_t1'),transom2_mm:g('f_t2'),transom3_mm:g('f_t3'),transom_equal:chk('f_teq'),
+      mullion1_mm:g('f_m1'),mullion2_mm:g('f_m2'),mullion3_mm:g('f_m3'),mullion_equal:chk('f_meq')};
+  }
+  async function saveDetail(id){
+    var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(collectDetail())})).json();
+    if(d.ok){tShow('Details saved');loadItems();openDetail(id);}else tShow(d.error||'Save failed'); // stays open
+  }
+  async function markSurveyed(id){
+    var body=collectDetail(); body.stage='surveyed';
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
-    if(d.ok){tShow('Details saved');loadItems();openDetail(id);}else tShow(d.error||'Save failed');
+    if(d.ok){tShow('Saved · marked Surveyed');loadItems();closeModal();}else tShow(d.error||'Save failed');
   }
   function fileToDataUrl(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result)};r.onerror=rej;r.readAsDataURL(file);});}
   async function logSnag(id){

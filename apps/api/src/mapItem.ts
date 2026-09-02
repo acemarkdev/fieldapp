@@ -29,11 +29,12 @@ export const REQUIRED_MONDAY_COLUMNS: { title: string; type: string }[] = [
   { title: 'Room', type: 'text' }, { title: 'Item', type: 'text' }, { title: 'Floor', type: 'text' },
   { title: 'Item Type', type: 'text' }, { title: 'Window Type', type: 'text' }, { title: 'Design Code', type: 'text' },
   { title: 'Glass', type: 'text' }, { title: 'Safety Glass', type: 'text' }, { title: 'Glazing', type: 'text' },
+  { title: 'Glazing Bars', type: 'text' },
   { title: 'Open In / Open Out', type: 'text' }, { title: 'Add-Ons Required', type: 'text' }, { title: 'Coupled', type: 'text' },
   { title: 'Comments', type: 'long_text' }, { title: 'Full Location Ref', type: 'long_text' },
-  { title: 'Width', type: 'numbers' }, { title: 'Height (inc Cill)', type: 'numbers' }, { title: 'Cill Depth', type: 'numbers' },
-  { title: 'Transom 1 (from top)', type: 'numbers' }, { title: 'Transom 2 (from top)', type: 'numbers' },
-  { title: 'Mullion 1 (from left)', type: 'numbers' }, { title: 'Mullion 2 (from left)', type: 'numbers' },
+  { title: 'Width', type: 'numbers' }, { title: 'Height (inc Cill)', type: 'numbers' }, { title: 'Cill Depth', type: 'text' },
+  { title: 'Transom 1 (from top)', type: 'numbers' }, { title: 'Transom 2 (from top)', type: 'numbers' }, { title: 'Transom Equal', type: 'checkbox' },
+  { title: 'Mullion 1 (from left)', type: 'numbers' }, { title: 'Mullion 2 (from left)', type: 'numbers' }, { title: 'Mullion Equal', type: 'checkbox' },
   { title: 'Labour Cost', type: 'numbers' },
   { title: 'Material', type: 'dropdown' }, { title: 'Fitters', type: 'dropdown' },
   { title: 'Install Status', type: 'status' },
@@ -98,13 +99,16 @@ export function buildColumnValues(
     { title: 'Glass', value: item.glass },
     { title: 'Safety Glass', value: item.safety_glass },
     { title: 'Glazing', value: item.glazing },
+    { title: 'Glazing Bars', value: (item as any).glazing_bars },
     { title: 'Width', value: item.width_mm },
     { title: 'Height (inc Cill)', value: item.height_mm },
-    { title: 'Cill Depth', value: item.cill_depth_mm },
+    { title: 'Cill Depth', value: (item as any).cill_depth ?? item.cill_depth_mm },
     { title: 'Transom 1 (from top)', value: item.transom1_mm },
     { title: 'Transom 2 (from top)', value: item.transom2_mm },
+    { title: 'Transom Equal', value: (item as any).transom_equal },
     { title: 'Mullion 1 (from left)', value: item.mullion1_mm },
     { title: 'Mullion 2 (from left)', value: item.mullion2_mm },
+    { title: 'Mullion Equal', value: (item as any).mullion_equal },
     { title: 'Open In / Open Out', value: item.open_in_out },
     { title: 'Add-Ons Required', value: item.add_ons },
     { title: 'Coupled', value: item.coupled },
@@ -131,6 +135,9 @@ export function buildColumnValues(
       case 'numbers':
       case 'numeric':
         out[col.id] = String(value);
+        break;
+      case 'checkbox':
+        out[col.id] = value ? { checked: 'true' } : { checked: 'false' };
         break;
       default: // text, long_text, etc.
         out[col.id] = String(value);
