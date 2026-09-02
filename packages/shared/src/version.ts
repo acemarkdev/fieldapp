@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.63.0';
+export const APP_VERSION = '0.63.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.63.1', date: '2026-09-02', changes: [
+    'Fix: bulk-updating Floor no longer clears Flat (and vice versa). Floor and Flat are independent fields; updating one via mass-update, or editing Flat inline, keeps the other intact. The item code still uses Flat as its F-segment when present. If some items lost their Flat, select them and bulk-set Flat again to restore it.',
+  ] },
   { version: '0.63.0', date: '2026-09-01', changes: [
     'Office item edit screen: richer, guided spec. Material and Window type are now dropdowns (uPVC/Aluminium/Timber/Composite; Casement/Fixed/Tilt & Turn/Sash). Glass is split into three choices - Glass (Double/Triple), Glass texture (Clear/Obscure/Contara/Satin/Stipolite) and Glazing bars (None/Astragal/Georgian/Leaded/Diamonds). Safety glass (Toughened/Laminated) and Cill depth (Stub/155mm/85mm/180mm) are dropdowns too. Added Transom equal and Mullion equal tick boxes (when ticked the transom/mullion sizes are optional); these sync to new Monday checkbox columns. Coupled and Add-ons are clearly optional. Save details now keeps the screen open, and a new Save & mark Surveyed button advances the item to the Surveyed stage. Requires migration 0026; new Monday columns (Glazing Bars, Transom Equal, Mullion Equal) are auto-created on board link.',
     'Items tab: the Room column now shows the full room name (e.g. Kitchen (KT)) and edits via a room picker.',

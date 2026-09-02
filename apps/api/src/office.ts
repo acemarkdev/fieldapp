@@ -670,8 +670,8 @@ const server = createServer(async (req, res) => {
           let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code;
           if (action === 'block') block = raw.toUpperCase() || null;
           else if (action === 'elevation') elevation = raw.toUpperCase() || null;
-          else if (action === 'floor') { floor = levelSeg(raw) || null; if (floor) flat = null; } // floor (F-prefixed) becomes the level
-          else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; if (flat) floor = null; } // flat becomes the level
+          else if (action === 'floor') { floor = levelSeg(raw) || null; } // Floor and Flat are independent; don't clear the other
+          else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; }
           else if (action === 'room') room = raw.toUpperCase() || null;
           const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
           if (await codeExists(ctx.tenant_id, full_code, id)) { dupes++; continue; }
@@ -829,8 +829,8 @@ const server = createServer(async (req, res) => {
         const job = await getJob(item.job_id);
         const newFlat = 'flat' in body ? (String(body.flat ?? '').trim().replace(/^F(?=[0-9])/i, '') || null) : (item.flat ?? null);
         const newRoom = 'room' in body ? (String(body.room ?? '').trim().toUpperCase() || null) : (item.room_code ?? null);
-        // Flat supersedes the mapping floor as the level segment: clear floor once a flat is set.
-        const newFloor = newFlat ? null : (item.floor ?? null);
+        // Floor and Flat are independent fields — keep the floor as-is (Flat is just what the code uses as its F-segment).
+        const newFloor = item.floor ?? null;
         const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block: item.block, elevation: item.elevation, flat: newFlat, floor: newFloor, room: newRoom, item: item.item_code });
         if (await codeExists(ctx.tenant_id, full_code, id)) { send(res, 409, { error: `Code ${full_code} already exists — pick a different Flat/Room.` }); return; }
         patch.flat = newFlat; patch.room_code = newRoom; patch.floor = newFloor; patch.full_code = full_code;
