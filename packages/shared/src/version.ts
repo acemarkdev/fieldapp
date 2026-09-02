@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.64.1';
+export const APP_VERSION = '0.65.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.65.0', date: '2026-09-02', changes: [
+    'Plans access for field roles. Scanner and Surveyor now see the Plans tab and can upload plan images, pin items, and switch plans (new plans.view / plans.manage / plans.pin capabilities). PDF report buttons stay office/admin only.',
+    'Postcode is now a required field when creating a job. Admins/office can edit a job\'s name, address and postcode any time via a new "Edit job" button next to Files (per-job header).',
+    'Add a plan image from a job\'s attached files. Alongside "Upload from disk", a new "From job files" button lets you pick any image already attached to the job and use it as a plan. Requires migration 0028 (adds jobs.postcode).',
+  ] },
   { version: '0.64.1', date: '2026-09-02', changes: [
     'Item edit screen tidy-up. Width and Height now sit side by side in a highlighted Dimensions box so they stand out. Transoms (button + 3 fields) and Mullions (button + 3 fields) are each grouped and separated by a thin divider line. The Snags section is hidden for surveyor and scanner roles (still shown for admin/office).',
   ] },

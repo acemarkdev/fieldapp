@@ -18,6 +18,9 @@ export type Capability =
   | 'items.fit'        // set install status (fitting), install date
   | 'snags.raise'      // raise a snag
   | 'photos.add'       // attach photos to an item
+  | 'plans.view'       // see the Plans tab (floor plans + item pins)
+  | 'plans.manage'     // upload / replace / delete plan images
+  | 'plans.pin'        // pin items onto a plan
   | 'teams.manage'     // manage fitter teams and rates
   | 'monday.sync'      // link a board / push items to Monday
   | 'users.manage'     // invite users, set roles, activate/deactivate
@@ -32,6 +35,9 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'items.fit', label: 'Fit items', desc: 'Set install status & date' },
   { key: 'snags.raise', label: 'Raise snags', desc: 'Log a snag against an item' },
   { key: 'photos.add', label: 'Add photos', desc: 'Attach photos to an item' },
+  { key: 'plans.view', label: 'View plans', desc: 'See floor plans & item pins' },
+  { key: 'plans.manage', label: 'Manage plans', desc: 'Upload / delete plan images' },
+  { key: 'plans.pin', label: 'Pin items', desc: 'Place item pins on a plan' },
   { key: 'teams.manage', label: 'Manage teams & rates', desc: 'Fitter teams and default rates' },
   { key: 'monday.sync', label: 'Sync to Monday', desc: 'Link boards & push items' },
   { key: 'users.manage', label: 'Manage users', desc: 'Invite, set roles, deactivate' },
@@ -42,9 +48,9 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
 export const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: CAPABILITIES.map((c) => c.key), // everything
-  office: ['dashboard.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'teams.manage', 'monday.sync'],
-  surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add'],
-  scanner: ['items.create', 'photos.add'],
+  office: ['dashboard.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync'],
+  surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
+  scanner: ['items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
   fitter: ['items.fit', 'snags.raise', 'photos.add'],
   // Finance-only role: sees the budget/pricing module, nothing operational.
   invoice_manager: ['finance.view', 'finance.manage'],

@@ -17,8 +17,8 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
-import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile } from './store';
+import { createJob, updateJobDetails, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
+import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
@@ -552,16 +552,44 @@ const server = createServer(async (req, res) => {
       const client_code = String(b.client_code ?? '').trim().toUpperCase();
       const job_code = String(b.job_code ?? '').trim().toUpperCase();
       const name = String(b.name ?? '').trim();
+      const postcode = String(b.postcode ?? '').trim();
       if (!client_code || !job_code) { send(res, 400, { error: 'Client code and job code are required (they form the job code, e.g. AXS.LAB).' }); return; }
       if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
+      if (!postcode) { send(res, 400, { error: 'A postcode is required.' }); return; }
       try {
-        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null });
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode });
         audit(ctx, 'job.create', 'job', `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} — ${name}`);
         send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
       } catch (err: any) {
         if (err?.code === '23505') { send(res, 409, { error: `Job ${client_code}.${job_code} already exists.` }); return; }
         send(res, 500, { error: err?.message ?? String(err) });
       }
+      return;
+    }
+
+    // Get a job's editable details (managers) — for the Edit job dialog.
+    if (p.startsWith('/api/job/') && req.method === 'GET' && p.split('/').length === 4) {
+      if (!allow('jobs.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null });
+      return;
+    }
+    // Edit a job's details (name / address / postcode) — managers only.
+    if (p.startsWith('/api/job/') && req.method === 'PUT' && p.split('/').length === 4) {
+      if (!allow('jobs.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const name = String(b.name ?? '').trim();
+      const postcode = String(b.postcode ?? '').trim();
+      if (!name) { send(res, 400, { error: 'Job name is required.' }); return; }
+      if (!postcode) { send(res, 400, { error: 'Postcode is required.' }); return; }
+      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode });
+      audit(ctx, 'job.update', 'job', code, `Edited details for ${code}`);
+      send(res, 200, { ok: true });
       return;
     }
 
@@ -1124,37 +1152,50 @@ const server = createServer(async (req, res) => {
       const withUrls = await Promise.all(plans.map(async (pl) => ({ id: pl.id, name: pl.name, url: await signedPlanUrl(pl.storage_path) })));
       const items = await listPinnedItems(job.id);
       const multiPlan = await getPinsMultiPlan(ctx.tenant_id);
-      send(res, 200, { plans: withUrls, items, multiPlan, canManage: can(ctx.role, 'jobs.manage'), canPin: can(ctx.role, 'items.edit') });
+      send(res, 200, { plans: withUrls, items, multiPlan, canManage: can(ctx.role, 'plans.manage'), canPin: can(ctx.role, 'plans.pin') });
       return;
     }
     if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'POST') {
-      if (!allow('jobs.manage')) return;
+      if (!allow('plans.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
       const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const name = String(b.name ?? '').trim() || 'Plan';
-      const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.image || ''));
-      if (!m) { send(res, 400, { error: 'A plan image is required.' }); return; }
-      const bytes = Buffer.from(m[2], 'base64');
+      let bytes: Buffer; let contentType: string;
+      if (b.job_file_id) {
+        // Reuse a file already attached to this job (must be an image).
+        const jf = await getJobFile(String(b.job_file_id));
+        if (!jf || jf.tenant_id !== ctx.tenant_id || jf.job_id !== job.id) { send(res, 404, { error: 'That file is not on this job.' }); return; }
+        if (!/^image\//.test(jf.content_type || '')) { send(res, 400, { error: 'Only image files can be used as a plan.' }); return; }
+        try { bytes = Buffer.from(await downloadJobFile(jf.storage_path)); }
+        catch { send(res, 500, { error: 'Could not read that file.' }); return; }
+        contentType = jf.content_type || 'image/png';
+      } else {
+        const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.image || ''));
+        if (!m) { send(res, 400, { error: 'A plan image is required.' }); return; }
+        bytes = Buffer.from(m[2], 'base64');
+        contentType = m[1];
+      }
       if (bytes.length > 15 * 1024 * 1024) { send(res, 400, { error: 'Plan image too large (max 15 MB).' }); return; }
-      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const ext = ((contentType.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '')) || 'png';
       const path = `${ctx.tenant_id}/plans/${job.id}/${Date.now()}.${ext}`;
       await ensurePlanBucket();
-      await uploadPlan(path, bytes, m[1]);
+      await uploadPlan(path, bytes, contentType);
       const plan = await createJobPlan(ctx.tenant_id, job.id, name, path);
+      audit(ctx, 'plan.add', 'job', code, `Added plan \"${name}\" to ${code}`);
       send(res, 200, { ok: true, id: plan.id });
       return;
     }
     if (p.startsWith('/api/plans/') && req.method === 'DELETE') {
-      if (!allow('jobs.manage')) return;
+      if (!allow('plans.manage')) return;
       const id = p.split('/')[3];
       await deleteJobPlan(id, ctx.tenant_id); // items pinned to it get plan_id NULL via FK
       send(res, 200, { ok: true });
       return;
     }
     if (p.startsWith('/api/item/') && p.endsWith('/pin') && req.method === 'PUT') {
-      if (!allow('items.edit')) return;
+      if (!allow('plans.pin')) return;
       const id = p.split('/')[3];
       const it = await getSurveyItem(id);
       if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
@@ -1539,6 +1580,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         </div>
         <div style="display:flex;gap:10px;align-items:center">
           <button id="filesBtn" class="jobstoggle" style="display:none" onclick="openJobFiles(current)">Files</button>
+          <button id="editJobBtn" class="jobstoggle" style="display:none" onclick="openEditJob(current)">Edit job</button>
           <button id="delJobBtn" class="del" style="display:none" onclick="delJob()">Delete job</button>
           <button id="newBtn" class="newbtn" onclick="openCreate()">+ New item</button>
         </div>
@@ -1620,8 +1662,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="planbar">
         <select id="planJob" class="tinput" onchange="loadPlans()"></select>
         <select id="planSel" class="tinput" onchange="renderPlan()"></select>
-        <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload plan</button>
+        <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload from disk</button>
         <input type="file" id="planFile" accept="image/*" style="display:none" onchange="uploadPlan(this)">
+        <button class="add" id="planFromJobBtn" onclick="addPlanFromJob()">From job files</button>
         <button class="del" id="planDelBtn" onclick="deletePlan()">Delete plan</button>
         <button class="add" id="rptSurveyBtn" onclick="downloadReport('survey')" title="Download a survey sheet PDF for this job">Survey PDF</button>
         <button class="add" id="rptInstallBtn" onclick="downloadReport('install')" title="Internal install report (includes teams and rates)">Internal install PDF</button>
@@ -2119,6 +2162,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
       +'<div class="field full"><label>Site address</label><input id="nj_addr" placeholder="Full site address (optional)"></div>'
+      +'<div class="field full"><label>Postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
       +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
       +ruleField
       +'<div class="ferr" id="njErr"></div></div>'
@@ -2132,9 +2176,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var client=(document.getElementById('nj_client').value||'').trim();
     var job=(document.getElementById('nj_job').value||'').trim();
     var name=(document.getElementById('nj_name').value||'').trim();
+    var postcode=(document.getElementById('nj_postcode').value||'').trim();
     if(!client||!job){document.getElementById('njErr').textContent='Client code and job code are required.';return;}
     if(!name){document.getElementById('njErr').textContent='Job name is required.';return;}
-    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim()})});
+    if(!postcode){document.getElementById('njErr').textContent='Postcode is required.';return;}
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode})});
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
@@ -2154,6 +2200,29 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!d.ok)throw new Error(d.error||'upload failed');
   }
   function fmtSize(n){ if(!n)return''; if(n<1024)return n+' B'; if(n<1048576)return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+  async function openEditJob(code){
+    if(!code||code==='ALL')return;
+    var d={}; try{d=await (await api('/api/job/'+encodeURIComponent(code))).json();}catch(e){}
+    if(d.error){tShow(d.error);return;}
+    var q=function(v){return (v==null?'':String(v)).replace(/"/g,'&quot;');};
+    var html='<div class="fgrid">'
+      +'<div class="field full"><label>Job</label><div class="codeprev">'+esc(code)+'</div></div>'
+      +'<div class="field full"><label>Job name *</label><input id="ej_name" value="'+q(d.name)+'"></div>'
+      +'<div class="field full"><label>Site address</label><input id="ej_addr" value="'+q(d.site_address)+'" placeholder="Full site address (optional)"></div>'
+      +'<div class="field full"><label>Postcode *</label><input id="ej_postcode" value="'+q(d.postcode)+'" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="ferr" id="ejErr"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
+    openModal('Edit job '+code,html);
+  }
+  async function saveEditJob(code){
+    var name=(document.getElementById('ej_name').value||'').trim();
+    var postcode=(document.getElementById('ej_postcode').value||'').trim();
+    if(!name){document.getElementById('ejErr').textContent='Job name is required.';return;}
+    if(!postcode){document.getElementById('ejErr').textContent='Postcode is required.';return;}
+    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode})});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
+  }
   async function openJobFiles(code){
     if(!code||code==='ALL'){tShow('Pick a job first');return;}
     openModal('Files · '+esc(code),'<div class="empty" style="padding:22px">Loading…</div>');
@@ -2194,6 +2263,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
     document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
     document.getElementById('filesBtn').style.display=(current!=='ALL')?'':'none';
+    var ejb=document.getElementById('editJobBtn'); if(ejb)ejb.style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
     // header column filters: distinct flats (this job) + all statuses
     var flats=[]; (itemsData.items||[]).forEach(function(it){var f=it.flat||''; if(f&&flats.indexOf(f)<0)flats.push(f);});
     flats.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});
@@ -2520,7 +2590,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabDash',canCap('dashboard.view'));
     show('tabTeams',canCap('teams.manage'));
     show('tabSync',canCap('monday.sync'));
-    show('tabPlans',canCap('dashboard.view'));
+    show('tabPlans',canCap('plans.view'));
     show('tabCal',canCap('dashboard.view'));
     show('tabBudget',canCap('finance.view'));
     show('tabTests',canCap('dashboard.view'));
@@ -2647,6 +2717,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else if(!d.plans.some(function(pl){return pl.id===curPlanId;}))curPlanId=d.plans[0].id;
     ps.value=curPlanId||'';
     document.getElementById('planUploadBtn').style.display=d.canManage?'':'none';
+    document.getElementById('planFromJobBtn').style.display=d.canManage?'':'none';
+    var seeRpt=canCap('dashboard.view');
+    ['rptSurveyBtn','rptInstallBtn','rptCustInstallBtn'].forEach(function(id){var b=document.getElementById(id);if(b)b.style.display=seeRpt?'':'none';});
     var mw=document.getElementById('multiPlanWrap');mw.style.display=d.canManage?'flex':'none';
     document.getElementById('multiPlanChk').checked=!!d.multiPlan;
     renderPlan(); renderPlanItems();
@@ -2753,6 +2826,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(d.ok){curPlanId=d.id;await loadPlans();tShow('Plan uploaded');}else tShow(d.error||'Upload failed');
     };
     reader.readAsDataURL(f);
+  }
+  async function addPlanFromJob(){
+    var code=document.getElementById('planJob').value;
+    if(!code){tShow('Pick a job first');return;}
+    var files=[]; try{files=await (await api('/api/job/'+encodeURIComponent(code)+'/files')).json();}catch(e){}
+    var imgs=(Array.isArray(files)?files:[]).filter(function(f){return /^image\\//.test(f.content_type||'');});
+    if(!imgs.length){tShow('No image files attached to '+code+' \u2014 attach one on the job first');return;}
+    var html='<div class="sub" style="margin:0 0 10px">Pick an image already attached to <b>'+esc(code)+'</b> to use as a plan.</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:60vh;overflow:auto">'
+      +imgs.map(function(f){return '<div style="border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center" onclick="usePlanFromJob(\\''+code+'\\',\\''+f.id+'\\')"><img src="'+(f.url||'')+'" style="width:100%;height:80px;object-fit:contain;background:#fff"><div style="font-size:11px;margin-top:4px;word-break:break-all">'+esc(f.name)+'</div></div>';}).join('')
+      +'</div><div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button></div>';
+    openModal('Use a job file as a plan',html);
+  }
+  async function usePlanFromJob(code,fileId){
+    var name=(prompt('Plan name (e.g. Ground floor, Elevation E1):','')||'Plan').trim()||'Plan';
+    tShow('Adding plan\u2026');
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:name,job_file_id:fileId})})).json();
+    if(d.ok){curPlanId=d.id;closeModal();await loadPlans();tShow('Plan added');}else tShow(d.error||'Failed');
   }
   async function deletePlan(){
     if(!curPlanId||!confirm('Delete this plan? Item pins on it will be cleared.'))return;

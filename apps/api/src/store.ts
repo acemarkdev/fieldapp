@@ -10,10 +10,19 @@ export async function getJobByCode(clientCode: string, jobCode: string): Promise
   return data as Job;
 }
 
-export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null }): Promise<Job> {
+export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null }): Promise<Job> {
   const { data, error } = await db().from('jobs')
-    .insert({ tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null })
+    .insert({ tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null, postcode: j.postcode ?? null })
     .select().single();
+  if (error) throw error;
+  return data as Job;
+}
+export async function updateJobDetails(tenantId: string, jobId: string, fields: { name?: string; site_address?: string | null; postcode?: string | null }): Promise<Job> {
+  const patch: Record<string, unknown> = {};
+  if (fields.name !== undefined) patch.name = fields.name;
+  if (fields.site_address !== undefined) patch.site_address = fields.site_address;
+  if (fields.postcode !== undefined) patch.postcode = fields.postcode;
+  const { data, error } = await db().from('jobs').update(patch).eq('id', jobId).eq('tenant_id', tenantId).select().single();
   if (error) throw error;
   return data as Job;
 }
@@ -528,6 +537,11 @@ export async function getJobFile(id: string): Promise<JobFile | null> {
   const { data, error } = await db().from('job_files').select('*').eq('id', id).maybeSingle();
   if (error) throw error;
   return (data ?? null) as JobFile | null;
+}
+export async function downloadJobFile(path: string): Promise<Uint8Array> {
+  const { data, error } = await db().storage.from(JOBFILE_BUCKET).download(path);
+  if (error) throw error;
+  return new Uint8Array(await data.arrayBuffer());
 }
 export async function deleteJobFile(id: string, tenantId: string): Promise<void> {
   const f = await getJobFile(id);
