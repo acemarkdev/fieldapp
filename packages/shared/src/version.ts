@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.63.2';
+export const APP_VERSION = '0.64.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.64.0', date: '2026-09-02', changes: [
+    'Job file attachments. When creating a job you can now attach drawings/files (jpg, pdf, zip; up to 25MB each). On any job, a Files button (in the Items header) and a ... on the job in the left list open a Files window: images and PDFs preview/open in the browser, everything else downloads. Managers can add more files or delete them there. Requires migration 0027 (adds job_files + the jobfiles storage bucket is auto-created).',
+  ] },
   { version: '0.63.2', date: '2026-09-02', changes: [
     'Bulk update: the Apply button now shows an \'Applying…\' state (disabled) with an \'Applying to N item(s)…\' message while the update runs, and reports the result when done — so you can tell it worked.',
   ] },

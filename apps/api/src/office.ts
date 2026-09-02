@@ -18,6 +18,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { createJob, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
+import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
@@ -574,6 +575,57 @@ const server = createServer(async (req, res) => {
       if (n > 0) { send(res, 409, { error: `This job has ${n} item${n === 1 ? '' : 's'}. Delete or move them first — a job can only be removed when it's empty.` }); return; }
       await deleteJob(job.id, ctx.tenant_id);
       audit(ctx, 'job.delete', 'job', code, `Deleted job ${code}`);
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    // ---- job file attachments (drawings / PDFs / zips) ----
+    if (p.startsWith('/api/job/') && p.endsWith('/files') && req.method === 'GET') {
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const files = await listJobFiles(job.id);
+      const out = await Promise.all(files.map(async (f) => ({
+        id: f.id, name: f.name, content_type: f.content_type, size_bytes: f.size_bytes, url: await signedJobFileUrl(f.storage_path),
+      })));
+      send(res, 200, out);
+      return;
+    }
+    if (p.startsWith('/api/job/') && p.endsWith('/files') && req.method === 'POST') {
+      if (!allow('jobs.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const files = Array.isArray(b.files) ? b.files : [];
+      let saved = 0; const names: string[] = [];
+      for (const f of files) {
+        const name = String(f.name ?? 'file').trim() || 'file';
+        const m = /^data:([^;]*);base64,(.+)$/.exec(String(f.dataUrl ?? ''));
+        if (!m) continue;
+        const contentType = m[1] || 'application/octet-stream';
+        const bytes = Buffer.from(m[2], 'base64');
+        if (bytes.length > 25 * 1024 * 1024) { send(res, 400, { error: `"${name}" is over 25MB.` }); return; }
+        const safe = name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120);
+        const path = `${ctx.tenant_id}/${job.id}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${safe}`;
+        try {
+          await ensureJobFileBucket();
+          await uploadJobFile(path, bytes, contentType);
+          await insertJobFile({ tenant_id: ctx.tenant_id, job_id: job.id, name, storage_path: path, content_type: contentType, size_bytes: bytes.length });
+          saved++; names.push(name);
+        } catch (err: any) { send(res, 500, { error: 'Upload failed: ' + (err?.message ?? String(err)) }); return; }
+      }
+      if (saved) audit(ctx, 'job.files', 'job', code, `Added ${saved} file(s) to ${code}: ${names.join(', ')}`);
+      send(res, 200, { ok: true, saved });
+      return;
+    }
+    if (p.startsWith('/api/job/') && p.includes('/files/') && req.method === 'DELETE') {
+      if (!(ctx.role === 'admin' || ctx.role === 'office')) { send(res, 403, { error: 'Managers only' }); return; }
+      const parts = p.split('/'); const code = decodeURIComponent(parts[3] ?? ''); const fileId = parts[5];
+      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      await deleteJobFile(fileId, ctx.tenant_id);
+      audit(ctx, 'job.files.delete', 'job', code, `Removed a file from ${code}`);
       send(res, 200, { ok: true });
       return;
     }
@@ -1486,6 +1538,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div><h2 id="title">—</h2><div class="sub" id="subtitle"></div></div>
         </div>
         <div style="display:flex;gap:10px;align-items:center">
+          <button id="filesBtn" class="jobstoggle" style="display:none" onclick="openJobFiles(current)">Files</button>
           <button id="delJobBtn" class="del" style="display:none" onclick="delJob()">Delete job</button>
           <button id="newBtn" class="newbtn" onclick="openCreate()">+ New item</button>
         </div>
@@ -2045,7 +2098,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     JOB_STATUS={}; JOB_MAPDATE={};
     jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
     function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};el.appendChild(d);}
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};
+      if(code!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(code);};d.appendChild(b);}
+      el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs');
     jobs.forEach(function(j){mk(j.code,j.code);});
     // Scanner (or an empty current) lands on the first available job.
@@ -2064,6 +2119,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
       +'<div class="field full"><label>Site address</label><input id="nj_addr" placeholder="Full site address (optional)"></div>'
+      +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
       +ruleField
       +'<div class="ferr" id="njErr"></div></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveJob()">Create job</button></div>';
@@ -2083,9 +2139,52 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
       if(rsel&&rsel.value){ try{await api('/api/job/'+encodeURIComponent(d.code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rsel.value})});}catch(e){} }
+      var fl=document.getElementById('nj_files'); var picked=fl&&fl.files?fl.files.length:0;
+      if(picked){ document.getElementById('njErr').textContent=''; tShow('Uploading '+picked+' file(s)…'); try{ await uploadJobFiles(d.code, fl.files); }catch(e){ tShow('Job created, but a file upload failed'); } }
       closeModal();tShow('Created '+d.code);loadJobs();
     }
     else document.getElementById('njErr').textContent=d.error||'Could not create job';
+  }
+  // ---- job file attachments ----
+  async function uploadJobFiles(code,fileList){
+    var arr=[];
+    for(var i=0;i<fileList.length;i++){ var f=fileList[i]; if(f.size>25*1024*1024){tShow('"'+f.name+'" is over 25MB — skipped');continue;} arr.push({name:f.name,dataUrl:await fileToDataUrl(f)}); }
+    if(!arr.length)return;
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/files',{method:'POST',body:JSON.stringify({files:arr})})).json();
+    if(!d.ok)throw new Error(d.error||'upload failed');
+  }
+  function fmtSize(n){ if(!n)return''; if(n<1024)return n+' B'; if(n<1048576)return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+  async function openJobFiles(code){
+    if(!code||code==='ALL'){tShow('Pick a job first');return;}
+    openModal('Files · '+esc(code),'<div class="empty" style="padding:22px">Loading…</div>');
+    var files; try{files=await (await api('/api/job/'+encodeURIComponent(code)+'/files')).json();}catch(e){document.getElementById('modalBody').innerHTML='<div class="empty" style="padding:22px">Could not load files.</div>';return;}
+    var isImg=function(ct){return /^image\\//.test(ct||'');}; var isPdf=function(ct){return /pdf/i.test(ct||'');};
+    var canMng=canCap('jobs.manage');
+    var body='<div style="padding:14px 20px 18px">';
+    if(!files.length){ body+='<div class="empty">No files attached to this job yet.'+(canMng?' Add some below.':'')+'</div>'; }
+    else{ body+=files.map(function(f){
+      var thumb=isImg(f.content_type)?'<img src="'+(f.url||'')+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">':'<div style="width:52px;height:52px;border-radius:8px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--muted)">'+(isPdf(f.content_type)?'PDF':'FILE')+'</div>';
+      var view=(isImg(f.content_type)||isPdf(f.content_type))?'View':'Open';
+      var acts='<a class="add" target="_blank" rel="noopener" href="'+(f.url||'')+'">'+view+'</a> <a class="add" href="'+(f.url||'')+'" download="'+esc(f.name)+'">Download</a>'+(canMng?' <button class="del" onclick="delJobFile(\\''+code+'\\',\\''+f.id+'\\')">Delete</button>':'');
+      return '<div class="card2" style="display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:10px">'+thumb
+        +'<div style="flex:1;min-width:0"><div style="font-weight:700;word-break:break-all">'+esc(f.name)+'</div><div class="sub" style="margin:2px 0 0">'+esc(fmtSize(f.size_bytes))+'</div></div>'
+        +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+acts+'</div></div>';
+    }).join(''); }
+    if(canMng){ body+='<div style="border-top:1px solid var(--line);padding-top:12px;margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+      +'<input type="file" id="jf_add" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed">'
+      +'<button class="save" onclick="addJobFiles(\\''+code+'\\')">Upload</button></div>'; }
+    body+='</div>';
+    document.getElementById('modalBody').innerHTML=body;
+  }
+  async function addJobFiles(code){
+    var fl=document.getElementById('jf_add'); if(!fl||!fl.files.length){tShow('Choose files first');return;}
+    tShow('Uploading '+fl.files.length+' file(s)…');
+    try{ await uploadJobFiles(code,fl.files); tShow('Uploaded'); openJobFiles(code); }catch(e){ tShow('Upload failed'); }
+  }
+  async function delJobFile(code,id){
+    if(!confirm('Delete this file?'))return;
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/files/'+id,{method:'DELETE'})).json();
+    if(d.ok){tShow('Deleted');openJobFiles(code);}else tShow(d.error||'Delete failed');
   }
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
@@ -2094,6 +2193,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
     document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
+    document.getElementById('filesBtn').style.display=(current!=='ALL')?'':'none';
     // header column filters: distinct flats (this job) + all statuses
     var flats=[]; (itemsData.items||[]).forEach(function(it){var f=it.flat||''; if(f&&flats.indexOf(f)<0)flats.push(f);});
     flats.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});

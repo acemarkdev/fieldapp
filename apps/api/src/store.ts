@@ -495,6 +495,47 @@ export async function deleteJobPlan(id: string, tenantId: string): Promise<void>
   if (error) throw error;
 }
 
+// ---- job file attachments (drawings / PDFs / zips) ----
+export const JOBFILE_BUCKET = 'jobfiles';
+export interface JobFile { id: string; tenant_id: string; job_id: string; name: string; storage_path: string; content_type: string | null; size_bytes: number | null; created_at: string; }
+
+export async function ensureJobFileBucket(): Promise<void> {
+  const { data } = await db().storage.getBucket(JOBFILE_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(JOBFILE_BUCKET, { public: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+}
+export async function uploadJobFile(path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const { error } = await db().storage.from(JOBFILE_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+export async function signedJobFileUrl(path: string, seconds = 3600): Promise<string | null> {
+  const { data, error } = await db().storage.from(JOBFILE_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
+}
+export async function insertJobFile(row: Omit<JobFile, 'id' | 'created_at'>): Promise<JobFile> {
+  const { data, error } = await db().from('job_files').insert(row).select().single();
+  if (error) throw error;
+  return data as JobFile;
+}
+export async function listJobFiles(jobId: string): Promise<JobFile[]> {
+  const { data, error } = await db().from('job_files').select('*').eq('job_id', jobId).order('created_at');
+  if (error) throw error;
+  return (data ?? []) as JobFile[];
+}
+export async function getJobFile(id: string): Promise<JobFile | null> {
+  const { data, error } = await db().from('job_files').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as JobFile | null;
+}
+export async function deleteJobFile(id: string, tenantId: string): Promise<void> {
+  const f = await getJobFile(id);
+  if (f) { try { await db().storage.from(JOBFILE_BUCKET).remove([f.storage_path]); } catch { /* best effort */ } }
+  const { error } = await db().from('job_files').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
 // Items pinned on a job's plans (for the viewer).
 export async function listPinnedItems(jobId: string): Promise<any[]> {
   const { data, error } = await db().from('survey_items')
