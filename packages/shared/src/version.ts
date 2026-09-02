@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.62.1';
+export const APP_VERSION = '0.62.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.62.2', date: '2026-09-01', changes: [
+    'Fix: Floor now keeps its F. Mapping preload and Save, and the bulk Floor update, were stripping the F and storing just the number (so a Floor you set as F1 showed as 1 in the table and on items). Floor is now stored and shown with its F (1 is normalised to F1; labels like GF are kept). To correct items saved before this fix, select them and bulk-set Floor again. (Flat still stores a bare number as it feeds price grouping.)',
+  ] },
   { version: '0.62.1', date: '2026-09-01', changes: [
     'QA: added 48 test scenarios (T-107..T-154) to the in-app Test tab covering everything since v0.44 - reports & customer install PDF, customer portal, doors rate, retire team, the new-item prefixes/room picker, Items filters and inline code editing, bulk field apply, photo routing (office + mobile), the scanner mapping workflow, full item spec editing, Monday column auto-provisioning and the activity log.',
   ] },

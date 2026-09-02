@@ -524,8 +524,8 @@ const server = createServer(async (req, res) => {
       const seen = new Set<string>();
       const fields: Record<string, unknown>[] = [];
       for (const r of rows) {
-        // Strip a leading F only before a number ("F1"->"1"); labels like GF are kept.
-        const floor = String(r.floor ?? '').trim().replace(/^F(?=[0-9])/i, '');
+        // Floor is stored WITH its F (1 -> F1, GF stays GF). Flat stays a bare number (feeds pricing).
+        const floor = levelSeg(String(r.floor ?? '').trim());
         const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
         const item = String(r.item ?? '').trim().toUpperCase();
         if (!item) continue;
@@ -670,7 +670,7 @@ const server = createServer(async (req, res) => {
           let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code;
           if (action === 'block') block = raw.toUpperCase() || null;
           else if (action === 'elevation') elevation = raw.toUpperCase() || null;
-          else if (action === 'floor') { floor = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; if (floor) flat = null; } // floor becomes the level
+          else if (action === 'floor') { floor = levelSeg(raw) || null; if (floor) flat = null; } // floor (F-prefixed) becomes the level
           else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; if (flat) floor = null; } // flat becomes the level
           else if (action === 'room') room = raw.toUpperCase() || null;
           const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
@@ -1939,7 +1939,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function mapPreload(){
     var floors=[];
     document.querySelectorAll('#floorRows .frow').forEach(function(div){
-      var f=stripF(div.querySelector('.fr-floor').value);
+      var f=div.querySelector('.fr-floor').value.trim(); // keep the F (F1, GF) — server normalises
       var w=parseInt(div.querySelector('.fr-win').value,10)||0;
       var d=parseInt(div.querySelector('.fr-door').value,10)||0;
       if(f!==''&&(w>0||d>0)) floors.push({floor:f,windows:w,doors:d});
@@ -2008,7 +2008,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var be=getMapBE(); var block=be.block.trim(), elev=be.elev.trim();
     var out=[];
     document.querySelectorAll('#mapTbody tr').forEach(function(tr){
-      var floor=stripF(tr.querySelector('.mr-floor').value);
+      var floor=tr.querySelector('.mr-floor').value.trim(); // keep the F; server normalises
       var flat=stripF(tr.querySelector('.mr-flat').value);
       var item=tr.querySelector('.mr-item').value.trim().toUpperCase();
       var type=tr.querySelector('.mr-type').value;
