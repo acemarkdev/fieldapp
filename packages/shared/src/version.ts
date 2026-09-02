@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.63.1';
+export const APP_VERSION = '0.63.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.63.2', date: '2026-09-02', changes: [
+    'Bulk update: the Apply button now shows an \'Applying…\' state (disabled) with an \'Applying to N item(s)…\' message while the update runs, and reports the result when done — so you can tell it worked.',
+  ] },
   { version: '0.63.1', date: '2026-09-02', changes: [
     'Fix: bulk-updating Floor no longer clears Flat (and vice versa). Floor and Flat are independent fields; updating one via mass-update, or editing Flat inline, keeps the other intact. The item code still uses Flat as its F-segment when present. If some items lost their Flat, select them and bulk-set Flat again to restore it.',
   ] },

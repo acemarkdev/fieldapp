@@ -1515,7 +1515,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
             <option value="floor">Floor</option><option value="flat">Flat</option><option value="room">Room</option>
           </select>
           <span id="bulkValWrap"></span>
-          <button class="bulk bapply" onclick="bulkEditApply()">Apply</button>
+          <button id="bulkApplyBtn" class="bulk bapply" onclick="bulkEditApply()">Apply</button>
         </div>
       </div>
       <div class="card2" style="overflow:auto"><table class="itable"><thead><tr>
@@ -2273,9 +2273,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var vEl=document.getElementById('bulkVal'); var value=vEl?vEl.value:'';
     var ids=selectedIds(); if(!ids.length){tShow('Select some items first');return;}
     var action=(f==='status')?'status':f;
-    var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
-    if(vEl&&vEl.tagName==='INPUT')vEl.value='';
-    if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
+    var btn=document.getElementById('bulkApplyBtn'); var label=btn?btn.textContent:'';
+    if(btn){btn.disabled=true;btn.textContent='Applying…';}
+    tShow('Applying to '+ids.length+' item(s)…');
+    try{
+      var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
+      if(vEl&&vEl.tagName==='INPUT')vEl.value='';
+      if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
+    }catch(e){tShow('Update failed');}
+    finally{ if(btn){btn.disabled=false;btn.textContent=label||'Apply';} }
   }
   async function bulkDelete(){
     var ids=selectedIds();if(!ids.length)return;
