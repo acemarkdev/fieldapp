@@ -2264,6 +2264,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal('New job',html);
     ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
     njCode();
+    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode'].concat(jobDateInputIds('nj')));
   }
   function njCode(){var c=(document.getElementById('nj_client').value||'').trim().toUpperCase();var j=(document.getElementById('nj_job').value||'').trim().toUpperCase();document.getElementById('njPrev').textContent=(c||'CLIENT')+'.'+(j||'JOB');}
   async function saveJob(){
@@ -2283,7 +2284,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(rsel&&rsel.value){ try{await api('/api/job/'+encodeURIComponent(d.code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rsel.value})});}catch(e){} }
       var fl=document.getElementById('nj_files'); var picked=fl&&fl.files?fl.files.length:0;
       if(picked){ document.getElementById('njErr').textContent=''; tShow('Uploading '+picked+' file(s)…'); try{ await uploadJobFiles(d.code, fl.files); }catch(e){ tShow('Job created, but a file upload failed'); } }
-      closeModal();tShow('Created '+d.code);loadJobs();
+      closeModal(true);tShow('Created '+d.code);loadJobs();
     }
     else document.getElementById('njErr').textContent=d.error||'Could not create job';
   }
@@ -2313,6 +2314,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="ferr" id="ejErr" style="padding:0 22px"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
     openModal('Edit job '+code,html);
+    watchModalDirty(['ej_name','ej_addr','ej_postcode'].concat(jobDateInputIds('ej')));
   }
   async function saveEditJob(code){
     var name=(document.getElementById('ej_name').value||'').trim();
@@ -2323,7 +2325,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('ejErr').textContent=dErr;jobTab('ej','t');return;}
     var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode},dts))});
     var d=await r.json();
-    if(r.ok&&d.ok){closeModal();tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
+    if(r.ok&&d.ok){closeModal(true);tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
   }
   async function openJobFiles(code){
     if(!code||code==='ALL'){tShow('Pick a job first');return;}
@@ -3079,8 +3081,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   // ---- modal, create item, item detail ----
   function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-  function openModal(title,html){document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
-  function closeModal(){document.getElementById('modal').style.display='none';}
+  var modalDirty=null; // function -> bool, set by modals that need an unsaved-changes guard
+  function openModal(title,html){modalDirty=null;document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
+  function closeModal(force){
+    if(force!==true && typeof modalDirty==='function'){ try{ if(modalDirty() && !confirm('You have unsaved changes on this job. Discard them?'))return; }catch(e){} }
+    modalDirty=null; document.getElementById('modal').style.display='none';
+  }
+  function jobDateInputIds(p){var a=[];JOB_DATE_PHASES.forEach(function(ph){a.push(p+'_'+ph.key+'_start');a.push(p+'_'+ph.key+'_end');});return a;}
+  function watchModalDirty(ids){
+    var snap={}; ids.forEach(function(id){var e=document.getElementById(id); snap[id]=e?(e.value||''):'';});
+    modalDirty=function(){ return ids.some(function(id){var e=document.getElementById(id); return e && (e.value||'')!==snap[id]; }); };
+  }
   function field(id,label,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" placeholder="'+(ph||'')+'"></div>';}
   function openCreate(){
     var topts='<option value="">— no team —</option>'+teamOptionList('');

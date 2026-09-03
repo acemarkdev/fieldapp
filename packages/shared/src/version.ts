@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.67.1';
+export const APP_VERSION = '0.67.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.67.2', date: '2026-09-03', changes: [
+    'New/Edit job: clicking outside the popup (or the ✕) when you have unsaved changes now asks to confirm before discarding, so you no longer lose what you were typing. Saving still closes normally.',
+  ] },
   { version: '0.67.1', date: '2026-09-03', changes: [
     'Gantt polish: the Month / Gantt toggle buttons are now properly sized (no more overlap), and each job row shows its full name (wraps instead of being cut off).',
   ] },
