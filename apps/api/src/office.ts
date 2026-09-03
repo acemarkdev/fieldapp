@@ -1735,9 +1735,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <h2>Install calendar</h2>
       <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday (Sync tab → Pull fitters + dates). Filter by team, page months, click a day to see what's on.</div>
       <div class="calbar">
-        <div style="display:flex;gap:4px;margin-right:6px">
-          <button id="calModeMonth" class="calnav" style="background:var(--magenta);color:#fff" onclick="calSetMode('month')">Month</button>
-          <button id="calModeGantt" class="calnav" onclick="calSetMode('gantt')">Gantt</button>
+        <div style="display:flex;gap:6px;margin-right:10px">
+          <button id="calModeMonth" onclick="calSetMode('month')" style="border:1px solid var(--line);background:var(--magenta);color:#fff;border-radius:9px;height:34px;padding:0 16px;font-size:13px;font-weight:600;cursor:pointer">Month</button>
+          <button id="calModeGantt" onclick="calSetMode('gantt')" style="border:1px solid var(--line);background:#fff;color:var(--purple);border-radius:9px;height:34px;padding:0 16px;font-size:13px;font-weight:600;cursor:pointer">Gantt</button>
         </div>
         <button id="calNavPrev" class="calnav" onclick="calShift(-1)">‹</button>
         <div class="calmonth" id="calMonth">—</div>
@@ -3188,8 +3188,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function calSetMode(m){
     calMode=m;
     var mb=document.getElementById('calModeMonth'), gb=document.getElementById('calModeGantt');
-    if(mb){mb.style.background=(m==='month')?'var(--magenta)':'';mb.style.color=(m==='month')?'#fff':'';}
-    if(gb){gb.style.background=(m==='gantt')?'var(--magenta)':'';gb.style.color=(m==='gantt')?'#fff':'';}
+    if(mb){mb.style.background=(m==='month')?'var(--magenta)':'#fff';mb.style.color=(m==='month')?'#fff':'var(--purple)';}
+    if(gb){gb.style.background=(m==='gantt')?'var(--magenta)':'#fff';gb.style.color=(m==='gantt')?'#fff':'var(--purple)';}
     var monthEls=[document.querySelector('#calView .calgridwrap'),document.getElementById('calSelHead'),document.getElementById('calSel')];
     monthEls.forEach(function(e){if(e)e.style.display=(m==='month')?'':'none';});
     var gw=document.getElementById('ganttWrap'); if(gw)gw.style.display=(m==='gantt')?'block':'none';
@@ -3218,7 +3218,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function pct(d){return ((d-min)/totalMs)*100;}
     var months=[]; var cur=new Date(min.getFullYear(),min.getMonth(),1);
     while(cur<=max){ months.push(new Date(cur)); cur=new Date(cur.getFullYear(),cur.getMonth()+1,1); }
-    var labelW=170;
+    var labelW=220;
     var head='<div style="display:flex;align-items:stretch">'
       +'<div style="flex:0 0 '+labelW+'px"></div>'
       +'<div style="position:relative;flex:1;height:20px;border-bottom:1px solid var(--line)">'
@@ -3235,7 +3235,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         return '<div title="'+tip+'" style="position:absolute;left:'+left+'%;width:'+w+'%;top:'+top+'px;height:'+laneH+'px;border-radius:3px;background:'+x.ph.color+'"></div>';
       }).join('');
       return '<div style="display:flex;align-items:stretch;border-bottom:1px solid #f2f0f8">'
-        +'<div style="flex:0 0 '+labelW+'px;padding:6px 8px 6px 0"><span class="mono" style="font-size:11px">'+esc(r.code)+'</span><div style="color:var(--muted);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:'+labelW+'px">'+esc(r.name||'')+'</div></div>'
+        +'<div style="flex:0 0 '+labelW+'px;padding:6px 10px 6px 0"><span class="mono" style="font-size:11px">'+esc(r.code)+'</span><div style="color:var(--muted);font-size:10.5px;line-height:1.3;overflow-wrap:anywhere;margin-top:1px">'+esc(r.name||'')+'</div></div>'
         +'<div style="position:relative;flex:1;min-height:'+rowH+'px">'
           +months.map(function(m){return '<div style="position:absolute;left:'+pct(m)+'%;top:0;bottom:0;border-left:1px solid #f4f2fa"></div>';}).join('')
           +bars
