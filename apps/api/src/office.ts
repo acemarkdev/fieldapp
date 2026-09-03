@@ -261,6 +261,20 @@ const server = createServer(async (req, res) => {
     // Style catalogue metadata for the picker (code, type, wide, high). Non-sensitive.
     if (p === '/api/styles') { send(res, 200, STYLE_CATALOGUE); return; }
 
+    // Self-hosted pdf.js (public: loaded as an ES module via dynamic import(), which can't attach
+    // the bearer token). Whitelisted library files only — generic code, no tenant data. Used to
+    // rasterise a multi-page PDF into one plan image per page, in the browser.
+    if (p.startsWith('/vendor/pdfjs/')) {
+      const fname = p.slice('/vendor/pdfjs/'.length);
+      if (fname !== 'pdf.min.mjs' && fname !== 'pdf.worker.min.mjs') { res.writeHead(404); res.end('not found'); return; }
+      try {
+        const bytes = readFileSync(join(__dir, '../vendor/pdfjs', fname));
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' });
+        res.end(bytes);
+      } catch { res.writeHead(404); res.end('not found'); }
+      return;
+    }
+
     // Standalone auto-refreshing wallboard (pin it as a browser tab). Key-gated, no login.
     if (p === '/live') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(LIVE_PAGE); return; }
     if (p === '/api/live') {
@@ -1658,12 +1672,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="plansView" style="display:none">
     <main style="max-width:1200px">
       <h2>Plans</h2>
-      <div class="sub">Upload a floor plan or elevation per job, then pin each item to its spot. Field staff see the pins on the phone. Click an item on the right, then click its location on the plan.</div>
+      <div class="sub">Upload a floor plan or elevation per job (image or PDF — a multi-page PDF becomes one plan per page), then pin each item to its spot. Field staff see the pins on the phone. Click an item on the right, then click its location on the plan.</div>
       <div class="planbar">
         <select id="planJob" class="tinput" onchange="loadPlans()"></select>
         <select id="planSel" class="tinput" onchange="renderPlan()"></select>
         <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload from disk</button>
-        <input type="file" id="planFile" accept="image/*" style="display:none" onchange="uploadPlan(this)">
+        <input type="file" id="planFile" accept="image/*,application/pdf,.pdf" style="display:none" onchange="uploadPlan(this)">
         <button class="add" id="planFromJobBtn" onclick="addPlanFromJob()">From job files</button>
         <button class="del" id="planDelBtn" onclick="deletePlan()">Delete plan</button>
         <button class="add" id="rptSurveyBtn" onclick="downloadReport('survey')" title="Download a survey sheet PDF for this job">Survey PDF</button>
@@ -2813,16 +2827,65 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'</div>';
     }).join('')||'<div style="padding:14px;color:var(--muted);font-size:12px">No items.</div>';
   }
+  var _pdfjs=null,_jfp=[],_jfpCode='';
+  async function loadPdfjs(){
+    if(_pdfjs)return _pdfjs;
+    document.getElementById('planMsg').textContent='Loading PDF engine…';
+    _pdfjs=await import('/vendor/pdfjs/pdf.min.mjs');
+    try{_pdfjs.GlobalWorkerOptions.workerSrc='/vendor/pdfjs/pdf.worker.min.mjs';}catch(e){}
+    return _pdfjs;
+  }
+  async function pdfToPlanImages(buf){
+    var pdfjs=await loadPdfjs();
+    var doc=await pdfjs.getDocument({data:buf}).promise;
+    var out=[];
+    for(var i=1;i<=doc.numPages;i++){
+      document.getElementById('planMsg').textContent='Rendering page '+i+'/'+doc.numPages+'…';
+      var page=await doc.getPage(i);
+      var b=page.getViewport({scale:1});
+      var scale=Math.min(2.0,2000/Math.max(b.width,b.height)); if(!(scale>0.1))scale=0.1;
+      var v=page.getViewport({scale:scale});
+      var c=document.createElement('canvas'); c.width=Math.ceil(v.width); c.height=Math.ceil(v.height);
+      await page.render({canvasContext:c.getContext('2d'),viewport:v}).promise;
+      out.push(c.toDataURL('image/jpeg',0.85));
+    }
+    try{await doc.destroy();}catch(e){}
+    return out;
+  }
+  async function uploadPagesAsPlans(code,base,images){
+    var n=images.length,lastId=null;
+    for(var i=0;i<n;i++){
+      document.getElementById('planMsg').textContent='Uploading page '+(i+1)+'/'+n+'…';
+      var nm=n>1?(base+' ('+(i+1)+'/'+n+')'):base;
+      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:nm,image:images[i]})})).json();
+      if(!d.ok){document.getElementById('planMsg').textContent='';tShow(d.error||'Upload failed');return null;}
+      lastId=d.id;
+    }
+    document.getElementById('planMsg').textContent='';
+    return lastId;
+  }
+  function isPdfFile(name,type){return (type==='application/pdf')||/\\.pdf$/i.test(name||'');}
   async function uploadPlan(input){
     var f=input.files&&input.files[0]; input.value=''; if(!f)return;
     var code=document.getElementById('planJob').value;
     if(!code){tShow('Pick a job first');return;}
+    var pdf=isPdfFile(f.name,f.type);
     if(!confirm('Add this plan to job '+code+'?\\n\\n(Plans belong to the job selected above — switch the job first if this is wrong.)'))return;
-    var name=prompt('Plan name (e.g. Ground floor, Elevation E1):', f.name.replace(/\\.[^.]+$/,''))||'Plan';
+    var base=prompt('Plan name (e.g. Ground floor, Elevation E1):', f.name.replace(/\\.[^.]+$/,''))||'Plan';
+    if(pdf){
+      try{
+        var buf=await f.arrayBuffer();
+        var imgs=await pdfToPlanImages(buf);
+        if(!imgs.length){document.getElementById('planMsg').textContent='';tShow('No pages found in that PDF');return;}
+        var id=await uploadPagesAsPlans(code,base,imgs);
+        if(id){curPlanId=id;await loadPlans();tShow(imgs.length>1?(imgs.length+' pages added as plans'):'Plan uploaded');}
+      }catch(e){document.getElementById('planMsg').textContent='';tShow('Could not read that PDF');}
+      return;
+    }
     var reader=new FileReader();
     reader.onload=async function(){
       document.getElementById('planMsg').textContent='Uploading…';
-      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:name,image:reader.result})})).json();
+      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:base,image:reader.result})})).json();
       document.getElementById('planMsg').textContent='';
       if(d.ok){curPlanId=d.id;await loadPlans();tShow('Plan uploaded');}else tShow(d.error||'Upload failed');
     };
@@ -2832,18 +2895,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var code=document.getElementById('planJob').value;
     if(!code){tShow('Pick a job first');return;}
     var files=[]; try{files=await (await api('/api/job/'+encodeURIComponent(code)+'/files')).json();}catch(e){}
-    var imgs=(Array.isArray(files)?files:[]).filter(function(f){return /^image\\//.test(f.content_type||'');});
-    if(!imgs.length){tShow('No image files attached to '+code+' \u2014 attach one on the job first');return;}
-    var html='<div class="sub" style="margin:0 0 10px">Pick an image already attached to <b>'+esc(code)+'</b> to use as a plan.</div>'
+    _jfp=(Array.isArray(files)?files:[]).filter(function(f){return /^image\\//.test(f.content_type||'')||isPdfFile(f.name,f.content_type);});
+    _jfpCode=code;
+    if(!_jfp.length){tShow('No image or PDF files attached to '+code+' — attach one on the job first');return;}
+    var html='<div class="sub" style="margin:0 0 10px">Pick an image or PDF attached to <b>'+esc(code)+'</b> to use as a plan. A multi-page PDF becomes one plan per page.</div>'
       +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:60vh;overflow:auto">'
-      +imgs.map(function(f){return '<div style="border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center" onclick="usePlanFromJob(\\''+code+'\\',\\''+f.id+'\\')"><img src="'+(f.url||'')+'" style="width:100%;height:80px;object-fit:contain;background:#fff"><div style="font-size:11px;margin-top:4px;word-break:break-all">'+esc(f.name)+'</div></div>';}).join('')
+      +_jfp.map(function(f,idx){var pdf=isPdfFile(f.name,f.content_type);var thumb=pdf?'<div style="width:100%;height:80px;display:flex;align-items:center;justify-content:center;background:#f6f5fb;border-radius:6px;font-size:12px;font-weight:700;color:var(--magenta)">PDF</div>':'<img src="'+(f.url||'')+'" style="width:100%;height:80px;object-fit:contain;background:#fff">';return '<div style="border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center" onclick="usePlanFromJob('+idx+')">'+thumb+'<div style="font-size:11px;margin-top:4px;word-break:break-all">'+esc(f.name)+'</div></div>';}).join('')
       +'</div><div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button></div>';
     openModal('Use a job file as a plan',html);
   }
-  async function usePlanFromJob(code,fileId){
-    var name=(prompt('Plan name (e.g. Ground floor, Elevation E1):','')||'Plan').trim()||'Plan';
-    tShow('Adding plan\u2026');
-    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:name,job_file_id:fileId})})).json();
+  async function usePlanFromJob(idx){
+    var f=_jfp[idx]; if(!f)return; var code=_jfpCode;
+    var pdf=isPdfFile(f.name,f.content_type);
+    var base=(prompt('Plan name (e.g. Ground floor, Elevation E1):', (f.name||'Plan').replace(/\\.[^.]+$/,''))||'Plan').trim()||'Plan';
+    if(pdf){
+      closeModal();
+      try{
+        document.getElementById('planMsg').textContent='Fetching PDF…';
+        var buf=await (await fetch(f.url)).arrayBuffer();
+        var imgs=await pdfToPlanImages(buf);
+        if(!imgs.length){document.getElementById('planMsg').textContent='';tShow('No pages found in that PDF');return;}
+        var id=await uploadPagesAsPlans(code,base,imgs);
+        if(id){curPlanId=id;await loadPlans();tShow(imgs.length>1?(imgs.length+' pages added as plans'):'Plan added');}
+      }catch(e){document.getElementById('planMsg').textContent='';tShow('Could not read that PDF');}
+      return;
+    }
+    tShow('Adding plan…');
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:base,job_file_id:f.id})})).json();
     if(d.ok){curPlanId=d.id;closeModal();await loadPlans();tShow('Plan added');}else tShow(d.error||'Failed');
   }
   async function deletePlan(){

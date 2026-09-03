@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.65.1';
+export const APP_VERSION = '0.66.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.66.0', date: '2026-09-03', changes: [
+    'Multi-page PDF plans. You can now pick a PDF for a plan (from disk or from a job\'s attached files) — each page is rendered to an image in your browser and added as its own plan, named "Base (1/3)", "(2/3)"… so every page is independently pinnable. Single-page PDFs and images work as before. PDF rendering uses a self-hosted pdf.js (no external CDN), loaded only when you add a PDF.',
+  ] },
   { version: '0.65.1', date: '2026-09-03', changes: [
     'The job\'s postcode now shows next to the job name in the header at the top of the Items screen.',
   ] },
