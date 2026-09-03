@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.65.0';
+export const APP_VERSION = '0.65.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.65.1', date: '2026-09-03', changes: [
+    'The job\'s postcode now shows next to the job name in the header at the top of the Items screen.',
+  ] },
   { version: '0.65.0', date: '2026-09-02', changes: [
     'Plans access for field roles. Scanner and Surveyor now see the Plans tab and can upload plan images, pin items, and switch plans (new plans.view / plans.manage / plans.pin capabilities). PDF report buttons stay office/admin only.',
     'Postcode is now a required field when creating a job. Admins/office can edit a job\'s name, address and postcode any time via a new "Edit job" button next to Files (per-job header).',

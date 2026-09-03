@@ -673,7 +673,7 @@ const server = createServer(async (req, res) => {
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const items = await listSurveyItems(job.id);
       send(res, 200, {
-        job: { code, name: job.name, board: job.monday_board_id },
+        job: { code, name: job.name, board: job.monday_board_id, postcode: (job as any).postcode ?? null },
         teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
         items: items.map((it) => itemRow(it, job, teams)), role: ctx.role,
       });
@@ -2258,7 +2258,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
     bulkFieldPick(); // render the bulk value control for the selected field
-    document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+data.job.name;
+    var pc=data.job.postcode?(' <span style="color:var(--muted);font-weight:500">· '+esc(data.job.postcode)+'</span>'):'';
+    document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+esc(data.job.name)+pc;
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
     document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
