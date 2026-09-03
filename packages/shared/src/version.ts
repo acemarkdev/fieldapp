@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.66.0';
+export const APP_VERSION = '0.67.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.67.0', date: '2026-09-03', changes: [
+    'Programme dates on jobs. The New job and Edit job screens now have a Dates tab with six start/end date pairs: Programme (overall), Mapping, Survey, Scaffold erect, Scaffold dismantle, and Fitting. All optional. (These are planning dates, separate from the operational mapping-start that releases a job to scanners.)',
+    'Gantt view on the Calendar tab. A new Month / Gantt toggle switches the Calendar between the existing install calendar and a programme timeline — one row per job, a coloured bar per phase, with month gridlines and a legend. Requires migration 0029 (adds the date columns). Calendar filtering/access refinements to follow.',
+  ] },
   { version: '0.66.0', date: '2026-09-03', changes: [
     'Multi-page PDF plans. You can now pick a PDF for a plan (from disk or from a job\'s attached files) — each page is rendered to an image in your browser and added as its own plan, named "Base (1/3)", "(2/3)"… so every page is independently pinnable. Single-page PDFs and images work as before. PDF rendering uses a self-hosted pdf.js (no external CDN), loaded only when you add a PDF.',
   ] },

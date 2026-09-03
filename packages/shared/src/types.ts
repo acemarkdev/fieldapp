@@ -38,6 +38,13 @@ export interface Job {
   name: string;
   site_address: string | null;
   postcode: string | null;
+  // Programme dates (planning + Gantt). Optional; separate from mapping_start_date.
+  programme_start: string | null; programme_end: string | null;
+  mapping_start: string | null; mapping_end: string | null;
+  survey_start: string | null; survey_end: string | null;
+  scaffold_erect_start: string | null; scaffold_erect_end: string | null;
+  scaffold_dismantle_start: string | null; scaffold_dismantle_end: string | null;
+  fitting_start: string | null; fitting_end: string | null;
   monday_board_id: string | null;
   monday_account_slug: string | null;   // e.g. "ace189144" — makes item links resolve to the right account
   active: boolean;

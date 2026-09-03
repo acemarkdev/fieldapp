@@ -17,7 +17,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { createJob, updateJobDetails, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -69,6 +69,15 @@ function parseMondayDate(text: string | null): string | null {
 // generated JSON. The office serves both so desk staff get the same visual picker.
 const __dir = dirname(fileURLToPath(import.meta.url));
 const STYLES_DIR = join(__dir, '../../mobile/assets/styles');
+
+// Extract the optional programme date fields (YYYY-MM-DD or null) from a request body.
+function pickJobDates(b: any): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const k of JOB_DATE_FIELDS) {
+    if (k in (b ?? {})) { const v = (b as any)[k]; out[k] = (v == null || v === '') ? null : String(v).slice(0, 10); }
+  }
+  return out;
+}
 interface StyleMetaRow { type: string; wide: number | null; high: number | null; opening: number | null; fixed: number | null }
 const STYLE_META: Record<string, StyleMetaRow> = (() => {
   try { return JSON.parse(readFileSync(join(__dir, 'styleMeta.generated.json'), 'utf8')); } catch { return {}; }
@@ -511,6 +520,18 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Jobs + their programme dates, for the Gantt on the Calendar tab.
+    if (p === '/api/gantt' && req.method === 'GET') {
+      if (!allow('dashboard.view')) return;
+      const jobs = await listJobs(ctx.tenant_id);
+      send(res, 200, jobs.map((j) => {
+        const o: Record<string, unknown> = { code: `${j.client_code}.${j.job_code}`, name: j.name };
+        for (const k of JOB_DATE_FIELDS) o[k] = (j as any)[k] ?? null;
+        return o;
+      }));
+      return;
+    }
+
     // Admin assigns a mapping start date → releases the job to scanners (status 'pending_mapping').
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-date') && req.method === 'POST') {
       if (!allow('jobs.manage')) return;
@@ -571,7 +592,7 @@ const server = createServer(async (req, res) => {
       if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
       if (!postcode) { send(res, 400, { error: 'A postcode is required.' }); return; }
       try {
-        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode });
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode, dates: pickJobDates(b) });
         audit(ctx, 'job.create', 'job', `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} — ${name}`);
         send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
       } catch (err: any) {
@@ -587,7 +608,8 @@ const server = createServer(async (req, res) => {
       const code = decodeURIComponent(p.split('/')[3] ?? '');
       const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null });
+      { const dd: Record<string, unknown> = {}; for (const k of JOB_DATE_FIELDS) dd[k] = (job as any)[k] ?? null;
+        send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, ...dd }); }
       return;
     }
     // Edit a job's details (name / address / postcode) — managers only.
@@ -601,7 +623,7 @@ const server = createServer(async (req, res) => {
       const postcode = String(b.postcode ?? '').trim();
       if (!name) { send(res, 400, { error: 'Job name is required.' }); return; }
       if (!postcode) { send(res, 400, { error: 'Postcode is required.' }); return; }
-      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode });
+      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode, dates: pickJobDates(b) });
       audit(ctx, 'job.update', 'job', code, `Edited details for ${code}`);
       send(res, 200, { ok: true });
       return;
@@ -1713,9 +1735,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <h2>Install calendar</h2>
       <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday (Sync tab → Pull fitters + dates). Filter by team, page months, click a day to see what's on.</div>
       <div class="calbar">
-        <button class="calnav" onclick="calShift(-1)">‹</button>
+        <div style="display:flex;gap:4px;margin-right:6px">
+          <button id="calModeMonth" class="calnav" style="background:var(--magenta);color:#fff" onclick="calSetMode('month')">Month</button>
+          <button id="calModeGantt" class="calnav" onclick="calSetMode('gantt')">Gantt</button>
+        </div>
+        <button id="calNavPrev" class="calnav" onclick="calShift(-1)">‹</button>
         <div class="calmonth" id="calMonth">—</div>
-        <button class="calnav" onclick="calShift(1)">›</button>
+        <button id="calNavNext" class="calnav" onclick="calShift(1)">›</button>
         <select id="calTeam" class="tinput" onchange="renderCalendar()" style="margin-left:auto"></select>
         <span id="calMsg" class="itemcount"></span>
       </div>
@@ -1725,6 +1751,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div>
       <div class="calsel-h" id="calSelHead"></div>
       <div id="calSel"></div>
+      <div id="ganttWrap" style="display:none"></div>
     </main>
   </div>
 
@@ -2164,6 +2191,55 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].code; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
   }
   function opt(v,l,sel){return '<option value="'+v+'"'+(v===sel?' selected':'')+'>'+l+'</option>';}
+  var JOB_DATE_PHASES=[
+    {key:'programme',label:'Programme (overall)',color:'#64748b'},
+    {key:'mapping',label:'Mapping',color:'#8b5cf6'},
+    {key:'survey',label:'Survey',color:'#0ea5e9'},
+    {key:'scaffold_erect',label:'Scaffold erect',color:'#f59e0b'},
+    {key:'scaffold_dismantle',label:'Scaffold dismantle',color:'#ef4444'},
+    {key:'fitting',label:'Fitting',color:'#10b981'}
+  ];
+  function jobTabBar(p){
+    var bs='padding:7px 13px;border:none;background:none;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;color:var(--ink)';
+    return '<div style="display:flex;gap:4px;padding:12px 22px 0;border-bottom:1px solid var(--line)">'
+      +'<button type="button" id="'+p+'TabBtnD" onclick="jobTab(\\''+p+'\\',\\'d\\')" style="'+bs+';font-weight:700;border-bottom-color:var(--magenta)">Details</button>'
+      +'<button type="button" id="'+p+'TabBtnT" onclick="jobTab(\\''+p+'\\',\\'t\\')" style="'+bs+'">Dates</button>'
+      +'</div>';
+  }
+  function jobTab(p,which){
+    var det=document.getElementById(p+'Details'), dat=document.getElementById(p+'Dates');
+    if(det)det.style.display=(which==='d')?'':'none';
+    if(dat)dat.style.display=(which==='t')?'':'none';
+    var bd=document.getElementById(p+'TabBtnD'), bt=document.getElementById(p+'TabBtnT');
+    if(bd){bd.style.fontWeight=(which==='d')?'700':'400';bd.style.borderBottomColor=(which==='d')?'var(--magenta)':'transparent';}
+    if(bt){bt.style.fontWeight=(which==='t')?'700':'400';bt.style.borderBottomColor=(which==='t')?'var(--magenta)':'transparent';}
+  }
+  function jobDatesFieldsHtml(p,d){
+    d=d||{}; var q=function(v){return (v==null?'':String(v)).slice(0,10);};
+    return '<div style="padding:14px 22px 6px"><div class="sub" style="margin:0 0 12px">All optional. Used for planning and the Gantt view on the Calendar tab.</div>'
+      +JOB_DATE_PHASES.map(function(ph){
+        return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 9px">'
+          +'<span style="display:inline-block;width:12px;height:12px;border-radius:3px;flex:0 0 auto;background:'+ph.color+'"></span>'
+          +'<label style="flex:0 0 148px;font-size:12.5px;font-weight:600">'+ph.label+'</label>'
+          +'<input type="date" id="'+p+'_'+ph.key+'_start" value="'+q(d[ph.key+'_start'])+'" style="flex:1;min-width:0">'
+          +'<span style="color:var(--muted);font-size:12px">to</span>'
+          +'<input type="date" id="'+p+'_'+ph.key+'_end" value="'+q(d[ph.key+'_end'])+'" style="flex:1;min-width:0">'
+          +'</div>';
+      }).join('')+'</div>';
+  }
+  function collectJobDates(p){
+    var o={};
+    JOB_DATE_PHASES.forEach(function(ph){
+      o[ph.key+'_start']=(document.getElementById(p+'_'+ph.key+'_start')||{}).value||'';
+      o[ph.key+'_end']=(document.getElementById(p+'_'+ph.key+'_end')||{}).value||'';
+    });
+    return o;
+  }
+  function validateJobDates(dts){
+    for(var i=0;i<JOB_DATE_PHASES.length;i++){var ph=JOB_DATE_PHASES[i];var a=dts[ph.key+'_start'],b=dts[ph.key+'_end'];
+      if(a&&b&&b<a)return ph.label+': end date is before start date.';}
+    return '';
+  }
   async function openNewJob(){
     var ruleField='';
     if(canCap('finance.manage')){
@@ -2171,7 +2247,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       ruleField='<div class="field full"><label>Pricing rule (optional)</label><select id="nj_rule"><option value="">— none —</option>'
         +rules.map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+(r.customer?(' · '+esc(r.customer)):'')+'</option>';}).join('')+'</select></div>';
     }
-    var html='<div class="fgrid">'
+    var detail='<div class="fgrid">'
       +'<div class="codeprev" id="njPrev">CLIENT.JOB</div>'
       +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
@@ -2179,7 +2255,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="field full"><label>Postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
       +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
       +ruleField
-      +'<div class="ferr" id="njErr"></div></div>'
+      +'</div>';
+    var html=jobTabBar('nj')
+      +'<div id="njDetails">'+detail+'</div>'
+      +'<div id="njDates" style="display:none">'+jobDatesFieldsHtml('nj',{})+'</div>'
+      +'<div class="ferr" id="njErr" style="padding:0 22px"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveJob()">Create job</button></div>';
     openModal('New job',html);
     ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
@@ -2194,7 +2274,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!client||!job){document.getElementById('njErr').textContent='Client code and job code are required.';return;}
     if(!name){document.getElementById('njErr').textContent='Job name is required.';return;}
     if(!postcode){document.getElementById('njErr').textContent='Postcode is required.';return;}
-    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode})});
+    var dts=collectJobDates('nj');
+    var dErr=validateJobDates(dts); if(dErr){document.getElementById('njErr').textContent=dErr;jobTab('nj','t');return;}
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
@@ -2219,12 +2301,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d={}; try{d=await (await api('/api/job/'+encodeURIComponent(code))).json();}catch(e){}
     if(d.error){tShow(d.error);return;}
     var q=function(v){return (v==null?'':String(v)).replace(/"/g,'&quot;');};
-    var html='<div class="fgrid">'
+    var detail='<div class="fgrid">'
       +'<div class="field full"><label>Job</label><div class="codeprev">'+esc(code)+'</div></div>'
       +'<div class="field full"><label>Job name *</label><input id="ej_name" value="'+q(d.name)+'"></div>'
       +'<div class="field full"><label>Site address</label><input id="ej_addr" value="'+q(d.site_address)+'" placeholder="Full site address (optional)"></div>'
       +'<div class="field full"><label>Postcode *</label><input id="ej_postcode" value="'+q(d.postcode)+'" placeholder="e.g. PO7 7EW"></div>'
-      +'<div class="ferr" id="ejErr"></div></div>'
+      +'</div>';
+    var html=jobTabBar('ej')
+      +'<div id="ejDetails">'+detail+'</div>'
+      +'<div id="ejDates" style="display:none">'+jobDatesFieldsHtml('ej',d)+'</div>'
+      +'<div class="ferr" id="ejErr" style="padding:0 22px"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
     openModal('Edit job '+code,html);
   }
@@ -2233,7 +2319,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var postcode=(document.getElementById('ej_postcode').value||'').trim();
     if(!name){document.getElementById('ejErr').textContent='Job name is required.';return;}
     if(!postcode){document.getElementById('ejErr').textContent='Postcode is required.';return;}
-    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode})});
+    var dts=collectJobDates('ej');
+    var dErr=validateJobDates(dts); if(dErr){document.getElementById('ejErr').textContent=dErr;jobTab('ej','t');return;}
+    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){closeModal();tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
   }
@@ -3071,7 +3159,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sel.innerHTML='<option value="">All teams</option>'+CAL_DATA.teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
     sel.value=calTeamId;
     if(!calSel)calSel=calIso(new Date());
-    renderCalendar();
+    calSetMode(calMode);
   }
   function calShift(n){calCursor=new Date(calCursor.getFullYear(),calCursor.getMonth()+n,1);renderCalendar();}
   function calFiltered(){return CAL_DATA.items.filter(function(it){return !calTeamId||it.team_id===calTeamId;});}
@@ -3095,6 +3183,66 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     renderCalSel();
   }
   function calPick(day){calSel=day;renderCalendar();}
+  // ---- Programme Gantt (Calendar tab: Month / Gantt toggle) ----
+  var calMode='month'; var GANTT_DATA=[];
+  function calSetMode(m){
+    calMode=m;
+    var mb=document.getElementById('calModeMonth'), gb=document.getElementById('calModeGantt');
+    if(mb){mb.style.background=(m==='month')?'var(--magenta)':'';mb.style.color=(m==='month')?'#fff':'';}
+    if(gb){gb.style.background=(m==='gantt')?'var(--magenta)':'';gb.style.color=(m==='gantt')?'#fff':'';}
+    var monthEls=[document.querySelector('#calView .calgridwrap'),document.getElementById('calSelHead'),document.getElementById('calSel')];
+    monthEls.forEach(function(e){if(e)e.style.display=(m==='month')?'':'none';});
+    var gw=document.getElementById('ganttWrap'); if(gw)gw.style.display=(m==='gantt')?'block':'none';
+    ['calNavPrev','calNavNext','calMonth','calTeam','calMsg'].forEach(function(id){var e=document.getElementById(id);if(e)e.style.display=(m==='month')?'':'none';});
+    if(m==='gantt')loadGantt(); else renderCalendar();
+  }
+  function ganttParse(s){ if(!s)return null; var p=String(s).slice(0,10).split('-'); if(p.length!==3)return null; var d=new Date(Number(p[0]),Number(p[1])-1,Number(p[2])); return isNaN(d)?null:d; }
+  function fmtGD(d){return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});}
+  async function loadGantt(){
+    var wrap=document.getElementById('ganttWrap'); wrap.innerHTML='<div class="empty" style="padding:24px">Loading…</div>';
+    try{GANTT_DATA=await (await api('/api/gantt')).json();}catch(e){GANTT_DATA=[];}
+    renderGantt();
+  }
+  function renderGantt(){
+    var wrap=document.getElementById('ganttWrap');
+    var rows=(GANTT_DATA||[]).map(function(j){
+      var phases=JOB_DATE_PHASES.map(function(ph){return {ph:ph,s:ganttParse(j[ph.key+'_start']),e:ganttParse(j[ph.key+'_end'])};}).filter(function(x){return x.s||x.e;});
+      return {code:j.code,name:j.name,phases:phases};
+    }).filter(function(r){return r.phases.length;});
+    if(!rows.length){wrap.innerHTML='<div class="empty" style="padding:24px">No programme dates yet. Add them on a job (Edit job → Dates) to see the timeline here.</div>';return;}
+    var min=null,max=null;
+    rows.forEach(function(r){r.phases.forEach(function(x){var a=x.s||x.e,b=x.e||x.s; if(!min||a<min)min=a; if(!max||b>max)max=b;});});
+    min=new Date(min.getFullYear(),min.getMonth(),1);
+    max=new Date(max.getFullYear(),max.getMonth()+1,0);
+    var day=86400000; var totalMs=(max-min)+day;
+    function pct(d){return ((d-min)/totalMs)*100;}
+    var months=[]; var cur=new Date(min.getFullYear(),min.getMonth(),1);
+    while(cur<=max){ months.push(new Date(cur)); cur=new Date(cur.getFullYear(),cur.getMonth()+1,1); }
+    var labelW=170;
+    var head='<div style="display:flex;align-items:stretch">'
+      +'<div style="flex:0 0 '+labelW+'px"></div>'
+      +'<div style="position:relative;flex:1;height:20px;border-bottom:1px solid var(--line)">'
+      +months.map(function(m){return '<div style="position:absolute;left:'+pct(m)+'%;top:0;bottom:0;border-left:1px solid var(--line)"><span style="font-size:10px;color:var(--muted);padding:1px 4px;white-space:nowrap">'+m.toLocaleDateString('en-GB',{month:'short',year:'2-digit'})+'</span></div>';}).join('')
+      +'</div></div>';
+    var legend='<div style="display:flex;gap:14px;flex-wrap:wrap;margin:0 0 10px">'+JOB_DATE_PHASES.map(function(ph){return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)"><span style="width:11px;height:11px;border-radius:3px;background:'+ph.color+'"></span>'+ph.label+'</span>';}).join('')+'</div>';
+    var laneH=9, laneGap=3;
+    var body=rows.map(function(r){
+      var rowH=r.phases.length*(laneH+laneGap)+6;
+      var bars=r.phases.map(function(x,idx){
+        var s=x.s||x.e, e=x.e||x.s; var left=pct(s); var right=pct(new Date(e.getTime()+day)); var w=Math.max(0.6,right-left);
+        var top=idx*(laneH+laneGap)+3;
+        var tip=x.ph.label+': '+(x.s?fmtGD(x.s):'?')+' to '+(x.e?fmtGD(x.e):'?');
+        return '<div title="'+tip+'" style="position:absolute;left:'+left+'%;width:'+w+'%;top:'+top+'px;height:'+laneH+'px;border-radius:3px;background:'+x.ph.color+'"></div>';
+      }).join('');
+      return '<div style="display:flex;align-items:stretch;border-bottom:1px solid #f2f0f8">'
+        +'<div style="flex:0 0 '+labelW+'px;padding:6px 8px 6px 0"><span class="mono" style="font-size:11px">'+esc(r.code)+'</span><div style="color:var(--muted);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:'+labelW+'px">'+esc(r.name||'')+'</div></div>'
+        +'<div style="position:relative;flex:1;min-height:'+rowH+'px">'
+          +months.map(function(m){return '<div style="position:absolute;left:'+pct(m)+'%;top:0;bottom:0;border-left:1px solid #f4f2fa"></div>';}).join('')
+          +bars
+        +'</div></div>';
+    }).join('');
+    wrap.innerHTML=legend+'<div class="calgridwrap" style="overflow-x:auto"><div style="min-width:720px">'+head+body+'</div></div>';
+  }
   function renderCalSel(){
     var head=document.getElementById('calSelHead');
     if(!calSel){head.textContent='';document.getElementById('calSel').innerHTML='';return;}

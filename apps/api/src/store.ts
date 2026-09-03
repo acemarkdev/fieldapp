@@ -10,18 +10,27 @@ export async function getJobByCode(clientCode: string, jobCode: string): Promise
   return data as Job;
 }
 
-export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null }): Promise<Job> {
-  const { data, error } = await db().from('jobs')
-    .insert({ tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null, postcode: j.postcode ?? null })
-    .select().single();
+// The optional programme date fields (six start/end pairs) shared by create + update.
+export const JOB_DATE_FIELDS = [
+  'programme_start','programme_end','mapping_start','mapping_end','survey_start','survey_end',
+  'scaffold_erect_start','scaffold_erect_end','scaffold_dismantle_start','scaffold_dismantle_end',
+  'fitting_start','fitting_end',
+] as const;
+export type JobDates = Partial<Record<(typeof JOB_DATE_FIELDS)[number], string | null>>;
+
+export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null; dates?: JobDates }): Promise<Job> {
+  const row: Record<string, unknown> = { tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null, postcode: j.postcode ?? null };
+  for (const k of JOB_DATE_FIELDS) { const v = j.dates?.[k]; if (v !== undefined) row[k] = v || null; }
+  const { data, error } = await db().from('jobs').insert(row).select().single();
   if (error) throw error;
   return data as Job;
 }
-export async function updateJobDetails(tenantId: string, jobId: string, fields: { name?: string; site_address?: string | null; postcode?: string | null }): Promise<Job> {
+export async function updateJobDetails(tenantId: string, jobId: string, fields: { name?: string; site_address?: string | null; postcode?: string | null; dates?: JobDates }): Promise<Job> {
   const patch: Record<string, unknown> = {};
   if (fields.name !== undefined) patch.name = fields.name;
   if (fields.site_address !== undefined) patch.site_address = fields.site_address;
   if (fields.postcode !== undefined) patch.postcode = fields.postcode;
+  for (const k of JOB_DATE_FIELDS) { const v = fields.dates?.[k]; if (v !== undefined) patch[k] = v || null; }
   const { data, error } = await db().from('jobs').update(patch).eq('id', jobId).eq('tenant_id', tenantId).select().single();
   if (error) throw error;
   return data as Job;
