@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.67.2';
+export const APP_VERSION = '0.68.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.68.0', date: '2026-09-07', changes: [
+    'Calendar/Gantt access opened up. A new "View calendar" capability now controls the Calendar tab (previously tied to the dashboard permission). It is granted to Office, Surveyor, Scanner, Fitter and Invoice manager (Admin always has it) — so those roles can now open the install calendar and programme Gantt. Everyone who can view sees all jobs; per-team filtering can come later.',
+  ] },
   { version: '0.67.2', date: '2026-09-03', changes: [
     'New/Edit job: clicking outside the popup (or the ✕) when you have unsaved changes now asks to confirm before discarding, so you no longer lose what you were typing. Saving still closes normally.',
   ] },

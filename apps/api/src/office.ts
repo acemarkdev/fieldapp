@@ -337,7 +337,7 @@ const server = createServer(async (req, res) => {
 
     // Install calendar: every scheduled item across all jobs/teams (office-wide planner).
     if (p === '/api/calendar' && req.method === 'GET') {
-      if (!allow('dashboard.view')) return;
+      if (!allow('calendar.view')) return;
       const teams = await listTeams(ctx.tenant_id);
       const tname = new Map(teams.map((t) => [t.id, t.name]));
       const rows = await listScheduledItems(ctx.tenant_id);
@@ -522,7 +522,7 @@ const server = createServer(async (req, res) => {
 
     // Jobs + their programme dates, for the Gantt on the Calendar tab.
     if (p === '/api/gantt' && req.method === 'GET') {
-      if (!allow('dashboard.view')) return;
+      if (!allow('calendar.view')) return;
       const jobs = await listJobs(ctx.tenant_id);
       send(res, 200, jobs.map((j) => {
         const o: Record<string, unknown> = { code: `${j.client_code}.${j.job_code}`, name: j.name };
@@ -2696,7 +2696,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabTeams',canCap('teams.manage'));
     show('tabSync',canCap('monday.sync'));
     show('tabPlans',canCap('plans.view'));
-    show('tabCal',canCap('dashboard.view'));
+    show('tabCal',canCap('calendar.view'));
     show('tabBudget',canCap('finance.view'));
     show('tabTests',canCap('dashboard.view'));
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';

@@ -12,6 +12,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 
 export type Capability =
   | 'dashboard.view'   // see the office dashboard / reports
+  | 'calendar.view'    // see the install calendar + programme Gantt
   | 'jobs.manage'      // create / edit jobs
   | 'items.create'     // survey: create new items
   | 'items.edit'       // edit an item's spec / rate / team / room / code
@@ -29,6 +30,7 @@ export type Capability =
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
+  { key: 'calendar.view', label: 'View calendar', desc: 'Install calendar & programme Gantt' },
   { key: 'jobs.manage', label: 'Manage jobs', desc: 'Create / edit jobs' },
   { key: 'items.create', label: 'Create items', desc: 'Survey new items on site' },
   { key: 'items.edit', label: 'Edit items', desc: 'Change spec / rate / team / code' },
@@ -48,12 +50,12 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
 export const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: CAPABILITIES.map((c) => c.key), // everything
-  office: ['dashboard.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync'],
-  surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
-  scanner: ['items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
-  fitter: ['items.fit', 'snags.raise', 'photos.add'],
+  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync'],
+  surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
+  scanner: ['calendar.view', 'items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
+  fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add'],
   // Finance-only role: sees the budget/pricing module, nothing operational.
-  invoice_manager: ['finance.view', 'finance.manage'],
+  invoice_manager: ['calendar.view', 'finance.view', 'finance.manage'],
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
   customer: [],
 };
