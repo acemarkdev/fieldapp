@@ -591,3 +591,15 @@ export async function setPinsMultiPlan(tenantId: string, value: boolean): Promis
   const { error } = await db().from('tenants').update({ pins_multi_plan: value }).eq('id', tenantId);
   if (error) throw error;
 }
+
+
+// Global key/value app config (e.g. the demo leads destination email). Not tenant-scoped.
+export async function getConfig(key: string): Promise<string | null> {
+  const { data, error } = await db().from('app_config').select('value').eq('key', key).maybeSingle();
+  if (error) throw error;
+  return (data as any)?.value ?? null;
+}
+export async function setConfig(key: string, value: string): Promise<void> {
+  const { error } = await db().from('app_config').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) throw error;
+}

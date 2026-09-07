@@ -5,7 +5,7 @@ import { signInWithMicrosoft } from '../lib/auth';
 import { C } from '../lib/theme';
 import { APP_VERSION } from '../lib/version';
 
-export default function LoginScreen() {
+export default function LoginScreen({ onDemo }: { onDemo?: (email: string) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -31,6 +31,13 @@ export default function LoginScreen() {
     setSsoBusy(false);
     if (error) setError(error);
     // On success, App's auth listener swaps to the main screens.
+  }
+
+  function tryDemo() {
+    setError('');
+    const e = email.trim();
+    if (!e || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setError('Enter your email to explore the demo.'); return; }
+    onDemo?.(e);
   }
 
   return (
@@ -67,6 +74,15 @@ export default function LoginScreen() {
         )}
 
         {!!error && <Text style={s.error}>{error}</Text>}
+
+        <View style={s.demoBox}>
+          <Text style={s.demoTitle}>New to ACE Field?</Text>
+          <Text style={s.demoSub}>Enter your email above and explore a live demo with sample jobs and items. Nothing you do is saved — it resets when you leave.</Text>
+          <TouchableOpacity style={s.demoBtn} onPress={tryDemo} activeOpacity={0.85}>
+            <Text style={s.demoBtnText}>Explore the demo</Text>
+          </TouchableOpacity>
+        </View>
+
         <Text style={s.ver}>v{APP_VERSION}</Text>
       </View>
     </KeyboardAvoidingView>
@@ -89,5 +105,10 @@ const s = StyleSheet.create({
   ssoBtn: { borderWidth: 1, borderColor: C.line, borderRadius: 12, paddingVertical: 13, alignItems: 'center', backgroundColor: '#fff' },
   ssoText: { color: C.purple, fontWeight: '800', fontSize: 15 },
   error: { color: '#dc2626', fontSize: 13, marginTop: 12, textAlign: 'center' },
+  demoBox: { marginTop: 20, paddingTop: 18, borderTopWidth: 1, borderTopColor: C.line },
+  demoTitle: { fontSize: 13, fontWeight: '800', color: C.ink },
+  demoSub: { fontSize: 12, color: C.muted, marginTop: 4, lineHeight: 17 },
+  demoBtn: { borderWidth: 1.5, borderColor: C.magenta, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 12 },
+  demoBtnText: { color: C.magenta, fontWeight: '800', fontSize: 15 },
   ver: { color: '#a9a4c4', fontSize: 12, marginTop: 16, textAlign: 'center' },
 });

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.69.0';
+export const APP_VERSION = '0.70.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.70.0', date: '2026-09-07', changes: [
+    'Demo quote destination is now configurable. In the Users tab (admin) there\'s a "Demo — quote request destination" field to set the email that the mobile app\'s "Request a quote" opens a message to. Stored in a new app_config table (migration 0031) and read live by the mobile app; falls back to the built-in default if unset.',
+  ] },
   { version: '0.69.0', date: '2026-09-07', changes: [
     'Per-team scoping on the Calendar and Gantt. Both now default to the signed-in user\'s team when they belong to one (fitters land on their own team\'s work), and the Gantt gains a team filter dropdown like the month calendar already has. It\'s a default, not a lock — anyone can switch the filter to "All teams" or another team.',
   ] },

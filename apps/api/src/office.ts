@@ -17,7 +17,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
   latestTestResults, insertTestResult, allTestResults } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -534,6 +534,23 @@ const server = createServer(async (req, res) => {
         }),
         teams: teams.map((t) => ({ id: t.id, name: t.name, active: (t as any).active })),
       });
+      return;
+    }
+
+    // Demo leads destination email (admin config). GET + PUT.
+    if (p === '/api/config/demo-leads-email' && req.method === 'GET') {
+      if (!allow('users.manage')) return;
+      send(res, 200, { email: (await getConfig('demo_leads_email')) ?? '' });
+      return;
+    }
+    if (p === '/api/config/demo-leads-email' && req.method === 'PUT') {
+      if (!allow('users.manage')) return;
+      const b = await readJson(req);
+      const email = String(b.email ?? '').trim();
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { send(res, 400, { error: 'Enter a valid email address.' }); return; }
+      await setConfig('demo_leads_email', email);
+      audit(ctx, 'config.demo_leads_email', 'config', 'demo_leads_email', `Set demo leads email to ${email || '(cleared)'}`);
+      send(res, 200, { ok: true });
       return;
     }
 
@@ -1805,6 +1822,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:1080px">
       <h2>Users</h2>
       <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>, and <b>invoice manager</b> (budget/pricing only — no operational data).</div>
+      <div class="card2" style="margin:12px 0;padding:14px 16px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">Demo &mdash; quote request destination</div>
+        <div class="sub" style="margin:0 0 10px">Email address that the mobile app's &ldquo;Request a quote&rdquo; opens a message to. Captured demo leads are also stored in the database.</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input id="demoLeadsEmail" class="tinput" type="email" placeholder="sales@acegroup-uk.com" style="width:280px">
+          <button class="add" onclick="saveDemoLeadsEmail()">Save</button>
+          <span id="demoLeadsMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
       <div class="addrow" style="flex-wrap:wrap">
         <input id="nuName" class="tinput" placeholder="Full name">
         <input id="nuEmail" class="tinput" type="email" placeholder="email@company.com" style="width:210px">
@@ -3028,7 +3054,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   // ---- user management (admin only) ----
   var myId='';
+  async function loadDemoLeadsEmail(){
+    try{ var d=await (await api('/api/config/demo-leads-email')).json(); var el=document.getElementById('demoLeadsEmail'); if(el)el.value=d.email||''; }catch(e){}
+  }
+  async function saveDemoLeadsEmail(){
+    var el=document.getElementById('demoLeadsEmail'); var msg=document.getElementById('demoLeadsMsg');
+    var email=(el.value||'').trim();
+    if(msg)msg.textContent='Saving…';
+    var r=await api('/api/config/demo-leads-email',{method:'PUT',body:JSON.stringify({email:email})});
+    var d=await r.json();
+    if(r.ok&&d.ok){ if(msg){msg.textContent='Saved';setTimeout(function(){msg.textContent='';},1500);} }
+    else if(msg)msg.textContent=(d.error||'Save failed');
+  }
   async function loadUsers(){
+    loadDemoLeadsEmail();
     var data=await (await api('/api/users')).json();
     var tb=document.getElementById('userRows');
     if(data.error){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">'+esc(data.error)+'</td></tr>';return;}

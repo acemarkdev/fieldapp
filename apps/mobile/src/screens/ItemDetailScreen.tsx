@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { C } from '../lib/theme';
 import { enqueuePhoto, flushPhotos, getPendingPhotos, getPhotoDataUri } from '../lib/offline';
+import { isDemo } from '../lib/supabase';
 import { can } from '../lib/permissions';
 
 const INSTALL_LABEL: Record<string, string> = {
@@ -84,6 +85,7 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
   useEffect(() => { load(); }, [load]);
 
   async function addPhoto(fromCamera: boolean) {
+    if (isDemo()) { Alert.alert('Demo mode', 'Adding photos is disabled in the demo.'); return; }
     if (!item) return;
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()
@@ -130,6 +132,7 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
   }
 
   async function saveSnag() {
+    if (isDemo()) { Alert.alert('Demo mode', 'Raising snags is disabled in the demo.'); return; }
     if (!item) return;
     const comment = snagComment.trim();
     if (!comment) { Alert.alert('Add a description', 'Describe the defect before saving.'); return; }
