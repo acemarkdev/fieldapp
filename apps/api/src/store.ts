@@ -319,6 +319,15 @@ export async function listTeams(tenantId: string): Promise<FitterTeam[]> {
   return (data ?? []) as FitterTeam[];
 }
 
+// job_id -> set of team_ids that appear on that job's items (for per-team Gantt filtering).
+export async function jobTeamIds(tenantId: string): Promise<Map<string, Set<string>>> {
+  const { data, error } = await db().from('survey_items').select('job_id,team_id').eq('tenant_id', tenantId).not('team_id', 'is', null);
+  if (error) throw error;
+  const m = new Map<string, Set<string>>();
+  for (const r of (data ?? []) as any[]) { const j = r.job_id, t = r.team_id; if (!j || !t) continue; if (!m.has(j)) m.set(j, new Set()); m.get(j)!.add(t); }
+  return m;
+}
+
 // How many times each room code has been used across the tenant — drives the
 // "most-used first" ordering of the room picker on the new-item form.
 export async function roomCodeCounts(tenantId: string): Promise<Record<string, number>> {

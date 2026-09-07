@@ -19,7 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
-import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, listScheduledItems, getSurveyItem,
+import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
   filterItemIdsByTenant, bulkUpdateItems,
@@ -209,14 +209,14 @@ const itemRow = (it: any, job: any, teams: any[]) => ({
 });
 
 // Resolve the caller's app_users row from their bearer token.
-async function context(req: any): Promise<{ id: string; tenant_id: string; role: string; name: string; client_code?: string | null } | null> {
+async function context(req: any): Promise<{ id: string; tenant_id: string; role: string; name: string; client_code?: string | null; team_id?: string | null } | null> {
   const h = String(req.headers['authorization'] ?? '');
   const token = h.startsWith('Bearer ') ? h.slice(7) : '';
   if (!token) return null;
   const { data } = await authClient().auth.getUser(token);
   const user = data?.user;
   if (!user) return null;
-  const cols = 'id,tenant_id,role,name,active,email,client_code';
+  const cols = 'id,tenant_id,role,name,active,email,client_code,team_id';
   // First try the linked auth id (password logins), then fall back to email (SSO / first login).
   let { data: rows } = await db().from('app_users').select(cols).eq('auth_user_id', user.id).order('created_at').limit(1);
   let u: any = rows && rows[0];
@@ -298,8 +298,8 @@ const server = createServer(async (req, res) => {
       const { email, password } = await readJson(req);
       const { data, error } = await authClient().auth.signInWithPassword({ email, password });
       if (error || !data.session) { send(res, 401, { error: 'Invalid email or password' }); return; }
-      const { data: u } = await db().from('app_users').select('name,role,client_code').eq('auth_user_id', data.user.id).maybeSingle();
-      send(res, 200, { token: data.session.access_token, name: u?.name ?? email, role: u?.role ?? 'user', client_code: u?.client_code ?? null });
+      const { data: u } = await db().from('app_users').select('name,role,client_code,team_id').eq('auth_user_id', data.user.id).maybeSingle();
+      send(res, 200, { token: data.session.access_token, name: u?.name ?? email, role: u?.role ?? 'user', client_code: u?.client_code ?? null, team_id: (u as any)?.team_id ?? null });
       return;
     }
 
@@ -315,7 +315,7 @@ const server = createServer(async (req, res) => {
       return false;
     };
 
-    if (p === '/api/me') { send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role, client_code: ctx.client_code ?? null }); return; }
+    if (p === '/api/me') { send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role, client_code: ctx.client_code ?? null, team_id: (ctx as any).team_id ?? null }); return; }
 
     // ---- Customer portal (role 'customer' only): their own client's jobs + the rate-free PDF ----
     // A customer is confined to a strict whitelist; everything else is refused.
@@ -524,11 +524,16 @@ const server = createServer(async (req, res) => {
     if (p === '/api/gantt' && req.method === 'GET') {
       if (!allow('calendar.view')) return;
       const jobs = await listJobs(ctx.tenant_id);
-      send(res, 200, jobs.map((j) => {
-        const o: Record<string, unknown> = { code: `${j.client_code}.${j.job_code}`, name: j.name };
-        for (const k of JOB_DATE_FIELDS) o[k] = (j as any)[k] ?? null;
-        return o;
-      }));
+      const teams = await listTeams(ctx.tenant_id);
+      const teamByJob = await jobTeamIds(ctx.tenant_id);
+      send(res, 200, {
+        jobs: jobs.map((j) => {
+          const o: Record<string, unknown> = { code: `${j.client_code}.${j.job_code}`, name: j.name, team_ids: Array.from(teamByJob.get(j.id) ?? []) };
+          for (const k of JOB_DATE_FIELDS) o[k] = (j as any)[k] ?? null;
+          return o;
+        }),
+        teams: teams.map((t) => ({ id: t.id, name: t.name, active: (t as any).active })),
+      });
       return;
     }
 
@@ -1743,6 +1748,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div class="calmonth" id="calMonth">—</div>
         <button id="calNavNext" class="calnav" onclick="calShift(1)">›</button>
         <select id="calTeam" class="tinput" onchange="renderCalendar()" style="margin-left:auto"></select>
+        <select id="ganttTeam" class="tinput" onchange="renderGantt()" style="display:none;margin-left:auto"></select>
         <span id="calMsg" class="itemcount"></span>
       </div>
       <div class="calgridwrap">
@@ -1913,7 +1919,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
   }
-  var myRole=sessionStorage.getItem('ace_role')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
+  var myRole=sessionStorage.getItem('ace_role')||''; var myTeam=sessionStorage.getItem('ace_team')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
   var myClientCode=sessionStorage.getItem('ace_client')||'';
   var CHANGELOG=__CHANGELOG_JSON__;
   var SSO_ENABLED=__SSO_ENABLED__; var SUPA_URL='__SUPABASE_URL__'; var SUPA_ANON='__SUPABASE_ANON_KEY__';
@@ -1933,7 +1939,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function bootstrapSession(){
     var r=await fetch('/api/me',{headers:{Authorization:'Bearer '+token}});
-    if(r.ok){var me=await r.json();myRole=me.role||'';myClientCode=me.client_code||'';sessionStorage.setItem('ace_token',token);sessionStorage.setItem('ace_role',myRole);sessionStorage.setItem('ace_client',myClientCode);document.getElementById('whoName').textContent=me.name||'';showApp();}
+    if(r.ok){var me=await r.json();myRole=me.role||'';myClientCode=me.client_code||'';myTeam=me.team_id||'';sessionStorage.setItem('ace_token',token);sessionStorage.setItem('ace_role',myRole);sessionStorage.setItem('ace_client',myClientCode);sessionStorage.setItem('ace_team',myTeam);document.getElementById('whoName').textContent=me.name||'';showApp();}
     else{logout();document.getElementById('loginErr').textContent='No ACE account for this email — ask an admin to add you first.';}
   }
   function showChangelog(){
@@ -1950,11 +1956,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
     var d=await r.json();
     if(!r.ok){document.getElementById('loginErr').textContent=d.error||'Login failed';return;}
-    token=d.token; myRole=d.role||''; myClientCode=d.client_code||''; sessionStorage.setItem('ace_token',token); sessionStorage.setItem('ace_role',myRole); sessionStorage.setItem('ace_client',myClientCode);
+    token=d.token; myRole=d.role||''; myClientCode=d.client_code||''; myTeam=d.team_id||''; sessionStorage.setItem('ace_token',token); sessionStorage.setItem('ace_role',myRole); sessionStorage.setItem('ace_client',myClientCode); sessionStorage.setItem('ace_team',myTeam);
     document.getElementById('whoName').textContent=d.name;
     showApp();
   }
-  function logout(){token='';myRole='';myClientCode='';sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');sessionStorage.removeItem('ace_client');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
+  function logout(){token='';myRole='';myClientCode='';myTeam='';sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');sessionStorage.removeItem('ace_client');sessionStorage.removeItem('ace_team');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
@@ -3169,6 +3175,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var sel=document.getElementById('calTeam');
     sel.innerHTML='<option value="">All teams</option>'+CAL_DATA.teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
     sel.value=calTeamId;
+    if(!calTeamInit){ if(myTeam&&CAL_DATA.teams.some(function(t){return t.id===myTeam;}))calTeamId=myTeam; calTeamInit=true; }
+    sel.value=calTeamId;
     if(!calSel)calSel=calIso(new Date());
     calSetMode(calMode);
   }
@@ -3195,7 +3203,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function calPick(day){calSel=day;renderCalendar();}
   // ---- Programme Gantt (Calendar tab: Month / Gantt toggle) ----
-  var calMode='month'; var GANTT_DATA=[];
+  var calMode='month'; var GANTT_DATA={jobs:[],teams:[]}; var ganttTeamId=''; var ganttTeamInit=false; var calTeamInit=false;
   function calSetMode(m){
     calMode=m;
     var mb=document.getElementById('calModeMonth'), gb=document.getElementById('calModeGantt');
@@ -3205,22 +3213,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     monthEls.forEach(function(e){if(e)e.style.display=(m==='month')?'':'none';});
     var gw=document.getElementById('ganttWrap'); if(gw)gw.style.display=(m==='gantt')?'block':'none';
     ['calNavPrev','calNavNext','calMonth','calTeam','calMsg'].forEach(function(id){var e=document.getElementById(id);if(e)e.style.display=(m==='month')?'':'none';});
+    var gt=document.getElementById('ganttTeam'); if(gt)gt.style.display=(m==='gantt')?'':'none';
     if(m==='gantt')loadGantt(); else renderCalendar();
   }
   function ganttParse(s){ if(!s)return null; var p=String(s).slice(0,10).split('-'); if(p.length!==3)return null; var d=new Date(Number(p[0]),Number(p[1])-1,Number(p[2])); return isNaN(d)?null:d; }
   function fmtGD(d){return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});}
   async function loadGantt(){
     var wrap=document.getElementById('ganttWrap'); wrap.innerHTML='<div class="empty" style="padding:24px">Loading…</div>';
-    try{GANTT_DATA=await (await api('/api/gantt')).json();}catch(e){GANTT_DATA=[];}
+    try{GANTT_DATA=await (await api('/api/gantt')).json();}catch(e){GANTT_DATA={jobs:[],teams:[]};}
+    if(!GANTT_DATA||!GANTT_DATA.jobs){GANTT_DATA={jobs:(Array.isArray(GANTT_DATA)?GANTT_DATA:[]),teams:[]};}
+    var teams=GANTT_DATA.teams||[];
+    if(!ganttTeamInit){ if(myTeam&&teams.some(function(t){return t.id===myTeam;}))ganttTeamId=myTeam; ganttTeamInit=true; }
+    var sel=document.getElementById('ganttTeam');
+    if(sel){ sel.innerHTML='<option value="">All teams</option>'+teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+(t.active===false?' (retired)':'')+'</option>';}).join(''); sel.value=ganttTeamId; }
     renderGantt();
   }
   function renderGantt(){
     var wrap=document.getElementById('ganttWrap');
-    var rows=(GANTT_DATA||[]).map(function(j){
+    var sel=document.getElementById('ganttTeam'); if(sel)ganttTeamId=sel.value;
+    var jobs=(GANTT_DATA&&GANTT_DATA.jobs)?GANTT_DATA.jobs:[];
+    var rows=jobs.filter(function(j){ return !ganttTeamId || (Array.isArray(j.team_ids)&&j.team_ids.indexOf(ganttTeamId)>=0); }).map(function(j){
       var phases=JOB_DATE_PHASES.map(function(ph){return {ph:ph,s:ganttParse(j[ph.key+'_start']),e:ganttParse(j[ph.key+'_end'])};}).filter(function(x){return x.s||x.e;});
       return {code:j.code,name:j.name,phases:phases};
     }).filter(function(r){return r.phases.length;});
-    if(!rows.length){wrap.innerHTML='<div class="empty" style="padding:24px">No programme dates yet. Add them on a job (Edit job → Dates) to see the timeline here.</div>';return;}
+    if(!rows.length){wrap.innerHTML='<div class="empty" style="padding:24px">'+(ganttTeamId?'No jobs with programme dates for this team.':'No programme dates yet. Add them on a job (Edit job → Dates) to see the timeline here.')+'</div>';return;}
     var min=null,max=null;
     rows.forEach(function(r){r.phases.forEach(function(x){var a=x.s||x.e,b=x.e||x.s; if(!min||a<min)min=a; if(!max||b>max)max=b;});});
     min=new Date(min.getFullYear(),min.getMonth(),1);

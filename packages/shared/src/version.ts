@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.68.0';
+export const APP_VERSION = '0.69.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.69.0', date: '2026-09-07', changes: [
+    'Per-team scoping on the Calendar and Gantt. Both now default to the signed-in user\'s team when they belong to one (fitters land on their own team\'s work), and the Gantt gains a team filter dropdown like the month calendar already has. It\'s a default, not a lock — anyone can switch the filter to "All teams" or another team.',
+  ] },
   { version: '0.68.0', date: '2026-09-07', changes: [
     'Calendar/Gantt access opened up. A new "View calendar" capability now controls the Calendar tab (previously tied to the dashboard permission). It is granted to Office, Surveyor, Scanner, Fitter and Invoice manager (Admin always has it) — so those roles can now open the install calendar and programme Gantt. Everyone who can view sees all jobs; per-team filtering can come later.',
   ] },
