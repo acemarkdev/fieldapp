@@ -965,7 +965,7 @@ const server = createServer(async (req, res) => {
         if (!allow('items.edit')) return;
         if (item.monday_item_id) { send(res, 400, { error: 'This item is synced to Monday — its code is locked. Un-sync it first to change Flat/Room.' }); return; }
         const job = await getJob(item.job_id);
-        const newFlat = 'flat' in body ? (String(body.flat ?? '').trim().replace(/^F(?=[0-9])/i, '') || null) : (item.flat ?? null);
+        const newFlat = 'flat' in body ? (String(body.flat ?? '').trim().replace(/^F(?=[0-9])/i, '').toUpperCase() || null) : (item.flat ?? null);
         const newRoom = 'room' in body ? (String(body.room ?? '').trim().toUpperCase() || null) : (item.room_code ?? null);
         // Floor and Flat are independent fields — keep the floor as-is (Flat is just what the code uses as its F-segment).
         const newFloor = item.floor ?? null;
@@ -3376,7 +3376,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }).join('');
     var extra='';
     if(b.doors.count)extra+='<tr><td colspan="5">Doors × '+b.doors.count+'</td><td><b>'+gbp(b.doors.amount)+'</b></td></tr>';
-    if(b.communal.windows)extra+='<tr><td colspan="5">Communal windows × '+b.communal.windows+' ('+b.communal.m2+' m²)</td><td><b>'+gbp(b.communal.amount)+'</b></td></tr>';
+    if(b.communal.windows)extra+='<tr><td colspan="5">Communal / COM windows × '+b.communal.windows+' ('+b.communal.m2+' m²)</td><td><b>'+gbp(b.communal.amount)+'</b></td></tr>';
     if(b.variationsTotal)extra+='<tr><td colspan="5">Variations × '+b.variations.length+'</td><td><b>'+gbp(b.variationsTotal)+'</b></td></tr>';
     var table='<div class="card2"><table><thead><tr><th>FLAT</th><th>WINDOWS</th><th>BASE</th><th>EXTRA (biggest)</th><th>EXTRA £</th><th>FLAT TOTAL</th></tr></thead><tbody>'
       +rows+extra
@@ -3430,7 +3430,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +rMoney('r_wl','Window / unit',l.window_per_unit)+rMoney('r_dl','Single door / unit',l.door_per_unit)
       +'<div class="groupt">SALE RATES (customer price)</div>'
       +rMoney('r_rf','Rate per flat',sa.rate_per_flat)+rMoney('r_rd','Rate per door',sa.rate_per_door)
-      +rMoney('r_rm','Rate per m² (communal / extra windows)',sa.rate_per_m2_extra)+rNum('r_wi','Windows included per flat',sa.windows_included_per_flat)
+      +rMoney('r_rm','Rate per m² (COM / communal / extra windows)',sa.rate_per_m2_extra)+rNum('r_wi','Windows included per flat',sa.windows_included_per_flat)
       +'<div class="ferr" id="ruleErr"></div></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveRule(\\''+(id||'')+'\\')">Save rule</button></div>';
     openModal(id?'Edit pricing rule':'New pricing rule',html);

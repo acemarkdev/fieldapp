@@ -24,8 +24,13 @@ const door = (flat: string, extra: Partial<PriceItem> = {}): PriceItem =>
   ({ category: 'door', flat, ...extra });
 
 // --- unit helpers ---
-eq('isCommunalFlat COMMS', isCommunalFlat('COMMS'), true);
-eq('isCommunalFlat Commons', isCommunalFlat('Commons'), true);
+eq('isCommunalFlat COM', isCommunalFlat('COM'), true);
+eq('isCommunalFlat COMM', isCommunalFlat('COMM'), true);
+eq('isCommunalFlat com', isCommunalFlat('com'), true);
+eq('isCommunalFlat COM-1', isCommunalFlat('COM-1'), true);
+eq('isCommunalFlat COMM2', isCommunalFlat('COMM2'), true);
+eq('isCommunalFlat commercial (word) not matched', isCommunalFlat('commercial'), false);
+eq('isCommunalFlat Commons (word) not matched', isCommunalFlat('Commons'), false);
 eq('isCommunalFlat 21', isCommunalFlat('21'), false);
 eq('classify door by type', classifyCategory({ item_type: 'Single Door' }), 'door');
 eq('classify door by code', classifyCategory({ item_code: 'D01' }), 'door');
@@ -45,7 +50,7 @@ const items: PriceItem[] = [
   win('22', 1000, 1000), win('22', 1000, 1000), win('22', 1000, 1000), win('22', 1000, 1000), win('22', 1000, 1000),
   win('22', 2000, 1000), win('22', 3000, 1000),
   // Communal window 4m²
-  win('COMMS', 2000, 2000),
+  win('COMM', 2000, 2000),
   // A variation door, manual £500
   door('X', { is_variation: true, variation_amount: 50000, full_code: 'AXS.LAB.V1' }),
   // A snag window (excluded entirely)
@@ -61,6 +66,12 @@ eq('flat22 extraM2', f22.extraM2, 5);
 eq('flat22 extraAmount', f22.extraAmount, 162000);                                   // 5 * 32400
 eq('flat22 total', f22.total, 477900);                                               // 315900 + 162000
 eq('communal', b.communal, { windows: 1, m2: 4, amount: 129600 });                   // 4 * 32400
+
+// COM units bill by m², not the fixed per-flat rate, and never form a flat group.
+const bcom = priceJob([win('COM', 2000, 2000)], RULE);
+eq('COM window m2 priced', bcom.communal, { windows: 1, m2: 4, amount: 129600 });
+eq('COM makes no flat', bcom.flats.length, 0);
+eq('COM saleTotal', bcom.saleTotal, 129600);
 eq('doors', b.doors, { count: 1, amount: 135000 });                                  // variation door excluded
 eq('variationsTotal', b.variationsTotal, 50000);
 eq('saleTotal', b.saleTotal, 1108400);   // 315900 + 477900 + 129600 + 135000 + 50000

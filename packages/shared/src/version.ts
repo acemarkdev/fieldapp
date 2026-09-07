@@ -1,11 +1,20 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.70.0';
+export const APP_VERSION = '0.70.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.70.3', date: '2026-09-07', changes: [
+    'Budget: commercial units are recognised by the label COM or COMM (e.g. COM, COMM, COM-1, COMM2) and billed by the m² rate. Tightened so ordinary words that merely start with \'com\' are not misread as commercial.',
+  ] },
+  { version: '0.70.2', date: '2026-09-07', changes: [
+    'Budget: COM (commercial/communal) units are now billed by the m² rate instead of the fixed per-flat rate. Detection widened from labels starting \'COMM\' to \'COM\', so a flat labelled COM/Com/com is priced on its window m² (rate per m²) and never counts as a fixed-rate flat. Breakdown/PDF labels updated to "Communal / COM".',
+  ] },
+  { version: '0.70.1', date: '2026-09-07', changes: [
+    'Fix: inline Flat edits in the Items tab now store the value in uppercase, matching the bulk update and new-item form. Previously a Flat typed as \'com\'/\'Com\' was saved as-is but shown uppercased by the grid (text-transform), so identical-looking flats could be stored as different values and split per-flat pricing/reports.',
+  ] },
   { version: '0.70.0', date: '2026-09-07', changes: [
     'Demo quote destination is now configurable. In the Users tab (admin) there\'s a "Demo — quote request destination" field to set the email that the mobile app\'s "Request a quote" opens a message to. Stored in a new app_config table (migration 0031) and read live by the mobile app; falls back to the built-in default if unset.',
   ] },

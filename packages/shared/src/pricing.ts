@@ -8,7 +8,7 @@
 //   SALE (what the customer pays), grouped per flat:
 //     • base rate per flat, which INCLUDES the N smallest windows in that flat
 //     • windows beyond N (the biggest) bill at rate_per_m² on their m²
-//     • communal windows (flat label starts "COMM") bill at rate_per_m², no base
+//     • COM windows (flat label starts "COM" — commercial/communal) bill at rate_per_m², no base
 //     • doors bill a flat rate per door, outside the flat/window calc
 //     • snags are excluded; variations are a manual agreed amount, summed separately
 
@@ -32,7 +32,10 @@ export interface PriceItem {
 }
 
 export const m2Of = (w?: number | null, h?: number | null): number => (w && h ? (w * h) / 1_000_000 : 0);
-export const isCommunalFlat = (flat?: string | null): boolean => /^comm/i.test((flat ?? '').trim());
+// A "COM"/"COMM" unit (commercial / communal) is billed by m² rather than the fixed per-flat rate.
+// Matches the code token COM or COMM exactly, optionally with a numeric/suffix separator
+// (COM, COMM, COM-1, COMM2…), but not words like "commercial" or "commons".
+export const isCommunalFlat = (flat?: string | null): boolean => /^comm?($|[^a-z])/i.test((flat ?? '').trim());
 // Classify an item as window vs door from its type/code (single-door model for now).
 export function classifyCategory(o: { item_type?: string | null; item_code?: string | null }): 'window' | 'door' {
   if ((o.item_type ?? '').toLowerCase().includes('door')) return 'door';

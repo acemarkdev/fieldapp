@@ -96,7 +96,7 @@ export function renderPricePdf(data: PriceData): Promise<Buffer> {
   ], false, i % 2 ? '#faf9fd' : undefined));
 
   if (b.doors.count) sumLine(`Doors × ${b.doors.count}`, formatPennies(b.doors.amount));
-  if (b.communal.windows) sumLine(`Communal windows × ${b.communal.windows}  (${b.communal.m2} m²)`, formatPennies(b.communal.amount));
+  if (b.communal.windows) sumLine(`Communal / COM windows × ${b.communal.windows}  (${b.communal.m2} m²)`, formatPennies(b.communal.amount));
   for (const v of b.variations) sumLine(`Variation ${v.code ?? ''}`.trim(), formatPennies(v.amount));
 
   // grand total row
