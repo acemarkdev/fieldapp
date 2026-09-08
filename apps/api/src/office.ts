@@ -15,7 +15,7 @@ import { createClient } from '@supabase/supabase-js';
 import { db, ACE_TENANT } from './supabase';
 import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule, deletePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
-  latestTestResults, insertTestResult, allTestResults } from './store';
+  latestTestResults, insertTestResult, allTestResults, listTestVersions } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
@@ -399,8 +399,11 @@ const server = createServer(async (req, res) => {
     // ---- In-app QA test tab ----
     if (p === '/api/tests' && req.method === 'GET') {
       if (!allow('dashboard.view')) return;
-      const results = await latestTestResults(ctx.tenant_id, APP_VERSION);
-      send(res, 200, { version: APP_VERSION, scenarios: TEST_SCENARIOS, results });
+      const sel = (url.searchParams.get('version') || APP_VERSION).trim() || APP_VERSION;
+      const results = await latestTestResults(ctx.tenant_id, sel);
+      const versions = await listTestVersions(ctx.tenant_id);
+      if (!versions.some((v) => v.version === APP_VERSION)) versions.unshift({ version: APP_VERSION, count: 0, last: '' });
+      send(res, 200, { version: sel, current: APP_VERSION, scenarios: TEST_SCENARIOS, results, versions });
       return;
     }
     if (p === '/api/tests/result' && req.method === 'POST') {
@@ -419,7 +422,8 @@ const server = createServer(async (req, res) => {
     }
     if (p === '/api/tests/export.csv' && req.method === 'GET') {
       if (!allow('dashboard.view')) return;
-      const rows = await allTestResults(ctx.tenant_id, APP_VERSION);
+      const xv = (url.searchParams.get('version') || APP_VERSION).trim() || APP_VERSION;
+      const rows = await allTestResults(ctx.tenant_id, xv);
       const esc = (v: any) => `"${(v ?? '').toString().replace(/"/g, '""')}"`;
       const byCode = new Map(TEST_SCENARIOS.map((s) => [s.code, s]));
       const lines = ['code,area,feature,status,comment,tested_by,at'];
@@ -427,7 +431,7 @@ const server = createServer(async (req, res) => {
         const s: any = byCode.get(r.scenario_code) ?? {};
         lines.push([r.scenario_code, s.area, s.feature, r.status, r.comment, r.tested_by, r.created_at].map(esc).join(','));
       }
-      res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': `attachment; filename="test-results-v${APP_VERSION}.csv"`, 'cache-control': 'no-store' });
+      res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': `attachment; filename="test-results-v${xv}.csv"`, 'cache-control': 'no-store' });
       res.end(lines.join('\n'));
       return;
     }
@@ -1814,6 +1818,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="add" onclick="exportTests()" style="align-self:center">Export CSV</button>
       </div>
       <div class="chips" style="align-items:center">
+        <select id="testVer" class="tinput" onchange="changeTestVer()" title="Test results are recorded per app version"></select>
         <select id="testArea" class="tinput" onchange="renderTests()"></select>
         <select id="testStatus" class="tinput" onchange="renderTests()">
           <option value="">All results</option><option value="ok">OK</option><option value="nok">NOK</option><option value="untested">Untested</option>
@@ -3465,20 +3470,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
 
   // ---- In-app QA test run ----
-  var TESTS={scenarios:[],results:{},version:''};
+  var TESTS={scenarios:[],results:{},version:'',current:'',versions:[]}; var TEST_VER='';
   async function loadTests(){
-    try{TESTS=await (await api('/api/tests')).json();}catch(e){TESTS={scenarios:[],results:{},version:''};}
+    var q=TEST_VER?('?version='+encodeURIComponent(TEST_VER)):'';
+    try{TESTS=await (await api('/api/tests'+q)).json();}catch(e){TESTS={scenarios:[],results:{},version:'',current:'',versions:[]};}
+    if(!TEST_VER)TEST_VER=TESTS.version;
+    var vsel=document.getElementById('testVer');
+    if(vsel){
+      var vers=TESTS.versions||[];
+      vsel.innerHTML=vers.map(function(v){return '<option value="'+av(v.version)+'">v'+esc(v.version)+(v.version===TESTS.current?' (current)':'')+' \u00b7 '+v.count+' tested'+(v.last?(' \u00b7 '+new Date(v.last).toLocaleDateString('en-GB')):'')+'</option>';}).join('');
+      vsel.value=TESTS.version;
+    }
     var areas=[]; TESTS.scenarios.forEach(function(s){if(areas.indexOf(s.area)<0)areas.push(s.area);});
     var av0=document.getElementById('testArea').value;
     document.getElementById('testArea').innerHTML='<option value="">All areas</option>'+areas.map(function(a){return '<option value="'+av(a)+'">'+esc(a)+'</option>';}).join('');
     document.getElementById('testArea').value=av0;
     renderTests();
   }
+  function changeTestVer(){ TEST_VER=document.getElementById('testVer').value; loadTests(); }
   function testCounts(){var ok=0,nok=0,un=0;TESTS.scenarios.forEach(function(x){var g=TESTS.results[x.code];if(!g)un++;else if(g.status==='ok')ok++;else nok++;});return {total:TESTS.scenarios.length,ok:ok,nok:nok,un:un};}
   function renderTests(){
     var area=document.getElementById('testArea').value, st=document.getElementById('testStatus').value;
     var c=testCounts();
-    document.getElementById('testProg').innerHTML='v'+esc(TESTS.version)+' &middot; '+(c.ok+c.nok)+'/'+c.total+' tested &middot; <b style="color:#16a34a">'+c.ok+' OK</b> &middot; <b style="color:var(--magenta)">'+c.nok+' NOK</b> &middot; '+c.un+' untested';
+    var readonly=!!(TESTS.current&&TESTS.version!==TESTS.current);
+    document.getElementById('testProg').innerHTML='v'+esc(TESTS.version)+' &middot; '+(c.ok+c.nok)+'/'+c.total+' tested &middot; <b style="color:#16a34a">'+c.ok+' OK</b> &middot; <b style="color:var(--magenta)">'+c.nok+' NOK</b> &middot; '+c.un+' untested'+(readonly?' &middot; <b style="color:#b45309">read-only (historical)</b>':'');
     var list=TESTS.scenarios.filter(function(s){
       if(area&&s.area!==area)return false;
       var g=TESTS.results[s.code];
@@ -3497,13 +3512,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<div class="tinfo"><div class="tcode">'+esc(s.code)+' &middot; '+esc(s.feature)+' '+badge+'</div>'
         +'<div class="tsteps"><b>Do:</b> '+esc(s.steps)+'</div>'
         +'<div class="texp"><b>Expect:</b> '+esc(s.expected)+' <span class="trole">['+esc(s.role)+']</span></div>'+who+'</div>'
-        +'<div class="tact"><input id="tc_'+s.code+'" class="tcomment" placeholder="Comment (optional)" value="'+av(g&&g.comment?g.comment:'')+'">'
-        +'<div class="tbtns"><button class="tbtn tokbtn" onclick="submitTest(\\''+s.code+'\\',\\'ok\\')">OK</button>'
-        +'<button class="tbtn tnokbtn" onclick="submitTest(\\''+s.code+'\\',\\'nok\\')">NOK</button></div></div></div>';
+        +(readonly
+          ? '<div class="tact"><span class="tmeta">read-only</span></div>'
+          : ('<div class="tact"><input id="tc_'+s.code+'" class="tcomment" placeholder="Comment (optional)" value="'+av(g&&g.comment?g.comment:'')+'">'
+            +'<div class="tbtns"><button class="tbtn tokbtn" onclick="submitTest(\\''+s.code+'\\',\\'ok\\')">OK</button>'
+            +'<button class="tbtn tnokbtn" onclick="submitTest(\\''+s.code+'\\',\\'nok\\')">NOK</button></div></div>'))
+        +'</div>';
     }).join('')||'<div class="empty" style="padding:20px">No scenarios match this filter.</div>';
   }
   async function exportTests(){
-    try{var r=await fetch('/api/tests/export.csv',{headers:{Authorization:'Bearer '+token}});
+    try{var r=await fetch('/api/tests/export.csv'+(TEST_VER?('?version='+encodeURIComponent(TEST_VER)):''),{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){tShow('Export failed');return;}
       var blob=await r.blob(); var u=URL.createObjectURL(blob);
       var a=document.createElement('a'); a.href=u; a.download='test-results-v'+(TESTS.version||'')+'.csv'; document.body.appendChild(a); a.click(); a.remove();

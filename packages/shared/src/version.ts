@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.71.1';
+export const APP_VERSION = '0.72.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.72.0', date: '2026-09-08', changes: [
+    'QA tab: a version dropdown lets you view test results from any previous app version (results are recorded per version, so the tab starts fresh each deploy). Past versions open read-only; the current version stays editable. CSV export follows the selected version. Nothing was ever deleted \u2014 this just surfaces the history.',
+  ] },
   { version: '0.71.1', date: '2026-09-08', changes: [
     'Site code now shows in the left jobs list (the free-text site code labels each job for users), while the top header and item codes keep using the job code (client.job). Hover a job in the list to see its job code.',
   ] },

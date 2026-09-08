@@ -297,6 +297,22 @@ export async function insertTestResult(tenantId: string, r: { scenario_code: str
   const { error } = await db().from('test_results').insert({ tenant_id: tenantId, ...r });
   if (error) throw error;
 }
+export async function listTestVersions(tenantId: string): Promise<{ version: string; count: number; last: string }[]> {
+  const { data, error } = await db().from('test_results').select('app_version,scenario_code,created_at').eq('tenant_id', tenantId);
+  if (error) throw error;
+  const m = new Map<string, { codes: Set<string>; last: string }>();
+  for (const r of (data ?? []) as any[]) {
+    const v = r.app_version || '';
+    const e = m.get(v) ?? { codes: new Set<string>(), last: '' };
+    e.codes.add(r.scenario_code);
+    if ((r.created_at ?? '') > e.last) e.last = r.created_at ?? '';
+    m.set(v, e);
+  }
+  return Array.from(m.entries())
+    .map(([version, e]) => ({ version, count: e.codes.size, last: e.last }))
+    .sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+}
+
 export async function allTestResults(tenantId: string, appVersion: string): Promise<any[]> {
   const { data, error } = await db().from('test_results')
     .select('scenario_code,status,comment,tested_by,created_at')
