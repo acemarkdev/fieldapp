@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.71.0';
+export const APP_VERSION = '0.71.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.71.1', date: '2026-09-08', changes: [
+    'Site code now shows in the left jobs list (the free-text site code labels each job for users), while the top header and item codes keep using the job code (client.job). Hover a job in the list to see its job code.',
+  ] },
   { version: '0.71.0', date: '2026-09-08', changes: [
     'Jobs: a separate Site code. New/Edit job now has a \'Site code\' field shown on screen (the top header now displays it instead of the raw client.job), while item codes still build from client_code.job_code. Optional \u2014 defaults to CLIENT.JOB when blank. Existing jobs are backfilled from client.job (migration 0032).',
   ] },

@@ -517,7 +517,7 @@ const server = createServer(async (req, res) => {
       // Scanners only see jobs an admin has released for mapping.
       if (ctx.role === 'scanner') jobs = jobs.filter((j) => (j as any).status === 'pending_mapping');
       send(res, 200, jobs.map((j) => ({
-        code: `${j.client_code}.${j.job_code}`, name: j.name,
+        code: `${j.client_code}.${j.job_code}`, name: j.name, site_code: (j as any).site_code ?? null,
         status: (j as any).status ?? 'new', mapping_start_date: (j as any).mapping_start_date ?? null,
       })));
       return;
@@ -2218,12 +2218,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
     JOB_STATUS={}; JOB_MAPDATE={};
     jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
-    function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
+    function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.title=code;d.setAttribute('data-code',code);
       d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};
       if(code!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(code);};d.appendChild(b);}
       el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs');
-    jobs.forEach(function(j){mk(j.code,j.code);});
+    jobs.forEach(function(j){mk(j.code,(j.site_code||j.code));});
     // Scanner (or an empty current) lands on the first available job.
     if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].code; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
   }
@@ -2402,8 +2402,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
     bulkFieldPick(); // render the bulk value control for the selected field
     var pc=data.job.postcode?(' <span style="color:var(--muted);font-weight:500">· '+esc(data.job.postcode)+'</span>'):'';
-    var sc=(data.job.site_code||data.job.code);
-    document.getElementById('title').innerHTML='<span class="mono">'+esc(sc)+'</span> — '+esc(data.job.name)+pc;
+    document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+esc(data.job.name)+pc;
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
     document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
