@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.72.0';
+export const APP_VERSION = '0.73.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.73.0', date: '2026-09-08', changes: [
+    'Grouped navigation: the top menu is now organised into five dropdown groups \u2014 Operations (Dashboard, Items, Mapping, Plans, Calendar), Sales (Leads), CRM (Customers), Finance (Budget) and Admin (Teams & rates, Monday sync, Test, Users, Roles, Logs). Groups you have no access to are hidden. New Leads tab lists demo/quote leads (and holds the quote-destination email, moved from Users); new Customers tab lists customer portal accounts.',
+  ] },
   { version: '0.72.0', date: '2026-09-08', changes: [
     'QA tab: a version dropdown lets you view test results from any previous app version (results are recorded per version, so the tab starts fresh each deploy). Past versions open read-only; the current version stays editable. CSV export follows the selected version. Nothing was ever deleted \u2014 this just surfaces the history.',
   ] },

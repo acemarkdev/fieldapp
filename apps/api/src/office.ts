@@ -15,7 +15,7 @@ import { createClient } from '@supabase/supabase-js';
 import { db, ACE_TENANT } from './supabase';
 import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule, deletePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
-  latestTestResults, insertTestResult, allTestResults, listTestVersions } from './store';
+  latestTestResults, insertTestResult, allTestResults, listTestVersions, listDemoLeads, listCustomers } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
@@ -1002,6 +1002,16 @@ const server = createServer(async (req, res) => {
     }
 
     // Audit log (admin only).
+    if (p === '/api/leads' && req.method === 'GET') {
+      if (!allow('jobs.manage')) return;
+      send(res, 200, await listDemoLeads(500));
+      return;
+    }
+    if (p === '/api/customers' && req.method === 'GET') {
+      if (!allow('jobs.manage')) return;
+      send(res, 200, await listCustomers(ctx.tenant_id));
+      return;
+    }
     if (p === '/api/logs' && req.method === 'GET') {
       if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
       send(res, 200, await listAuditLog(ctx.tenant_id, 300));
@@ -1396,6 +1406,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .tab{background:transparent;border:none;color:#cfc9ea;font-size:13px;font-weight:600;padding:8px 14px;border-radius:9px;cursor:pointer}
   .tab:hover{background:rgba(255,255,255,.1);color:#fff}
   .tab.on{background:rgba(255,255,255,.16);color:#fff}
+  .grp{position:relative}
+  .grpbtn{background:transparent;border:none;color:#cfc9ea;font-size:13px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer}
+  .grpbtn:hover{background:rgba(255,255,255,.1);color:#fff}
+  .grp.on .grpbtn{background:rgba(255,255,255,.16);color:#fff}
+  .grpmenu{position:absolute;top:calc(100% + 6px);left:0;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 14px 34px rgba(0,0,0,.2);padding:6px;min-width:180px;display:none;z-index:40}
+  .grpmenu.open{display:block}
+  .grpmenu .tab{display:block;width:100%;text-align:left;color:var(--ink);font-weight:600;padding:8px 12px;border-radius:7px}
+  .grpmenu .tab:hover{background:#f4f2fa;color:var(--purple)}
+  .grpmenu .tab.on{background:#f4f2fa;color:var(--magenta)}
   .who{margin-left:auto;font-size:12px;color:#cfc9ea}.who button{margin-left:12px;background:rgba(255,255,255,.15);border:none;color:#fff;padding:6px 12px;border-radius:9px;font-size:12px;cursor:pointer}
   #whoName{position:relative;cursor:default}
   #whoName[data-role]:hover::after{content:attr(data-role);position:absolute;top:150%;right:0;background:var(--purple);color:#fff;font-size:11px;font-weight:600;padding:5px 9px;border-radius:7px;white-space:nowrap;z-index:40;box-shadow:0 6px 18px rgba(0,0,0,.28)}
@@ -1605,18 +1624,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <div class="brand">ACE<b>GROUP</b> <span>· Office</span><span class="envbadge" id="envBadge"></span></div>
     <button class="verchip" onclick="showChangelog()" title="What's new">v__APP_VERSION__</button>
     <nav class="nav">
-      <button id="tabDash" class="tab on" onclick="showTab('dashboard')">Dashboard</button>
-      <button id="tabItems" class="tab" onclick="showTab('items')">Items</button>
-      <button id="tabMapping" class="tab" style="display:none" onclick="showTab('mapping')">Mapping</button>
-      <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
-      <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
-      <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
-      <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
-      <button id="tabBudget" class="tab" style="display:none" onclick="showTab('budget')">Budget</button>
-      <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
-      <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
-      <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
-      <button id="tabLogs" class="tab" style="display:none" onclick="showTab('logs')">Logs</button>
+      <div class="grp" id="grp_ops"><button class="grpbtn" onclick="toggleGrp('ops')">Operations \u25be</button><div class="grpmenu" id="menu_ops">
+        <button id="tabDash" class="tab" onclick="showTab('dashboard')">Dashboard</button>
+        <button id="tabItems" class="tab" onclick="showTab('items')">Items</button>
+        <button id="tabMapping" class="tab" style="display:none" onclick="showTab('mapping')">Mapping</button>
+        <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
+        <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
+      </div></div>
+      <div class="grp" id="grp_sales"><button class="grpbtn" onclick="toggleGrp('sales')">Sales \u25be</button><div class="grpmenu" id="menu_sales">
+        <button id="tabLeads" class="tab" style="display:none" onclick="showTab('leads')">Leads</button>
+      </div></div>
+      <div class="grp" id="grp_crm"><button class="grpbtn" onclick="toggleGrp('crm')">CRM \u25be</button><div class="grpmenu" id="menu_crm">
+        <button id="tabCustomers" class="tab" style="display:none" onclick="showTab('customers')">Customers</button>
+      </div></div>
+      <div class="grp" id="grp_finance"><button class="grpbtn" onclick="toggleGrp('finance')">Finance \u25be</button><div class="grpmenu" id="menu_finance">
+        <button id="tabBudget" class="tab" style="display:none" onclick="showTab('budget')">Budget</button>
+      </div></div>
+      <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
+        <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
+        <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
+        <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
+        <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
+        <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
+        <button id="tabLogs" class="tab" style="display:none" onclick="showTab('logs')">Logs</button>
+      </div></div>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
@@ -1832,15 +1863,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:1080px">
       <h2>Users</h2>
       <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>, and <b>invoice manager</b> (budget/pricing only — no operational data).</div>
-      <div class="card2" style="margin:12px 0;padding:14px 16px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:3px">Demo &mdash; quote request destination</div>
-        <div class="sub" style="margin:0 0 10px">Email address that the mobile app's &ldquo;Request a quote&rdquo; opens a message to. Captured demo leads are also stored in the database.</div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <input id="demoLeadsEmail" class="tinput" type="email" placeholder="sales@acegroup-uk.com" style="width:280px">
-          <button class="add" onclick="saveDemoLeadsEmail()">Save</button>
-          <span id="demoLeadsMsg" style="font-size:12px;color:var(--muted)"></span>
-        </div>
-      </div>
       <div class="addrow" style="flex-wrap:wrap">
         <input id="nuName" class="tinput" placeholder="Full name">
         <input id="nuEmail" class="tinput" type="email" placeholder="email@company.com" style="width:210px">
@@ -1891,6 +1913,35 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 </div>
+  <div id="leadsView" style="display:none">
+    <main style="max-width:1000px">
+      <h2>Leads</h2>
+      <div class="sub">People who tried the mobile demo or requested a quote. Read-only.</div>
+      <div class="card2" style="margin:12px 0;padding:14px 16px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">Quote request destination</div>
+        <div class="sub" style="margin:0 0 10px">Email the mobile app's &ldquo;Request a quote&rdquo; opens a message to.</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input id="demoLeadsEmail" class="tinput" type="email" placeholder="sales@acegroup-uk.com" style="width:280px">
+          <button class="add" onclick="saveDemoLeadsEmail()">Save</button>
+          <span id="demoLeadsMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+      <div class="card2" style="overflow-x:auto"><table style="min-width:840px"><thead><tr>
+        <th>WHEN</th><th>TYPE</th><th>EMAIL</th><th>NAME</th><th>COMPANY</th><th>PHONE</th><th>MESSAGE</th><th>APP</th>
+      </tr></thead><tbody id="leadsRows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="customersView" style="display:none">
+    <main style="max-width:900px">
+      <h2>Customers</h2>
+      <div class="sub">Customer portal accounts. Create/manage logins under Admin &rarr; Users (role: customer).</div>
+      <div class="card2" style="margin-top:12px;overflow-x:auto"><table style="min-width:600px"><thead><tr>
+        <th>NAME</th><th>EMAIL</th><th>CLIENT</th><th>STATUS</th>
+      </tr></thead><tbody id="customersRows"></tbody></table></div>
+    </main>
+  </div>
+
 <div id="modal" class="overlay" style="display:none">
   <div class="sheet">
     <div class="sheethead"><h3 id="modalTitle">—</h3><button class="x" onclick="closeModal()">✕</button></div>
@@ -2634,6 +2685,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
     document.getElementById('logsView').style.display=name==='logs'?'block':'none';
+    document.getElementById('leadsView').style.display=name==='leads'?'block':'none';
+    document.getElementById('customersView').style.display=name==='customers'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
@@ -2646,6 +2699,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
     document.getElementById('tabLogs').classList.toggle('on',name==='logs');
+    var _tl=document.getElementById('tabLeads'); if(_tl)_tl.classList.toggle('on',name==='leads');
+    var _tc=document.getElementById('tabCustomers'); if(_tc)_tc.classList.toggle('on',name==='customers');
     if(name==='items')loadItems(); // always refresh (e.g. after saving in Mapping)
     if(name==='dashboard')loadDashboard();
     if(name==='mapping')loadMapping();
@@ -2658,6 +2713,31 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
     if(name==='logs')loadLogs();
+    if(name==='leads')loadLeads();
+    if(name==='customers')loadCustomers();
+    setActiveGroup(name); closeGrps();
+  }
+  // ---- grouped navigation ----
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin'};
+  function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
+  function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
+  function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
+  function setActiveGroup(tab){var gid=TAB2GROUP[tab];Object.keys(NAV_GROUPS).forEach(function(g){var b=document.getElementById('grp_'+g);if(b)b.classList.toggle('on',g===gid);});}
+  function rebuildNav(){Object.keys(NAV_GROUPS).forEach(function(gid){var b=document.getElementById('grp_'+gid);if(b)b.style.display=grpVisible(gid)?'':'none';});setActiveGroup(sessionStorage.getItem('ace_tab')||'dashboard');}
+  document.addEventListener('click',function(e){var t=e.target;var inGrp=t&&t.closest?t.closest('.grp'):null;if(!inGrp)closeGrps();});
+  async function loadLeads(){
+    loadDemoLeadsEmail();
+    var tb=document.getElementById('leadsRows'); tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
+    var rows; try{rows=await (await api('/api/leads')).json();}catch(e){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">Could not load leads.</td></tr>';return;}
+    if(!rows||!rows.length){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">No leads yet.</td></tr>';return;}
+    tb.innerHTML=rows.map(function(r){return '<tr><td style="white-space:nowrap">'+esc(new Date(r.created_at).toLocaleString('en-GB'))+'</td><td>'+esc(r.kind||'')+'</td><td>'+esc(r.email||'')+'</td><td>'+esc(r.name||'')+'</td><td>'+esc(r.company||'')+'</td><td>'+esc(r.phone||'')+'</td><td>'+esc(r.message||'')+'</td><td>'+esc(r.app_version||'')+'</td></tr>';}).join('');
+  }
+  async function loadCustomers(){
+    var tb=document.getElementById('customersRows'); tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
+    var rows; try{rows=await (await api('/api/customers')).json();}catch(e){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Could not load customers.</td></tr>';return;}
+    if(!rows||!rows.length){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">No customer accounts yet — add one under Admin → Users (role: customer).</td></tr>';return;}
+    tb.innerHTML=rows.map(function(r){return '<tr><td>'+esc(r.name||'')+'</td><td>'+esc(r.email||'')+'</td><td>'+esc(r.client_code||'—')+'</td><td>'+(r.active?'Active':'Inactive')+'</td></tr>';}).join('');
   }
   var ROLE_MATRIX=__ROLE_MATRIX_JSON__;
   function canCap(cap){if(myRole==='admin')return true;return (ROLE_MATRIX.matrix[myRole]||[]).indexOf(cap)>=0;}
@@ -2743,8 +2823,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabCal',canCap('calendar.view'));
     show('tabBudget',canCap('finance.view'));
     show('tabTests',canCap('dashboard.view'));
+    show('tabLeads',canCap('jobs.manage'));
+    show('tabCustomers',canCap('jobs.manage'));
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
+    rebuildNav();
   }
   async function loadTeams(){
     var data=await (await api('/api/teams')).json(); canManage=data.canManage;
@@ -3079,7 +3162,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else if(msg)msg.textContent=(d.error||'Save failed');
   }
   async function loadUsers(){
-    loadDemoLeadsEmail();
     var data=await (await api('/api/users')).json();
     var tb=document.getElementById('userRows');
     if(data.error){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">'+esc(data.error)+'</td></tr>';return;}

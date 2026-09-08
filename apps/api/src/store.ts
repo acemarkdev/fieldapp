@@ -620,3 +620,17 @@ export async function setConfig(key: string, value: string): Promise<void> {
   const { error } = await db().from('app_config').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
   if (error) throw error;
 }
+
+
+// Demo leads (global, not tenant-scoped) — read via service-role for the Sales > Leads tab.
+export async function listDemoLeads(limit = 500): Promise<any[]> {
+  const { data, error } = await db().from('demo_leads').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+// Customer-role users for the CRM > Customers tab.
+export async function listCustomers(tenantId: string): Promise<any[]> {
+  const { data, error } = await db().from('app_users').select('id,name,email,client_code,active,created_at').eq('tenant_id', tenantId).eq('role', 'customer').order('name');
+  if (error) throw error;
+  return data ?? [];
+}
