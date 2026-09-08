@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.70.3';
+export const APP_VERSION = '0.70.4';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.70.4', date: '2026-09-07', changes: [
+    'Budget: a warning now appears when windows have no Width/Height, e.g. \'N windows have no dimensions — their m² charges (extra windows and COM units) are £0 until you add dimensions\'. Explains why m²-based amounts read zero even when the rate is set.',
+  ] },
   { version: '0.70.3', date: '2026-09-07', changes: [
     'Budget: commercial units are recognised by the label COM or COMM (e.g. COM, COMM, COM-1, COMM2) and billed by the m² rate. Tightened so ordinary words that merely start with \'com\' are not misread as commercial.',
   ] },

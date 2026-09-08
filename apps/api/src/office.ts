@@ -443,6 +443,7 @@ const server = createServer(async (req, res) => {
       const rule = ruleId ? await getPricingRule(ruleId, ctx.tenant_id) : null;
       let breakdown: unknown = null;
       let itemList: any[] = [];
+      let missingDims = 0;
       if (rule && (rule.params as any)?.sale) {
         const items = await listSurveyItems(job.id);
         const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
@@ -456,13 +457,15 @@ const server = createServer(async (req, res) => {
           };
         });
         breakdown = priceJob(priceItems, rule as any);
+        // Windows with no dimensions can't be priced by m² (their extra-window / COM charge is £0).
+        missingDims = priceItems.filter((it) => it.category === 'window' && (it.kind ?? 'item') !== 'snag' && !it.is_variation && !((it.width_mm || 0) > 0 && (it.height_mm || 0) > 0)).length;
         // Non-snag items with their variation state, so the UI can flag variations.
         itemList = priceItems.filter((it) => (it.kind ?? 'item') !== 'snag').map((it) => ({
           id: it.id, full_code: it.full_code, category: it.category, flat: it.flat ?? null,
           is_variation: !!it.is_variation, variation_amount: it.variation_amount ?? 0,
         }));
       }
-      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown, items: itemList });
+      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown, items: itemList, missingDims });
       return;
     }
     if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'PUT') {
@@ -3392,7 +3395,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
             +'<td><input id="vamt_'+it.id+'" type="number" min="0" step="0.01" value="'+(it.is_variation&&it.variation_amount?(it.variation_amount/100):'')+'" '+(it.is_variation?'':'disabled')+' onchange="saveItemVar(\\''+it.id+'\\')" style="width:92px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px"></td></tr>';
         }).join('')+'</tbody></table></div>';
     }
-    host.innerHTML=cards+table+itemsHtml;
+    var warn=d.missingDims?'<div style="background:#fff4ce;border:1px solid #f0d97a;border-radius:10px;padding:10px 14px;margin:0 0 12px;font-size:13px;color:#7a5b00">⚠ '+d.missingDims+' window'+(d.missingDims===1?' has':'s have')+' no Width/Height — their m² charges (extra windows above the included count, and COM units) are £0 until you add dimensions.</div>':'';
+    host.innerHTML=cards+warn+table+itemsHtml;
   }
   async function downloadPricePdf(){
     var code=document.getElementById('fpJob').value; if(!code){tShow('Pick a job first');return;}
