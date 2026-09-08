@@ -634,3 +634,26 @@ export async function listCustomers(tenantId: string): Promise<any[]> {
   if (error) throw error;
   return data ?? [];
 }
+
+
+// ---- Usage billing (vendor) ----
+export async function listTenants(): Promise<any[]> {
+  const { data, error } = await db().from('tenants').select('id,name,slug,item_rate_pennies').order('name');
+  if (error) throw error;
+  return data ?? [];
+}
+export async function getTenant(id: string): Promise<any | null> {
+  const { data, error } = await db().from('tenants').select('id,name,slug,item_rate_pennies').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+export async function setTenantRate(id: string, pennies: number): Promise<void> {
+  const { error } = await db().from('tenants').update({ item_rate_pennies: pennies }).eq('id', id);
+  if (error) throw error;
+}
+export async function countItemsCreated(tenantId: string, fromISO: string, toISO: string): Promise<number> {
+  const { count, error } = await db().from('survey_items').select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId).gte('created_at', fromISO).lt('created_at', toISO);
+  if (error) throw error;
+  return count ?? 0;
+}

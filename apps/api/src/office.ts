@@ -15,7 +15,8 @@ import { createClient } from '@supabase/supabase-js';
 import { db, ACE_TENANT } from './supabase';
 import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule, deletePricingRule,
   getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
-  latestTestResults, insertTestResult, allTestResults, listTestVersions, listDemoLeads, listCustomers } from './store';
+  latestTestResults, insertTestResult, allTestResults, listTestVersions, listDemoLeads, listCustomers,
+  listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
@@ -1012,6 +1013,41 @@ const server = createServer(async (req, res) => {
       send(res, 200, await listCustomers(ctx.tenant_id));
       return;
     }
+
+    // Usage billing: items created per tenant per month x per-item rate. Any admin sees their own
+    // tenant; the Acemark (vendor) super-admin sees every tenant.
+    if (p === '/api/billing' && req.method === 'GET') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      const isSuper = ctx.tenant_id === ACE_TENANT;
+      const mp = url.searchParams.get('month') || '';
+      const month = /^\d{4}-\d{2}$/.test(mp) ? mp : new Date().toISOString().slice(0, 7);
+      const [y, m] = month.split('-').map(Number);
+      const fromISO = new Date(Date.UTC(y, m - 1, 1)).toISOString();
+      const toISO = new Date(Date.UTC(y, m, 1)).toISOString();
+      const tenants = isSuper ? await listTenants() : [await getTenant(ctx.tenant_id)].filter(Boolean);
+      const rows: any[] = []; let ti = 0, ta = 0;
+      for (const t of tenants) {
+        const items = await countItemsCreated(t.id, fromISO, toISO);
+        const rate = (t as any).item_rate_pennies ?? 0;
+        const amount = items * rate;
+        rows.push({ tenant_id: t.id, name: t.name, rate_pennies: rate, items, amount_pennies: amount });
+        ti += items; ta += amount;
+      }
+      send(res, 200, { month, superadmin: isSuper, rows, totals: { items: ti, amount_pennies: ta } });
+      return;
+    }
+    // Set a tenant's per-item rate — vendor super-admin only.
+    if (p.startsWith('/api/tenants/') && p.endsWith('/rate') && req.method === 'PUT') {
+      if (!(ctx.role === 'admin' && ctx.tenant_id === ACE_TENANT)) { send(res, 403, { error: 'Super-admin only' }); return; }
+      const id = p.split('/')[3] ?? '';
+      const b = await readJson(req);
+      let pennies = Math.round(Number(b.rate_pennies ?? 0));
+      if (!Number.isFinite(pennies) || pennies < 0) pennies = 0;
+      await setTenantRate(id, pennies);
+      audit(ctx, 'tenant.rate', 'tenant', id, `Set per-item rate to £${(pennies / 100).toFixed(2)}`);
+      send(res, 200, { ok: true });
+      return;
+    }
     if (p === '/api/logs' && req.method === 'GET') {
       if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
       send(res, 200, await listAuditLog(ctx.tenant_id, 300));
@@ -1647,6 +1683,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
         <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
         <button id="tabLogs" class="tab" style="display:none" onclick="showTab('logs')">Logs</button>
+        <button id="tabBilling" class="tab" style="display:none" onclick="showTab('billing')">Billing</button>
       </div></div>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
@@ -1939,6 +1976,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2" style="margin-top:12px;overflow-x:auto"><table style="min-width:600px"><thead><tr>
         <th>NAME</th><th>EMAIL</th><th>CLIENT</th><th>STATUS</th>
       </tr></thead><tbody id="customersRows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="billingView" style="display:none">
+    <main style="max-width:900px">
+      <h2>Billing &amp; usage</h2>
+      <div class="sub" id="billingSub">Items created per tenant per month, at each tenant's per-item rate.</div>
+      <div class="chips" style="align-items:center;margin:12px 0;gap:10px">
+        <label style="font-size:12px;color:var(--muted)">Month</label>
+        <input id="billMonth" type="month" class="tinput" onchange="loadBilling()">
+        <span id="billMsg" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div class="card2" style="overflow-x:auto"><table style="min-width:640px"><thead><tr>
+        <th>TENANT</th><th>RATE (£/item)</th><th>ITEMS</th><th>AMOUNT</th>
+      </tr></thead><tbody id="billRows"></tbody></table></div>
     </main>
   </div>
 
@@ -2687,6 +2739,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('logsView').style.display=name==='logs'?'block':'none';
     document.getElementById('leadsView').style.display=name==='leads'?'block':'none';
     document.getElementById('customersView').style.display=name==='customers'?'block':'none';
+    document.getElementById('billingView').style.display=name==='billing'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
@@ -2701,6 +2754,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabLogs').classList.toggle('on',name==='logs');
     var _tl=document.getElementById('tabLeads'); if(_tl)_tl.classList.toggle('on',name==='leads');
     var _tc=document.getElementById('tabCustomers'); if(_tc)_tc.classList.toggle('on',name==='customers');
+    var _tbl=document.getElementById('tabBilling'); if(_tbl)_tbl.classList.toggle('on',name==='billing');
     if(name==='items')loadItems(); // always refresh (e.g. after saving in Mapping)
     if(name==='dashboard')loadDashboard();
     if(name==='mapping')loadMapping();
@@ -2715,11 +2769,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='logs')loadLogs();
     if(name==='leads')loadLeads();
     if(name==='customers')loadCustomers();
+    if(name==='billing')loadBilling();
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -2732,6 +2787,31 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var rows; try{rows=await (await api('/api/leads')).json();}catch(e){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">Could not load leads.</td></tr>';return;}
     if(!rows||!rows.length){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">No leads yet.</td></tr>';return;}
     tb.innerHTML=rows.map(function(r){return '<tr><td style="white-space:nowrap">'+esc(new Date(r.created_at).toLocaleString('en-GB'))+'</td><td>'+esc(r.kind||'')+'</td><td>'+esc(r.email||'')+'</td><td>'+esc(r.name||'')+'</td><td>'+esc(r.company||'')+'</td><td>'+esc(r.phone||'')+'</td><td>'+esc(r.message||'')+'</td><td>'+esc(r.app_version||'')+'</td></tr>';}).join('');
+  }
+  async function loadBilling(){
+    var mo=document.getElementById('billMonth');
+    if(mo&&!mo.value){var d=new Date();mo.value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+    var month=mo?mo.value:'';
+    var tb=document.getElementById('billRows'); tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
+    var d; try{d=await (await api('/api/billing?month='+encodeURIComponent(month))).json();}catch(e){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Could not load.</td></tr>';return;}
+    if(d.error){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">'+esc(d.error)+'</td></tr>';return;}
+    var sup=!!d.superadmin;
+    document.getElementById('billingSub').textContent=sup?'All tenants — items created in the month × each tenant\\'s per-item rate. Edit a rate inline.':'Your tenant — items created in the month × your per-item rate.';
+    var rows=(d.rows||[]).map(function(r){
+      var rateCell=sup?('<input class="rate" type="number" min="0" step="0.01" value="'+(r.rate_pennies/100)+'" onchange="saveTenantRate(\\''+r.tenant_id+'\\',this.value)">'):('£'+(r.rate_pennies/100).toFixed(2));
+      return '<tr><td>'+esc(r.name||'')+'</td><td>'+rateCell+'</td><td>'+r.items+'</td><td><b>'+gbp(r.amount_pennies)+'</b></td></tr>';
+    }).join('');
+    var tot=d.totals||{items:0,amount_pennies:0};
+    rows+='<tr style="border-top:2px solid var(--line)"><td><b>Total</b></td><td></td><td><b>'+tot.items+'</b></td><td><b>'+gbp(tot.amount_pennies)+'</b></td></tr>';
+    tb.innerHTML=rows;
+  }
+  async function saveTenantRate(id,val){
+    var pennies=Math.round(parseFloat(val)*100); if(isNaN(pennies)||pennies<0)pennies=0;
+    var msg=document.getElementById('billMsg'); if(msg)msg.textContent='Saving…';
+    var r=await api('/api/tenants/'+id+'/rate',{method:'PUT',body:JSON.stringify({rate_pennies:pennies})});
+    var d=await r.json();
+    if(r.ok&&d.ok){ if(msg){msg.textContent='Saved';setTimeout(function(){msg.textContent='';},1200);} loadBilling(); }
+    else if(msg)msg.textContent=(d.error||'Save failed');
   }
   async function loadCustomers(){
     var tb=document.getElementById('customersRows'); tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
@@ -2825,6 +2905,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabTests',canCap('dashboard.view'));
     show('tabLeads',canCap('jobs.manage'));
     show('tabCustomers',canCap('jobs.manage'));
+    show('tabBilling',myRole==='admin');
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
     rebuildNav();

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.73.0';
+export const APP_VERSION = '0.74.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.74.0', date: '2026-09-08', changes: [
+    'Admin → Billing: usage billing per tenant. Set a per-item rate for each tenant; the screen shows items created in a chosen month × that rate, with a total, for monthly invoicing. Each admin sees their own tenant; the Acemark (vendor) super-admin sees every tenant and can edit each rate inline. Counts all survey items created that month. Requires migration 0033 (adds tenants.item_rate_pennies).',
+  ] },
   { version: '0.73.0', date: '2026-09-08', changes: [
     'Grouped navigation: the top menu is now organised into five dropdown groups \u2014 Operations (Dashboard, Items, Mapping, Plans, Calendar), Sales (Leads), CRM (Customers), Finance (Budget) and Admin (Teams & rates, Monday sync, Test, Users, Roles, Logs). Groups you have no access to are hidden. New Leads tab lists demo/quote leads (and holds the quote-destination email, moved from Users); new Customers tab lists customer portal accounts.',
   ] },
