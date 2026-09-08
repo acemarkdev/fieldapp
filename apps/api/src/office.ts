@@ -617,7 +617,8 @@ const server = createServer(async (req, res) => {
       if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
       if (!postcode) { send(res, 400, { error: 'A postcode is required.' }); return; }
       try {
-        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode, dates: pickJobDates(b) });
+        const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode, site_code, dates: pickJobDates(b) });
         audit(ctx, 'job.create', 'job', `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} — ${name}`);
         send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
       } catch (err: any) {
@@ -634,7 +635,7 @@ const server = createServer(async (req, res) => {
       const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       { const dd: Record<string, unknown> = {}; for (const k of JOB_DATE_FIELDS) dd[k] = (job as any)[k] ?? null;
-        send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, ...dd }); }
+        send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, ...dd }); }
       return;
     }
     // Edit a job's details (name / address / postcode) — managers only.
@@ -648,7 +649,8 @@ const server = createServer(async (req, res) => {
       const postcode = String(b.postcode ?? '').trim();
       if (!name) { send(res, 400, { error: 'Job name is required.' }); return; }
       if (!postcode) { send(res, 400, { error: 'Postcode is required.' }); return; }
-      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode, dates: pickJobDates(b) });
+      const site_code = String(b.site_code ?? '').trim() || `${job.client_code}.${job.job_code}`;
+      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode, site_code, dates: pickJobDates(b) });
       audit(ctx, 'job.update', 'job', code, `Edited details for ${code}`);
       send(res, 200, { ok: true });
       return;
@@ -734,7 +736,7 @@ const server = createServer(async (req, res) => {
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const items = await listSurveyItems(job.id);
       send(res, 200, {
-        job: { code, name: job.name, board: job.monday_board_id, postcode: (job as any).postcode ?? null },
+        job: { code, name: job.name, board: job.monday_board_id, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null },
         teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
         items: items.map((it) => itemRow(it, job, teams)), role: ctx.role,
       });
@@ -2288,6 +2290,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
       +'<div class="field full"><label>Site address</label><input id="nj_addr" placeholder="Full site address (optional)"></div>'
       +'<div class="field full"><label>Postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="field full"><label>Site code</label><input id="nj_sitecode" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
       +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
       +ruleField
       +'</div>';
@@ -2299,7 +2302,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal('New job',html);
     ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
     njCode();
-    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode'].concat(jobDateInputIds('nj')));
+    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode','nj_sitecode'].concat(jobDateInputIds('nj')));
   }
   function njCode(){var c=(document.getElementById('nj_client').value||'').trim().toUpperCase();var j=(document.getElementById('nj_job').value||'').trim().toUpperCase();document.getElementById('njPrev').textContent=(c||'CLIENT')+'.'+(j||'JOB');}
   async function saveJob(){
@@ -2312,7 +2315,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!postcode){document.getElementById('njErr').textContent='Postcode is required.';return;}
     var dts=collectJobDates('nj');
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('njErr').textContent=dErr;jobTab('nj','t');return;}
-    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode},dts))});
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode,site_code:(document.getElementById('nj_sitecode').value||'').trim()},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
@@ -2342,6 +2345,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="field full"><label>Job name *</label><input id="ej_name" value="'+q(d.name)+'"></div>'
       +'<div class="field full"><label>Site address</label><input id="ej_addr" value="'+q(d.site_address)+'" placeholder="Full site address (optional)"></div>'
       +'<div class="field full"><label>Postcode *</label><input id="ej_postcode" value="'+q(d.postcode)+'" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="field full"><label>Site code</label><input id="ej_sitecode" value="'+q(d.site_code)+'" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
       +'</div>';
     var html=jobTabBar('ej')
       +'<div id="ejDetails">'+detail+'</div>'
@@ -2349,7 +2353,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="ferr" id="ejErr" style="padding:0 22px"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
     openModal('Edit job '+code,html);
-    watchModalDirty(['ej_name','ej_addr','ej_postcode'].concat(jobDateInputIds('ej')));
+    watchModalDirty(['ej_name','ej_addr','ej_postcode','ej_sitecode'].concat(jobDateInputIds('ej')));
   }
   async function saveEditJob(code){
     var name=(document.getElementById('ej_name').value||'').trim();
@@ -2358,7 +2362,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!postcode){document.getElementById('ejErr').textContent='Postcode is required.';return;}
     var dts=collectJobDates('ej');
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('ejErr').textContent=dErr;jobTab('ej','t');return;}
-    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode},dts))});
+    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode,site_code:(document.getElementById('ej_sitecode').value||'').trim()},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){closeModal(true);tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
   }
@@ -2398,7 +2402,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
     bulkFieldPick(); // render the bulk value control for the selected field
     var pc=data.job.postcode?(' <span style="color:var(--muted);font-weight:500">· '+esc(data.job.postcode)+'</span>'):'';
-    document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+esc(data.job.name)+pc;
+    var sc=(data.job.site_code||data.job.code);
+    document.getElementById('title').innerHTML='<span class="mono">'+esc(sc)+'</span> — '+esc(data.job.name)+pc;
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
     document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
@@ -3368,10 +3373,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!b){host.innerHTML='<div class="ro" style="padding:14px 2px">The assigned rule has no parameters yet. Edit it above.</div>';return;}
     var marginPct=b.saleTotal?Math.round(b.margin/b.saleTotal*100):0;
     var card=function(v,l,s,warn){return '<div class="stat'+(warn?' warn':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';};
+    // Cost + margin are temporarily zeroed — the cost model is under review (see backlog).
     var cards='<div class="statgrid" style="margin:14px 0">'
       +card(gbp(b.saleTotal),'Customer price','')
-      +card(gbp(b.costTotal),'Our cost (budget)','')
-      +card(gbp(b.margin),'Margin',marginPct+'%',b.margin<0)+'</div>';
+      +card(gbp(0),'Our cost (budget)','under review')
+      +card(gbp(0),'Margin','under review',false)+'</div>';
     var rows=b.flats.map(function(f){
       return '<tr><td><b>'+esc(f.flat)+'</b></td><td>'+f.windows+'</td><td>'+gbp(f.base)+'</td>'
         +'<td>'+(f.extraWindows?(f.extraWindows+' · '+f.extraM2+' m²'):'—')+'</td>'

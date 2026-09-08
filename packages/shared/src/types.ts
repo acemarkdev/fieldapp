@@ -38,6 +38,7 @@ export interface Job {
   name: string;
   site_address: string | null;
   postcode: string | null;
+  site_code: string | null;   // display/site-facing code; item codes still use client_code.job_code
   // Programme dates (planning + Gantt). Optional; separate from mapping_start_date.
   programme_start: string | null; programme_end: string | null;
   mapping_start: string | null; mapping_end: string | null;

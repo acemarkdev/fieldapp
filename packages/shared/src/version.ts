@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.70.4';
+export const APP_VERSION = '0.71.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.71.0', date: '2026-09-08', changes: [
+    'Jobs: a separate Site code. New/Edit job now has a \'Site code\' field shown on screen (the top header now displays it instead of the raw client.job), while item codes still build from client_code.job_code. Optional \u2014 defaults to CLIENT.JOB when blank. Existing jobs are backfilled from client.job (migration 0032).',
+  ] },
+  { version: '0.70.5', date: '2026-09-08', changes: [
+    'Budget: \'Our cost (budget)\' and \'Margin\' (amount and %) are temporarily shown as £0 / 0 and marked \'under review\', while the internal cost model is reworked. Customer price is unaffected.',
+  ] },
   { version: '0.70.4', date: '2026-09-07', changes: [
     'Budget: a warning now appears when windows have no Width/Height, e.g. \'N windows have no dimensions — their m² charges (extra windows and COM units) are £0 until you add dimensions\'. Explains why m²-based amounts read zero even when the rate is set.',
   ] },
