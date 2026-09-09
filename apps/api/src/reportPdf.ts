@@ -7,7 +7,7 @@
 // The office server streams this at GET /api/job/:code/report.pdf?type=survey|install.
 import PDFDocument from 'pdfkit';
 import {
-  getJobByCode, listSurveyItems, listTeams, listJobPlans, downloadPlan,
+  getJobByRef, listSurveyItems, listTeams, listJobPlans, downloadPlan,
   listItemPhotos, downloadPhoto,
 } from './store';
 import { effectiveRatePennies, formatPennies } from '@ace/shared';
@@ -329,8 +329,8 @@ function table(doc: any, x: number, width: number, cols: { k: string; t: string;
 }
 
 // ---- fetch a job's data, then render ----
-export async function buildJobReportPdf(clientCode: string, jobCode: string, tenantId: string, type: ReportType): Promise<{ buffer: Buffer; job: any }> {
-  const job = await getJobByCode(clientCode, jobCode);
+export async function buildJobReportPdf(jobRef: string, tenantId: string, type: ReportType): Promise<{ buffer: Buffer; job: any }> {
+  const job = await getJobByRef(jobRef);
   if (job.tenant_id !== tenantId) throw new Error('forbidden');
   const items = await listSurveyItems(job.id);
   const teams = await listTeams(tenantId);

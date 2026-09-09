@@ -3,7 +3,7 @@
 // IMPORTANT: this is a CUSTOMER-FACING document — it shows ONLY the sale side
 // (what the customer pays). It never prints our cost or margin.
 import PDFDocument from 'pdfkit';
-import { getJobByCode, listSurveyItems, listItemPricing, getJobRuleId, getPricingRule } from './store';
+import { getJobByRef, listSurveyItems, listItemPricing, getJobRuleId, getPricingRule } from './store';
 import { priceJob, classifyCategory, formatPennies, type PriceItem, type JobBreak } from '@ace/shared';
 
 const PRIMARY = '#3a2b72';
@@ -125,8 +125,8 @@ export function renderPricePdf(data: PriceData): Promise<Buffer> {
   return done;
 }
 
-export async function buildJobPricePdf(clientCode: string, jobCode: string, tenantId: string): Promise<{ buffer: Buffer; job: any } | null> {
-  const job = await getJobByCode(clientCode, jobCode);
+export async function buildJobPricePdf(jobRef: string, tenantId: string): Promise<{ buffer: Buffer; job: any } | null> {
+  const job = await getJobByRef(jobRef);
   if (job.tenant_id !== tenantId) throw new Error('forbidden');
   const ruleId = await getJobRuleId(job.id);
   const rule = ruleId ? await getPricingRule(ruleId, tenantId) : null;

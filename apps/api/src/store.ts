@@ -10,6 +10,17 @@ export async function getJobByCode(clientCode: string, jobCode: string): Promise
   return data as Job;
 }
 
+const JOB_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Resolve a job from a URL/param reference that may be either its uuid id (the addressing key
+// used since jobs can share a client.job code) or a legacy "CLIENT.JOB" code (still unique-safe
+// for jobs that aren't duplicated).
+export async function getJobByRef(ref: string): Promise<Job> {
+  const r = String(ref ?? '').trim();
+  if (JOB_UUID_RE.test(r)) return getJob(r);
+  const [c, j] = r.split('.');
+  return getJobByCode(c, j);
+}
+
 // The optional programme date fields (six start/end pairs) shared by create + update.
 export const JOB_DATE_FIELDS = [
   'programme_start','programme_end','mapping_start','mapping_end','survey_start','survey_end',
@@ -56,7 +67,7 @@ export async function setJobBoard(jobId: string, boardId: string | null, slug?: 
 export async function upsertSurveyItem(item: Partial<SurveyItem>): Promise<SurveyItem> {
   const { data, error } = await db()
     .from('survey_items')
-    .upsert(item, { onConflict: 'tenant_id,full_code' })
+    .upsert(item, { onConflict: 'job_id,full_code' })
     .select().single();
   if (error) throw error;
   return data as SurveyItem;
@@ -194,9 +205,10 @@ export async function listAuditLog(tenantId: string, limit = 300): Promise<any[]
 }
 
 // Does another item in this tenant already use this full_code? (excludes exceptId — the item being edited.)
-export async function codeExists(tenantId: string, fullCode: string, exceptId: string): Promise<boolean> {
+// Item codes are unique per JOB (not per tenant), so a clash check is scoped to the job.
+export async function codeExists(jobId: string, fullCode: string, exceptId: string): Promise<boolean> {
   const { data, error } = await db().from('survey_items')
-    .select('id').eq('tenant_id', tenantId).eq('full_code', fullCode).neq('id', exceptId).limit(1);
+    .select('id').eq('job_id', jobId).eq('full_code', fullCode).neq('id', exceptId).limit(1);
   if (error) throw error;
   return !!(data && data.length);
 }
@@ -214,7 +226,7 @@ export async function setJobMappingDate(id: string, date: string | null, tenantI
 export async function bulkInsertSurveyItems(rows: Record<string, unknown>[]): Promise<number> {
   if (!rows.length) return 0;
   const { data, error } = await db().from('survey_items')
-    .upsert(rows, { onConflict: 'tenant_id,full_code', ignoreDuplicates: true })
+    .upsert(rows, { onConflict: 'job_id,full_code', ignoreDuplicates: true })
     .select('id');
   if (error) throw error;
   return data?.length ?? 0;

@@ -21,7 +21,7 @@ import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, toMm } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
-import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
+import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
   insertSurveyItem, listItemPhotos, signedPhotoUrl,
   filterItemIdsByTenant, bulkUpdateItems,
@@ -167,7 +167,7 @@ async function dashboardData(tenantId: string) {
     const labourP = items.reduce((s, it) => s + (effectiveRatePennies(it, teams) ?? 0), 0);
     for (const it of items) statusCounts[it.install_status ?? 'none'] = (statusCounts[it.install_status ?? 'none'] ?? 0) + 1;
     return {
-      code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
+      id: j.id, code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
       items: items.length, windows: items.length - snags.length, snags: snags.length,
       synced, installed, openSnags, dirty, labour: formatPennies(labourP), labourP,
     };
@@ -442,7 +442,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'GET') {
       if (!allow('finance.view')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const rules = await listPricingRules(ctx.tenant_id);
       const ruleId = await getJobRuleId(job.id);
@@ -477,7 +477,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'PUT') {
       if (!allow('finance.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       await setJobRuleId(job.id, ctx.tenant_id, b.rule_id || null);
@@ -488,13 +488,12 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/price.pdf') && req.method === 'GET') {
       if (!allow('finance.view')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
       try {
-        const out = await buildJobPricePdf(c, j, ctx.tenant_id);
+        const out = await buildJobPricePdf(code, ctx.tenant_id);
         if (!out) { send(res, 400, { error: 'Assign a pricing rule to this job first.' }); return; }
         res.writeHead(200, {
           'content-type': 'application/pdf',
-          'content-disposition': `attachment; filename="${c}.${j}-price-breakdown.pdf"`,
+          'content-disposition': `attachment; filename="${out.job.client_code}.${out.job.job_code}-price-breakdown.pdf"`,
           'cache-control': 'no-store',
         });
         res.end(out.buffer);
@@ -523,7 +522,7 @@ const server = createServer(async (req, res) => {
       // Scanners only see jobs an admin has released for mapping.
       if (ctx.role === 'scanner') jobs = jobs.filter((j) => (j as any).status === 'pending_mapping');
       send(res, 200, jobs.map((j) => ({
-        code: `${j.client_code}.${j.job_code}`, name: j.name, site_code: (j as any).site_code ?? null,
+        id: j.id, code: `${j.client_code}.${j.job_code}`, name: j.name, site_code: (j as any).site_code ?? null,
         status: (j as any).status ?? 'new', mapping_start_date: (j as any).mapping_start_date ?? null,
       })));
       return;
@@ -567,7 +566,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-date') && req.method === 'POST') {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const date = String(b.date ?? '').trim() || null;
@@ -581,7 +580,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/mapping-items') && req.method === 'POST') {
       if (!allow('items.create')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const block = String(b.block ?? '').trim().toUpperCase() || null;
@@ -618,7 +617,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/import-draft')) {
       if (!allow('items.create')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       if (req.method === 'GET') {
         const d = await getImportDraft(ctx.tenant_id, job.id);
@@ -645,7 +644,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/import-commit') && req.method === 'POST') {
       if (!allow('items.create')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const rows = Array.isArray(b.rows) ? b.rows : [];
@@ -697,13 +696,13 @@ const server = createServer(async (req, res) => {
       if (!client_code || !job_code) { send(res, 400, { error: 'Client code and job code are required (they form the job code, e.g. AXS.LAB).' }); return; }
       if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
       if (!postcode) { send(res, 400, { error: 'A postcode is required.' }); return; }
+      const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
       try {
-        const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
         const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode, site_code, dates: pickJobDates(b) });
-        audit(ctx, 'job.create', 'job', `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} — ${name}`);
-        send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
+        audit(ctx, 'job.create', 'job', job.id, `Created job ${job.client_code}.${job.job_code} — ${name} (site ${site_code})`);
+        send(res, 200, { ok: true, id: job.id, code: `${job.client_code}.${job.job_code}`, site_code });
       } catch (err: any) {
-        if (err?.code === '23505') { send(res, 409, { error: `Job ${client_code}.${job_code} already exists.` }); return; }
+        if (err?.code === '23505') { send(res, 409, { error: `A job with site code "${site_code}" already exists. Give this one a different site code.` }); return; }
         send(res, 500, { error: err?.message ?? String(err) });
       }
       return;
@@ -713,17 +712,17 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && req.method === 'GET' && p.split('/').length === 4) {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       { const dd: Record<string, unknown> = {}; for (const k of JOB_DATE_FIELDS) dd[k] = (job as any)[k] ?? null;
-        send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, ...dd }); }
+        send(res, 200, { id: job.id, code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, ...dd }); }
       return;
     }
     // Edit a job's details (name / address / postcode) — managers only.
     if (p.startsWith('/api/job/') && req.method === 'PUT' && p.split('/').length === 4) {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const name = String(b.name ?? '').trim();
@@ -741,7 +740,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && req.method === 'DELETE' && p.split('/').length === 4) {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const n = await countItemsForJob(job.id);
       if (n > 0) { send(res, 409, { error: `This job has ${n} item${n === 1 ? '' : 's'}. Delete or move them first — a job can only be removed when it's empty.` }); return; }
@@ -754,7 +753,7 @@ const server = createServer(async (req, res) => {
     // ---- job file attachments (drawings / PDFs / zips) ----
     if (p.startsWith('/api/job/') && p.endsWith('/files') && req.method === 'GET') {
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const files = await listJobFiles(job.id);
       const out = await Promise.all(files.map(async (f) => ({
@@ -766,7 +765,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/files') && req.method === 'POST') {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const files = Array.isArray(b.files) ? b.files : [];
@@ -794,7 +793,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.includes('/files/') && req.method === 'DELETE') {
       if (!(ctx.role === 'admin' || ctx.role === 'office')) { send(res, 403, { error: 'Managers only' }); return; }
       const parts = p.split('/'); const code = decodeURIComponent(parts[3] ?? ''); const fileId = parts[5];
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       await deleteJobFile(fileId, ctx.tenant_id);
       audit(ctx, 'job.files.delete', 'job', code, `Removed a file from ${code}`);
@@ -812,12 +811,11 @@ const server = createServer(async (req, res) => {
         send(res, 200, { job: { code: 'ALL', name: 'All jobs', board: null }, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })), items: rows, role: ctx.role });
         return;
       }
-      const [c, j] = code.split('.');
-      const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const items = await listSurveyItems(job.id);
       send(res, 200, {
-        job: { code, name: job.name, board: job.monday_board_id, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null },
+        job: { id: job.id, code: `${job.client_code}.${job.job_code}`, name: job.name, board: job.monday_board_id, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null },
         teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
         items: items.map((it) => itemRow(it, job, teams)), role: ctx.role,
       });
@@ -828,8 +826,7 @@ const server = createServer(async (req, res) => {
     if (p === '/api/items' && req.method === 'POST') {
       if (!allow('items.create')) return;
       const b = await readJson(req);
-      const [c, j] = String(b.job ?? '').split('.');
-      const job = await getJobByCode(c, j);
+      const job = await getJobByRef(String(b.job ?? ''));
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const room = String(b.room ?? '').trim().toUpperCase();
       const item = String(b.item ?? '').trim().toUpperCase();
@@ -1056,7 +1053,7 @@ const server = createServer(async (req, res) => {
         // Floor and Flat are independent fields — keep the floor as-is (Flat is just what the code uses as its F-segment).
         const newFloor = item.floor ?? null;
         const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block: item.block, elevation: item.elevation, flat: newFlat, floor: newFloor, room: newRoom, item: item.item_code });
-        if (await codeExists(ctx.tenant_id, full_code, id)) { send(res, 409, { error: `Code ${full_code} already exists — pick a different Flat/Room.` }); return; }
+        if (await codeExists(item.job_id, full_code, id)) { send(res, 409, { error: `Code ${full_code} already exists in this job — pick a different Flat/Room.` }); return; }
         patch.flat = newFlat; patch.room_code = newRoom; patch.floor = newFloor; patch.full_code = full_code;
       }
       // An item flagged 'Unfinished' (from an Excel import) clears itself once all required data is present.
@@ -1213,8 +1210,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/board') && req.method === 'PUT') {
       if (!allow('monday.sync')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
-      const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const { board } = await readJson(req);
       const { board: boardId, slug } = parseMondayRef(board);
@@ -1242,8 +1238,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/sync') && req.method === 'POST') {
       if (!allow('monday.sync')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
-      const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
       const items = await listSurveyItems(job.id);
@@ -1262,8 +1257,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/pull-fitters') && req.method === 'POST') {
       if (!allow('monday.sync')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
-      const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
 
@@ -1320,18 +1314,20 @@ const server = createServer(async (req, res) => {
     // Per-job PDF: survey sheet or install report. Browser downloads it (authed via bearer).
     if (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET') {
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
       const qt = url.searchParams.get('type');
       const type = (qt === 'install' ? 'install' : qt === 'customer_install' ? 'customer_install' : 'survey') as 'survey' | 'install' | 'customer_install';
+      let job: any;
+      try { job = await getJobByRef(code); } catch { send(res, 404, { error: 'Job not found' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       // Customers may ONLY pull the rate-free customer_install, and only for their own client.
       if (ctx.role === 'customer') {
-        if (type !== 'customer_install' || c !== ctx.client_code) { send(res, 403, { error: 'forbidden' }); return; }
+        if (type !== 'customer_install' || job.client_code !== ctx.client_code) { send(res, 403, { error: 'forbidden' }); return; }
       } else if (!allow('dashboard.view')) return;
       try {
-        const { buffer } = await buildJobReportPdf(c, j, ctx.tenant_id, type);
+        const { buffer } = await buildJobReportPdf(code, ctx.tenant_id, type);
         res.writeHead(200, {
           'content-type': 'application/pdf',
-          'content-disposition': `attachment; filename="${c}.${j}-${type}-report.pdf"`,
+          'content-disposition': `attachment; filename="${job.client_code}.${job.job_code}-${type}-report.pdf"`,
           'cache-control': 'no-store',
         });
         res.end(buffer);
@@ -1342,7 +1338,7 @@ const server = createServer(async (req, res) => {
     }
     if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'GET') {
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const plans = await listJobPlans(job.id);
       const withUrls = await Promise.all(plans.map(async (pl) => ({ id: pl.id, name: pl.name, url: await signedPlanUrl(pl.storage_path) })));
@@ -1354,7 +1350,7 @@ const server = createServer(async (req, res) => {
     if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'POST') {
       if (!allow('plans.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
+      const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const b = await readJson(req);
       const name = String(b.name ?? '').trim() || 'Plan';
@@ -2052,7 +2048,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div class="imp-toolbar">
             <button class="add" onclick="saveImportDraft(true)">Save draft</button>
             <button class="newbtn" onclick="commitImport()">Upload to Items</button>
-            <button class="bulk bclear" onclick="clearImportDraft()">Clear draft</button>
+            <button class="bulk bclear" onclick="clearImportDraft()">Clear screen &amp; delete draft</button>
             <select id="impStatusSel" class="colfilter" onchange="setImpStatus(this.value)" style="width:auto"><option value="">All rows</option><option value="unfinished">Unfinished only</option><option value="complete">Complete only</option></select>
             <span id="impSummary" class="imp-summary"></span>
           </div>
@@ -2247,13 +2243,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(!r.ok){tShow('Could not generate the report.');return null;}return r.blob();
     }).then(function(b){ if(!b)return; var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=code+'-install.pdf';document.body.appendChild(a);a.click();a.remove(); });
   }
-  var JOB_STATUS={}, JOB_MAPDATE={};
+  var JOB_STATUS={}, JOB_MAPDATE={}, JOBS_BY_ID={};
   // ---- Mapping (scanner pre-load) ----
   function loadMapping(){
     var box=document.getElementById('mapBody');
     if(!current||current==='ALL'){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
     var status=JOB_STATUS[current]||'';
-    document.getElementById('mapSub').innerHTML='Job <b>'+esc(current)+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
+    document.getElementById('mapSub').innerHTML='Job <b>'+esc((JOBS_BY_ID[current]||{}).site_code||curCode())+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
     if(status!=='pending_mapping'){
       if(canCap('jobs.manage')){
         box.innerHTML='<div class="card2" style="padding:16px;max-width:480px">'
@@ -2347,7 +2343,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var exRow=aoa[start]||[];
     var looksExample=exRow.some(function(cv){ return cv!=null&&/e\\.g\\.|yes \\/ n\\/a|count from/i.test(String(cv)); });
     if(looksExample)start++;
-    var jobClient=(current.split('.')[0]||'').toUpperCase(), jobCode=(current.split('.')[1]||'').toUpperCase();
+    var cc=curCode(); var jobClient=(cc.split('.')[0]||'').toUpperCase(), jobCode=(cc.split('.')[1]||'').toUpperCase();
     var rows=[], mismatch=0;
     for(var r=start;r<aoa.length;r++){
       var arr=aoa[r]||[]; var obj={};
@@ -2543,7 +2539,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function floorSeg(flat){ if(!flat) return ''; return /^[0-9]+$/.test(flat) ? ('F'+flat) : flat.toUpperCase(); }
   function levelOf(floor,flat){ return (flat&&String(flat).trim()!=='')?flat:floor; }
   function mapCode(block,elev,floor,flat,item){
-    var parts=current.split('.');
+    var parts=curCode().split('.');
     return [parts[0],parts[1],block,elev,floorSeg(levelOf(floor,flat)),item].filter(function(x){return x;}).join('.');
   }
   function stripF(v){ return String(v||'').trim().replace(/^F(?=[0-9])/i,''); } // "F1"->"1", "GF" stays
@@ -2638,17 +2634,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   async function loadJobs(){
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
-    JOB_STATUS={}; JOB_MAPDATE={};
-    jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
-    function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.title=code;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMapping();loadImport();}else loadItems();};
-      if(code!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(code);};d.appendChild(b);}
+    JOB_STATUS={}; JOB_MAPDATE={}; JOBS_BY_ID={};
+    // Jobs are addressed by their uuid id (two jobs may share a client.job code); the left list
+    // shows the free-text site code, tooltip shows the client.job code.
+    jobs.forEach(function(j){ JOBS_BY_ID[j.id]=j; JOB_STATUS[j.id]=j.status||'pending_mapping'; JOB_MAPDATE[j.id]=j.mapping_start_date||''; });
+    function mk(id,label,tip){var d=document.createElement('div');d.className='job'+(id===current?' on':'');d.textContent=label;d.title=tip||'';d.setAttribute('data-code',id);
+      d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMapping();loadImport();}else loadItems();};
+      if(id!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(id);};d.appendChild(b);}
       el.appendChild(d);}
-    if(myRole!=='scanner')mk('ALL','▦ All jobs');
-    jobs.forEach(function(j){mk(j.code,(j.site_code||j.code));});
-    // Scanner (or an empty current) lands on the first available job.
-    if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].code; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
+    if(myRole!=='scanner')mk('ALL','▦ All jobs','ALL');
+    jobs.forEach(function(j){mk(j.id,(j.site_code||j.code),j.code);});
+    // Scanner (or an empty/stale current) lands on the first available job.
+    if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].id; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
   }
+  // The client.job code (e.g. AXS.PAD) of the currently-selected job — used to build item codes.
+  function curCode(){ var j=JOBS_BY_ID[current]; return j?j.code:(current||''); }
   function opt(v,l,sel){return '<option value="'+v+'"'+(v===sel?' selected':'')+'>'+l+'</option>';}
   var JOB_DATE_PHASES=[
     {key:'programme',label:'Programme (overall)',color:'#64748b'},
@@ -2741,7 +2741,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
-      if(rsel&&rsel.value){ try{await api('/api/job/'+encodeURIComponent(d.code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rsel.value})});}catch(e){} }
+      if(rsel&&rsel.value){ try{await api('/api/job/'+encodeURIComponent(d.id||d.code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rsel.value})});}catch(e){} }
       var fl=document.getElementById('nj_files'); var picked=fl&&fl.files?fl.files.length:0;
       if(picked){ document.getElementById('njErr').textContent=''; tShow('Uploading '+picked+' file(s)…'); try{ await uploadJobFiles(d.code, fl.files); }catch(e){ tShow('Job created, but a file upload failed'); } }
       closeModal(true);tShow('Created '+d.code);loadJobs();
@@ -3192,11 +3192,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var jc=document.getElementById('dashJobs');jc.innerHTML='';
     d.jobs.forEach(function(j){
       var el=document.createElement('div');el.className='jobcard clickable';
-      el.setAttribute('onclick',"openItemsFiltered('"+j.code+"','all')");
+      el.setAttribute('onclick',"openItemsFiltered('"+j.id+"','all')");
       el.innerHTML='<div class="jobtop"><div><b class="mono">'+esc(j.code)+'</b> <span style="color:var(--muted)">'+esc(j.name)+'</span></div>'
         +'<div class="jobmeta">'+(j.board?'<span class="count green">board linked</span>':'<span class="count amber">no board</span>')+' · '+j.items+' items · '+j.snags+' snags · labour '+esc(j.labour)+'</div></div>'
         +bar('Synced',pct(j.synced,j.items),'')+bar('Installed',pct(j.installed,j.items),'green')
-        +(j.openSnags?'<div class="opensnag" onclick="event.stopPropagation();openItemsFiltered(\\''+j.code+'\\',\\'open_snags\\')">⚠ '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+' →</div>':'');
+        +(j.openSnags?'<div class="opensnag" onclick="event.stopPropagation();openItemsFiltered(\\''+j.id+'\\',\\'open_snags\\')">⚠ '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+' →</div>':'');
       jc.appendChild(el);
     });
   }
@@ -3331,8 +3331,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadPlansTab(){
     var sel=document.getElementById('planJob');
     var jobs=await (await api('/api/jobs')).json();
-    sel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' — '+esc(j.name)+'</option>';}).join('');
-    if(current&&jobs.some(function(j){return j.code===current;}))sel.value=current;
+    sel.innerHTML=jobs.map(function(j){return '<option value="'+j.id+'">'+esc(j.site_code||j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    if(current&&jobs.some(function(j){return j.id===current;}))sel.value=current;
     await loadPlans();
   }
   async function loadPlans(){
@@ -3632,7 +3632,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function openCreate(){
     var topts='<option value="">— no team —</option>'+teamOptionList('');
     var html='<div class="fgrid">'
-      +'<div class="codeprev" id="codePrev">'+current+'</div>'
+      +'<div class="codeprev" id="codePrev">'+curCode()+'</div>'
       +'<div class="groupt">LOCATION</div>'
       +field('f_block','Block','e.g. 1 → B1')+field('f_elev','Elevation','e.g. 1 → E1')
       +field('f_flat','Flat / plot','e.g. 21 → F21')+field('f_floor','Floor','e.g. 1 → F1')
@@ -3675,7 +3675,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function calcCode(){
     function g(id){return (document.getElementById(id).value||'').trim();}
     var flat=g('f_flat');flat=flat?('F'+flat.replace(/\\D/g,'')):'';
-    var parts=[current].concat([g('f_block'),g('f_elev'),flat,g('f_room').toUpperCase(),g('f_item').toUpperCase(),g('f_floor')].filter(function(x){return x;}));
+    var parts=[curCode()].concat([g('f_block'),g('f_elev'),flat,g('f_room').toUpperCase(),g('f_item').toUpperCase(),g('f_floor')].filter(function(x){return x;}));
     document.getElementById('codePrev').textContent=parts.join('.');
   }
   async function submitCreate(){
@@ -3832,7 +3832,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var jsel=document.getElementById('fpJob');
     var jobs=await (await api('/api/jobs')).json();
     var keep=jsel.value;
-    jsel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    jsel.innerHTML=jobs.map(function(j){return '<option value="'+j.id+'">'+esc(j.site_code||j.code)+' — '+esc(j.name)+'</option>';}).join('');
     if(keep)jsel.value=keep;
     await loadJobPricing();
   }

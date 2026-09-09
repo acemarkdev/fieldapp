@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.75.0';
+export const APP_VERSION = '0.76.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.76.0', date: '2026-09-09', changes: [
+    'Jobs can now share the same client.job code (e.g. two “AXS.PAD” sites). The free-text Site code is now each job’s unique identifier — give the second job a different Site code. Item codes are now unique per job (not per tenant), so each site can independently hold the same B3…W2 code. Jobs are addressed internally by a stable id, so renaming a Site code no longer risks clashes. Import from Excel: the clear button is now “Clear screen & delete draft”. Requires migration 0035.',
+  ] },
   { version: '0.75.0', date: '2026-09-09', changes: [
     'Operations → Mapping: Import from Excel. Upload a survey sheet (the Main tab) to load every row into an editable, filterable grid — all columns editable, saved as a per-job draft on the server (survives, visible to the team). When ready, ‘Upload to Items’ creates the items in one go. Any row missing required data (Block, Elevation, Flat or Floor, Room, Item, Material, Item type, Glass, Glazing, Width, Height, Open in/out) is still created but flagged ‘Unfinished’ — a new status shown in the Items view with its own filter, and an item clears the flag automatically once its details are completed. Requires migration 0034 (adds import_drafts + survey_items.incomplete).',
   ] },
