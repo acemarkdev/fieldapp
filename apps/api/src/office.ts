@@ -452,8 +452,12 @@ const server = createServer(async (req, res) => {
       let breakdown: unknown = null;
       let itemList: any[] = [];
       let missingDims = 0;
+      const includeOmit = url.searchParams.get('includeOmit') === '1';
+      let omitted = 0;
       if (rule && (rule.params as any)?.sale) {
-        const items = await listSurveyItems(job.id);
+        let items = await listSurveyItems(job.id);
+        omitted = items.filter((it: any) => it.install_status === 'omit').length;
+        if (!includeOmit) items = items.filter((it: any) => it.install_status !== 'omit');
         const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
         const priceItems: PriceItem[] = items.map((it: any) => {
           const f = ipMap.get(it.id);
@@ -473,7 +477,7 @@ const server = createServer(async (req, res) => {
           is_variation: !!it.is_variation, variation_amount: it.variation_amount ?? 0,
         }));
       }
-      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown, items: itemList, missingDims });
+      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown, items: itemList, missingDims, omitted, includeOmit });
       return;
     }
     if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'PUT') {
@@ -491,7 +495,7 @@ const server = createServer(async (req, res) => {
       if (!allow('finance.view')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
       try {
-        const out = await buildJobPricePdf(code, ctx.tenant_id);
+        const out = await buildJobPricePdf(code, ctx.tenant_id, url.searchParams.get('includeOmit') === '1');
         if (!out) { send(res, 400, { error: 'Assign a pricing rule to this job first.' }); return; }
         res.writeHead(200, {
           'content-type': 'application/pdf',
@@ -597,12 +601,15 @@ const server = createServer(async (req, res) => {
         const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
         const item = String(r.item ?? '').trim().toUpperCase();
         if (!item) continue;
+        // A row may carry its own block/elevation (multi-elevation preload); otherwise use the batch default.
+        const rBlock = (String(r.block ?? '').trim().toUpperCase() || block) || null;
+        const rElev = (String(r.elevation ?? '').trim().toUpperCase() || elevation) || null;
         // Flat (if set) is the level segment in the code, else the mapping Floor. Both are stored.
-        const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, item });
+        const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block: rBlock, elevation: rElev, flat, floor, item });
         if (seen.has(full_code)) continue; seen.add(full_code);
         fields.push({
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
-          block, elevation, floor: floor || null, flat: flat || null, item_code: item,
+          block: rBlock, elevation: rElev, floor: floor || null, flat: flat || null, item_code: item,
           item_type: String(r.item_type ?? '').trim() || null, full_code,
         });
       }
@@ -728,12 +735,18 @@ const server = createServer(async (req, res) => {
       const job_code = String(b.job_code ?? '').trim().toUpperCase();
       const name = String(b.name ?? '').trim();
       const postcode = String(b.postcode ?? '').trim();
+      const site_address = String(b.site_address ?? '').trim();
+      const delivery_address = String(b.delivery_address ?? '').trim();
+      const delivery_postcode = String(b.delivery_postcode ?? '').trim();
       if (!client_code || !job_code) { send(res, 400, { error: 'Client code and job code are required (they form the job code, e.g. AXS.LAB).' }); return; }
       if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
-      if (!postcode) { send(res, 400, { error: 'A postcode is required.' }); return; }
+      if (!site_address) { send(res, 400, { error: 'A site address is required.' }); return; }
+      if (!postcode) { send(res, 400, { error: 'A site postcode is required.' }); return; }
+      if (!delivery_address) { send(res, 400, { error: 'A delivery address is required.' }); return; }
+      if (!delivery_postcode) { send(res, 400, { error: 'A delivery postcode is required.' }); return; }
       const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
       try {
-        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode, site_code, dates: pickJobDates(b) });
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address, postcode, site_code, delivery_address, delivery_postcode, dates: pickJobDates(b) });
         audit(ctx, 'job.create', 'job', job.id, `Created job ${job.client_code}.${job.job_code} — ${name} (site ${site_code})`);
         send(res, 200, { ok: true, id: job.id, code: `${job.client_code}.${job.job_code}`, site_code });
       } catch (err: any) {
@@ -750,7 +763,7 @@ const server = createServer(async (req, res) => {
       const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       { const dd: Record<string, unknown> = {}; for (const k of JOB_DATE_FIELDS) dd[k] = (job as any)[k] ?? null;
-        send(res, 200, { id: job.id, code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, ...dd }); }
+        send(res, 200, { id: job.id, code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, delivery_address: (job as any).delivery_address ?? null, delivery_postcode: (job as any).delivery_postcode ?? null, ...dd }); }
       return;
     }
     // Edit a job's details (name / address / postcode) — managers only.
@@ -762,10 +775,16 @@ const server = createServer(async (req, res) => {
       const b = await readJson(req);
       const name = String(b.name ?? '').trim();
       const postcode = String(b.postcode ?? '').trim();
+      const site_address = String(b.site_address ?? '').trim();
+      const delivery_address = String(b.delivery_address ?? '').trim();
+      const delivery_postcode = String(b.delivery_postcode ?? '').trim();
       if (!name) { send(res, 400, { error: 'Job name is required.' }); return; }
-      if (!postcode) { send(res, 400, { error: 'Postcode is required.' }); return; }
+      if (!site_address) { send(res, 400, { error: 'Site address is required.' }); return; }
+      if (!postcode) { send(res, 400, { error: 'Site postcode is required.' }); return; }
+      if (!delivery_address) { send(res, 400, { error: 'Delivery address is required.' }); return; }
+      if (!delivery_postcode) { send(res, 400, { error: 'Delivery postcode is required.' }); return; }
       const site_code = String(b.site_code ?? '').trim() || `${job.client_code}.${job.job_code}`;
-      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode, site_code, dates: pickJobDates(b) });
+      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address, postcode, site_code, delivery_address, delivery_postcode, dates: pickJobDates(b) });
       audit(ctx, 'job.update', 'job', code, `Edited details for ${code}`);
       send(res, 200, { ok: true });
       return;
@@ -2071,6 +2090,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <select id="fpRule" class="tinput" onchange="assignRule()"></select>
         </label>
         <button class="add" id="fpPdfBtn" onclick="downloadPricePdf()" title="Download the customer price breakdown (sale side only)">Customer price PDF</button>
+        <label style="font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px" title="Include items whose Install status is Omit in the budget, price and PDF"><input type="checkbox" id="fpIncludeOmit" onchange="loadJobPricing()"> Include Omit items</label>
         <span id="fpMsg" class="itemcount"></span>
       </div>
       <div id="fpBreak"></div>
@@ -2228,7 +2248,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <div class="toast" id="toast"></div>
 <script>
   var STAGE={scanned:'Scanned',in_survey:'In survey',surveyed:'Surveyed',synced:'Synced'};
-  var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
+  var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed'],['omit','Omit']];
   var ISTATUS_LABEL={};ISTATUS.forEach(function(s){ISTATUS_LABEL[s[0]]=s[1];});
   function teamName(id){for(var i=0;i<teams.length;i++){if(teams[i].id===id)return teams[i].name;}return '—';}
   // Canonical room codes (kept in step with the phone app). The picker orders these by how
@@ -2652,70 +2672,60 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function applyPfx(el,p){ var v=smartPfx(el.value,p); if(v!==el.value){el.value=v;try{el.setSelectionRange(v.length,v.length);}catch(_){}} }
   function mapWirePrefix(id,p){
-    var el=document.getElementById(id);
-    el.addEventListener('input',function(){ applyPfx(el,p); maybeRevealFloors(); });
+    var el=document.getElementById(id); if(!el)return;
+    el.addEventListener('input',function(){ applyPfx(el,p); });
   }
   function renderMapBuilder(box){
     box.innerHTML=''
       +'<div class="card2" style="padding:16px;margin-bottom:14px">'
-      +'<div class="groupt" style="padding:0 0 8px">DEFAULTS FOR ALL ITEMS</div>'
-      +'<div style="display:flex;gap:14px;flex-wrap:wrap">'
-      +'<label style="font-size:12px;color:var(--muted)">Block<br><input id="map_block" placeholder="e.g. 1 &rarr; B1" style="width:130px"></label>'
-      +'<label style="font-size:12px;color:var(--muted)">Elevation<br><input id="map_elev" placeholder="e.g. 1 &rarr; E1" style="width:130px"></label>'
+      +'<div class="groupt" style="padding:0 0 8px">BUILD ELEVATIONS &amp; FLOORS</div>'
+      +'<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">'
+      +'<label style="font-size:12px;color:var(--muted)">Block<br><input id="map_block" placeholder="e.g. 1 &rarr; B1" style="width:120px"></label>'
+      +'<label style="font-size:12px;color:var(--muted)">Number of elevations<br><input id="map_nelev" type="number" min="1" max="60" value="1" style="width:150px"></label>'
+      +'<label style="font-size:12px;color:var(--muted)">Number of floors<br><input id="map_nfloors" type="number" min="1" max="60" value="1" style="width:150px"></label>'
+      +'<button class="add" id="buildGridBtn">Build grid</button>'
       +'</div>'
-      +'<div id="floorsWrap" style="margin-top:14px;display:none">'
-      +'<div class="groupt" style="padding:0 0 6px">FLOORS &mdash; enter floor no., windows and doors (a new row opens as you fill each)</div>'
-      +'<div id="floorRows"></div>'
-      +'<div id="floorTotals" class="sub" style="margin-top:8px;font-weight:700"></div>'
-      +'<button class="add" id="preloadBtn" style="margin-top:8px">Preload</button>'
-      +'</div></div>'
+      +'<div class="sub" style="margin-top:8px">Each elevation gets its own floor grid (F1&hellip;FN). Fill windows &amp; doors per floor, then Preload.</div>'
+      +'<div id="elevGrids" style="margin-top:14px"></div>'
+      +'<button class="add" id="preloadBtn" style="margin-top:10px;display:none">Preload</button>'
+      +'</div>'
       +'<div id="mapTableWrap"></div>'
       +'<div id="mapFooter" style="margin-top:12px;gap:12px;align-items:center;display:none">'
       +'<button class="save" id="mapSaveBtn">Save</button>'
       +'<button class="add" id="mapAddRowBtn">+ Add line</button>'
       +'<span class="sub" id="mapSaveNote"></span></div>';
-    mapWirePrefix('map_block','B'); mapWirePrefix('map_elev','E');
+    mapWirePrefix('map_block','B');
+    document.getElementById('buildGridBtn').addEventListener('click',buildElevGrids);
     document.getElementById('preloadBtn').addEventListener('click',mapPreload);
     document.getElementById('mapSaveBtn').addEventListener('click',mapSave);
     document.getElementById('mapAddRowBtn').addEventListener('click',mapAddRow);
-    maybeRevealFloors();
   }
-  function getMapBE(){ return { block:(document.getElementById('map_block')||{}).value||'', elev:(document.getElementById('map_elev')||{}).value||'' }; }
-  function updateFloorTotals(){
-    var el=document.getElementById('floorTotals'); if(!el)return;
-    var tw=0, td=0, nf=0;
-    document.querySelectorAll('#floorRows .frow').forEach(function(div){
-      var f=div.querySelector('.fr-floor').value.trim();
-      var w=parseInt(div.querySelector('.fr-win').value,10)||0;
-      var d=parseInt(div.querySelector('.fr-door').value,10)||0;
-      if(f!==''&&(w>0||d>0)){ nf++; tw+=w; td+=d; }
-    });
-    el.textContent='Total: '+nf+' floor'+(nf===1?'':'s')+' · '+tw+' windows · '+td+' doors · '+(tw+td)+' items';
-  }
-  function maybeRevealFloors(){
-    var bEl=document.getElementById('map_block'), eEl=document.getElementById('map_elev'); if(!bEl||!eEl)return;
-    var w=document.getElementById('floorsWrap');
-    if(bEl.value.trim()&&eEl.value.trim()){ w.style.display='block'; if(!document.querySelector('#floorRows .frow')) addFloorRow(); }
-    else w.style.display='none';
-  }
-  function addFloorRow(){
-    var wrap=document.getElementById('floorRows');
-    var div=document.createElement('div'); div.className='frow'; div.style.cssText='display:flex;gap:8px;margin-bottom:6px;align-items:center';
-    div.innerHTML='<input class="fr-floor" placeholder="Floor" style="width:90px">'
-      +'<input class="fr-win" type="number" min="0" placeholder="Windows" style="width:110px">'
-      +'<input class="fr-door" type="number" min="0" placeholder="Doors" style="width:110px">'
-      +'<button class="del fr-del" title="Remove">&#10005;</button>';
-    wrap.appendChild(div);
-    div.querySelectorAll('input').forEach(function(inp){ inp.addEventListener('input',function(){ onFloorInput(div); }); });
-    div.querySelector('.fr-del').addEventListener('click',function(){ if(document.querySelectorAll('#floorRows .frow').length>1) div.remove(); });
-  }
-  function onFloorInput(div){
-    applyPfx(div.querySelector('.fr-floor'),'F'); // "1"->"F1", GF stays GF
-    updateFloorTotals();
-    var rows=document.querySelectorAll('#floorRows .frow');
-    if(div!==rows[rows.length-1]) return;
-    var f=div.querySelector('.fr-floor').value.trim(), w=div.querySelector('.fr-win').value.trim(), d=div.querySelector('.fr-door').value.trim();
-    if(f!==''&&w!==''&&d!=='') addFloorRow();
+  function mapBlockVal(){ var e=document.getElementById('map_block'); return e?e.value.trim().toUpperCase():''; }
+  // Build one floor grid per elevation (each with its own window/door counts to fill).
+  function buildElevGrids(){
+    var block=mapBlockVal(); if(!block){tShow('Enter a Block first');return;}
+    var nE=Math.min(60,Math.max(1,parseInt(document.getElementById('map_nelev').value,10)||1));
+    var nF=Math.min(60,Math.max(1,parseInt(document.getElementById('map_nfloors').value,10)||1));
+    var host=document.getElementById('elevGrids'); host.innerHTML='';
+    for(var e=1;e<=nE;e++){
+      var card=document.createElement('div'); card.className='elevcard'; card.style.cssText='border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px';
+      var rowsHtml='';
+      for(var fN=1;fN<=nF;fN++){
+        rowsHtml+='<div class="efrow" style="display:flex;gap:8px;margin-bottom:6px;align-items:center">'
+          +'<input class="ef-floor" value="F'+fN+'" style="width:80px" title="Floor">'
+          +'<input class="ef-win" type="number" min="0" placeholder="Windows" style="width:110px">'
+          +'<input class="ef-door" type="number" min="0" placeholder="Doors" style="width:110px"></div>';
+      }
+      card.innerHTML='<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">'
+        +'<span style="font-size:12px;color:var(--muted)">Elevation</span>'
+        +'<input class="ec-elev" value="E'+e+'" style="width:90px">'
+        +'<span class="sub">Block '+esc(block)+'</span></div>'
+        +'<div class="ef-rows">'+rowsHtml+'</div>';
+      host.appendChild(card);
+      card.querySelectorAll('.ec-elev').forEach(function(el){ el.addEventListener('input',function(){ applyPfx(el,'E'); }); });
+      card.querySelectorAll('.ef-floor').forEach(function(el){ el.addEventListener('input',function(){ applyPfx(el,'F'); }); });
+    }
+    document.getElementById('preloadBtn').style.display='';
   }
   // Floor segment: prefix F only for a plain number (1 -> F1); leave labels like GF as-is.
   function floorSeg(flat){ if(!flat) return ''; return /^[0-9]+$/.test(flat) ? ('F'+flat) : flat.toUpperCase(); }
@@ -2725,25 +2735,27 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     return [parts[0],parts[1],block,elev,floorSeg(levelOf(floor,flat)),item].filter(function(x){return x;}).join('.');
   }
   function stripF(v){ return String(v||'').trim().replace(/^F(?=[0-9])/i,''); } // "F1"->"1", "GF" stays
+  // Preload: expand every elevation x floor x (W1..Wn, D1..Dn) into review rows carrying their elevation.
   function mapPreload(){
-    var floors=[];
-    document.querySelectorAll('#floorRows .frow').forEach(function(div){
-      var f=div.querySelector('.fr-floor').value.trim(); // keep the F (F1, GF) — server normalises
-      var w=parseInt(div.querySelector('.fr-win').value,10)||0;
-      var d=parseInt(div.querySelector('.fr-door').value,10)||0;
-      if(f!==''&&(w>0||d>0)) floors.push({floor:f,windows:w,doors:d});
-    });
-    if(!floors.length){tShow('Add at least one floor with windows or doors');return;}
+    var block=mapBlockVal();
     var rows=[];
-    floors.forEach(function(fl){
-      for(var i=1;i<=fl.windows;i++) rows.push({floor:fl.floor,flat:'',item:'W'+i,type:'Window'});
-      for(var j=1;j<=fl.doors;j++) rows.push({floor:fl.floor,flat:'',item:'D'+j,type:'Door'});
+    document.querySelectorAll('#elevGrids .elevcard').forEach(function(card){
+      var elev=(card.querySelector('.ec-elev').value||'').trim().toUpperCase();
+      card.querySelectorAll('.efrow').forEach(function(fr){
+        var floor=(fr.querySelector('.ef-floor').value||'').trim();
+        var w=parseInt(fr.querySelector('.ef-win').value,10)||0;
+        var d=parseInt(fr.querySelector('.ef-door').value,10)||0;
+        var k;
+        for(k=1;k<=w;k++) rows.push({block:block,elevation:elev,floor:floor,flat:'',item:'W'+k,type:'Window'});
+        for(k=1;k<=d;k++) rows.push({block:block,elevation:elev,floor:floor,flat:'',item:'D'+k,type:'Door'});
+      });
     });
+    if(!rows.length){tShow('Enter windows or doors on at least one floor');return;}
     renderMapRows(rows);
   }
   function renderMapRows(rows){
     var wrap=document.getElementById('mapTableWrap');
-    var head='<tr><th>CODE</th><th>FLOOR</th><th>FLAT</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>#</th><th></th><th></th></tr>';
+    var head='<tr><th>CODE</th><th>ELEV</th><th>FLOOR</th><th>FLAT</th><th>ITEM</th><th>TYPE</th><th>COUPLE</th><th>#</th><th></th><th></th></tr>';
     wrap.innerHTML='<div class="groupt" style="padding:0 0 6px;display:flex;justify-content:space-between;align-items:center">'
       +'<span>PRELOADED ITEMS &mdash; review, edit, split couples, then Save</span>'
       +'<button class="del" id="mapClearBtn" title="Remove every row">Clear all</button></div>'
@@ -2755,12 +2767,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     updateSaveCount();
   }
   function makeMapRow(r){
-    var be=getMapBE();
+    var block=mapBlockVal();
+    var elev=(r.elevation||'').toUpperCase();
     var tr=document.createElement('tr');
     tr.innerHTML=''
-      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(mapCode(be.block.trim(),be.elev.trim(),r.floor,r.flat,r.item))+'</td>'
+      +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(mapCode(block,elev,r.floor,r.flat,r.item))+'</td>'
+      +'<td><input class="mr-elev" value="'+esc(elev)+'" style="width:56px" title="Elevation"></td>'
       +'<td><input class="mr-floor" value="'+esc(r.floor||'')+'" style="width:58px" title="Floor"></td>'
-      +'<td><input class="mr-flat" value="'+esc(r.flat||'')+'" style="width:58px" title="Flat / plot (optional — replaces floor in the code)"></td>'
+      +'<td><input class="mr-flat" value="'+esc(r.flat||'')+'" style="width:58px" title="Flat / plot (optional - replaces floor in the code)"></td>'
       +'<td><input class="mr-item" value="'+esc(r.item||'')+'" style="width:90px"></td>'
       +'<td><select class="mr-type"><option'+(r.type==='Window'?' selected':'')+'>Window</option><option'+(r.type==='Door'?' selected':'')+'>Door</option></select></td>'
       +'<td style="text-align:center"><input type="checkbox" class="mr-couple"></td>'
@@ -2771,7 +2785,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     return tr;
   }
   function wireMapRow(tr){
-    function recode(){ var be=getMapBE(); tr.querySelector('.mapcode').textContent=mapCode(be.block.trim(),be.elev.trim(),stripF(tr.querySelector('.mr-floor').value),stripF(tr.querySelector('.mr-flat').value),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
+    function recode(){ tr.querySelector('.mapcode').textContent=mapCode(mapBlockVal(),(tr.querySelector('.mr-elev').value||'').trim().toUpperCase(),stripF(tr.querySelector('.mr-floor').value),stripF(tr.querySelector('.mr-flat').value),tr.querySelector('.mr-item').value.trim().toUpperCase()); }
+    tr.querySelector('.mr-elev').addEventListener('input',function(){applyPfx(this,'E');recode();});
     tr.querySelector('.mr-floor').addEventListener('input',function(){applyPfx(this,'F');recode();});
     tr.querySelector('.mr-flat').addEventListener('input',function(){applyPfx(this,'F');recode();});
     tr.querySelector('.mr-item').addEventListener('input',function(){var s=this.selectionStart;this.value=this.value.toUpperCase();try{this.setSelectionRange(s,s);}catch(_){}recode();});
@@ -2783,20 +2798,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function splitMapRow(tr){
     var n=parseInt(tr.querySelector('.mr-n').value,10)||0;
     if(n<2){tShow('Set a couple count of 2 or more');return;}
+    var elev=tr.querySelector('.mr-elev').value.trim();
     var floor=tr.querySelector('.mr-floor').value.trim();
     var flat=tr.querySelector('.mr-flat').value.trim();
     var base=tr.querySelector('.mr-item').value.trim().toUpperCase();
     var type=tr.querySelector('.mr-type').value;
     if(!base){tShow('Enter an item code first');return;}
-    for(var i=1;i<=n;i++){ tr.parentNode.insertBefore(makeMapRow({floor:floor,flat:flat,item:base+'.'+i,type:type}),tr); }
+    for(var i=1;i<=n;i++){ tr.parentNode.insertBefore(makeMapRow({elevation:elev,floor:floor,flat:flat,item:base+'.'+i,type:type}),tr); }
     tr.remove(); updateSaveCount();
   }
-  function mapAddRow(){ var tb=document.getElementById('mapTbody'); if(!tb)return; tb.appendChild(makeMapRow({floor:'',flat:'',item:'',type:'Window'})); updateSaveCount(); }
+  function mapAddRow(){ var tb=document.getElementById('mapTbody'); if(!tb)return; tb.appendChild(makeMapRow({elevation:'',floor:'',flat:'',item:'',type:'Window'})); updateSaveCount(); }
   function updateSaveCount(){ var n=document.querySelectorAll('#mapTbody tr').length; var b=document.getElementById('mapSaveBtn'); if(b)b.textContent='Save '+n+' item'+(n===1?'':'s'); }
   async function mapSave(){
-    var be=getMapBE(); var block=be.block.trim(), elev=be.elev.trim();
+    var block=mapBlockVal();
     var out=[];
     document.querySelectorAll('#mapTbody tr').forEach(function(tr){
+      var elev=(tr.querySelector('.mr-elev').value||'').trim().toUpperCase();
       var floor=tr.querySelector('.mr-floor').value.trim(); // keep the F; server normalises
       var flat=stripF(tr.querySelector('.mr-flat').value);
       var item=tr.querySelector('.mr-item').value.trim().toUpperCase();
@@ -2804,13 +2821,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(!item) return;
       var couple=tr.querySelector('.mr-couple').checked;
       var nn=parseInt(tr.querySelector('.mr-n').value,10)||0;
-      if(couple&&nn>=2){ for(var i=1;i<=nn;i++) out.push({floor:floor,flat:flat,item:item+'.'+i,item_type:type}); }
-      else out.push({floor:floor,flat:flat,item:item,item_type:type});
+      if(couple&&nn>=2){ for(var i=1;i<=nn;i++) out.push({block:block,elevation:elev,floor:floor,flat:flat,item:item+'.'+i,item_type:type}); }
+      else out.push({block:block,elevation:elev,floor:floor,flat:flat,item:item,item_type:type});
     });
     if(!out.length){tShow('Nothing to save');return;}
-    tShow('Saving '+out.length+' item(s)…');
-    var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:elev,rows:out})})).json();
-    if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); }
+    tShow('Saving '+out.length+' item(s)...');
+    var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:'',rows:out})})).json();
+    if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); loadItems(); }
     else tShow(d.error||'Save failed');
   }
 
@@ -2892,8 +2909,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="codeprev" id="njPrev">CLIENT.JOB</div>'
       +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
-      +'<div class="field full"><label>Site address</label><input id="nj_addr" placeholder="Full site address (optional)"></div>'
-      +'<div class="field full"><label>Postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="field full"><label>Site address *</label><input id="nj_addr" placeholder="Full site address"></div>'
+      +'<div class="field full"><label>Site postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="field full"><label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:12.5px"><input type="checkbox" id="nj_delsame" onchange="njToggleDel()"> Delivery address is the same as the site address</label></div>'
+      +'<div id="nj_delwrap" style="display:contents">'
+        +'<div class="field full"><label>Delivery address *</label><input id="nj_deladdr" placeholder="Where frames / glass are delivered"></div>'
+        +'<div class="field full"><label>Delivery postcode *</label><input id="nj_delpostcode" placeholder="e.g. PO9 5RX"></div>'
+      +'</div>'
       +'<div class="field full"><label>Site code</label><input id="nj_sitecode" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
       +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
       +ruleField
@@ -2906,20 +2928,29 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal('New job',html);
     ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
     njCode();
-    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode','nj_sitecode'].concat(jobDateInputIds('nj')));
+    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode','nj_deladdr','nj_delpostcode','nj_sitecode'].concat(jobDateInputIds('nj')));
   }
   function njCode(){var c=(document.getElementById('nj_client').value||'').trim().toUpperCase();var j=(document.getElementById('nj_job').value||'').trim().toUpperCase();document.getElementById('njPrev').textContent=(c||'CLIENT')+'.'+(j||'JOB');}
+  // Delivery-same-as-site toggle: hide the delivery fields when ticked (default: not ticked = No).
+  function njToggleDel(){var same=document.getElementById('nj_delsame').checked;var w=document.getElementById('nj_delwrap');if(w)w.style.display=same?'none':'contents';}
   async function saveJob(){
     var client=(document.getElementById('nj_client').value||'').trim();
     var job=(document.getElementById('nj_job').value||'').trim();
     var name=(document.getElementById('nj_name').value||'').trim();
     var postcode=(document.getElementById('nj_postcode').value||'').trim();
+    var addr=(document.getElementById('nj_addr').value||'').trim();
+    var same=document.getElementById('nj_delsame').checked;
+    var deladdr=same?addr:(document.getElementById('nj_deladdr').value||'').trim();
+    var delpc=same?postcode:(document.getElementById('nj_delpostcode').value||'').trim();
     if(!client||!job){document.getElementById('njErr').textContent='Client code and job code are required.';return;}
     if(!name){document.getElementById('njErr').textContent='Job name is required.';return;}
-    if(!postcode){document.getElementById('njErr').textContent='Postcode is required.';return;}
+    if(!addr){document.getElementById('njErr').textContent='Site address is required.';return;}
+    if(!postcode){document.getElementById('njErr').textContent='Site postcode is required.';return;}
+    if(!deladdr){document.getElementById('njErr').textContent='Delivery address is required (or tick “same as site address”).';return;}
+    if(!delpc){document.getElementById('njErr').textContent='Delivery postcode is required.';return;}
     var dts=collectJobDates('nj');
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('njErr').textContent=dErr;jobTab('nj','t');return;}
-    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode,site_code:(document.getElementById('nj_sitecode').value||'').trim()},dts))});
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:addr,postcode:postcode,delivery_address:deladdr,delivery_postcode:delpc,site_code:(document.getElementById('nj_sitecode').value||'').trim()},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
@@ -2944,11 +2975,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d={}; try{d=await (await api('/api/job/'+encodeURIComponent(code))).json();}catch(e){}
     if(d.error){tShow(d.error);return;}
     var q=function(v){return (v==null?'':String(v)).replace(/"/g,'&quot;');};
+    var ejSame=!!(d.delivery_address&&d.site_address&&String(d.delivery_address).trim()===String(d.site_address).trim()&&String(d.delivery_postcode||'').trim()===String(d.postcode||'').trim());
     var detail='<div class="fgrid">'
       +'<div class="field full"><label>Job</label><div class="codeprev">'+esc(code)+'</div></div>'
       +'<div class="field full"><label>Job name *</label><input id="ej_name" value="'+q(d.name)+'"></div>'
-      +'<div class="field full"><label>Site address</label><input id="ej_addr" value="'+q(d.site_address)+'" placeholder="Full site address (optional)"></div>'
-      +'<div class="field full"><label>Postcode *</label><input id="ej_postcode" value="'+q(d.postcode)+'" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="field full"><label>Site address *</label><input id="ej_addr" value="'+q(d.site_address)+'" placeholder="Full site address"></div>'
+      +'<div class="field full"><label>Site postcode *</label><input id="ej_postcode" value="'+q(d.postcode)+'" placeholder="e.g. PO7 7EW"></div>'
+      +'<div class="field full"><label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:12.5px"><input type="checkbox" id="ej_delsame" onchange="ejToggleDel()"'+(ejSame?' checked':'')+'> Delivery address is the same as the site address</label></div>'
+      +'<div id="ej_delwrap" style="display:'+(ejSame?'none':'contents')+'">'
+        +'<div class="field full"><label>Delivery address *</label><input id="ej_deladdr" value="'+q(d.delivery_address)+'" placeholder="Where frames / glass are delivered"></div>'
+        +'<div class="field full"><label>Delivery postcode *</label><input id="ej_delpostcode" value="'+q(d.delivery_postcode)+'" placeholder="e.g. PO9 5RX"></div>'
+      +'</div>'
       +'<div class="field full"><label>Site code</label><input id="ej_sitecode" value="'+q(d.site_code)+'" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
       +'</div>';
     var html=jobTabBar('ej')
@@ -2957,16 +2994,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="ferr" id="ejErr" style="padding:0 22px"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
     openModal('Edit job '+code,html);
-    watchModalDirty(['ej_name','ej_addr','ej_postcode','ej_sitecode'].concat(jobDateInputIds('ej')));
+    watchModalDirty(['ej_name','ej_addr','ej_postcode','ej_deladdr','ej_delpostcode','ej_sitecode'].concat(jobDateInputIds('ej')));
   }
+  function ejToggleDel(){var same=document.getElementById('ej_delsame').checked;var w=document.getElementById('ej_delwrap');if(w)w.style.display=same?'none':'contents';}
   async function saveEditJob(code){
     var name=(document.getElementById('ej_name').value||'').trim();
     var postcode=(document.getElementById('ej_postcode').value||'').trim();
+    var addr=(document.getElementById('ej_addr').value||'').trim();
+    var same=document.getElementById('ej_delsame').checked;
+    var deladdr=same?addr:(document.getElementById('ej_deladdr').value||'').trim();
+    var delpc=same?postcode:(document.getElementById('ej_delpostcode').value||'').trim();
     if(!name){document.getElementById('ejErr').textContent='Job name is required.';return;}
-    if(!postcode){document.getElementById('ejErr').textContent='Postcode is required.';return;}
+    if(!addr){document.getElementById('ejErr').textContent='Site address is required.';return;}
+    if(!postcode){document.getElementById('ejErr').textContent='Site postcode is required.';return;}
+    if(!deladdr){document.getElementById('ejErr').textContent='Delivery address is required (or tick “same as site address”).';return;}
+    if(!delpc){document.getElementById('ejErr').textContent='Delivery postcode is required.';return;}
     var dts=collectJobDates('ej');
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('ejErr').textContent=dErr;jobTab('ej','t');return;}
-    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode,site_code:(document.getElementById('ej_sitecode').value||'').trim()},dts))});
+    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:addr,postcode:postcode,delivery_address:deladdr,delivery_postcode:delpc,site_code:(document.getElementById('ej_sitecode').value||'').trim()},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){closeModal(true);tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
   }
@@ -4054,9 +4099,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(keep)jsel.value=keep;
     await loadJobPricing();
   }
+  function fpOmitOn(){ var c=document.getElementById('fpIncludeOmit'); return c&&c.checked; }
   async function loadJobPricing(){
     var code=document.getElementById('fpJob').value; if(!code){document.getElementById('fpBreak').innerHTML='';return;}
-    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pricing')).json();
+    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pricing'+(fpOmitOn()?'?includeOmit=1':''))).json();
     var rsel=document.getElementById('fpRule');
     rsel.innerHTML='<option value="">— none —</option>'+(d.rules||[]).map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+'</option>';}).join('');
     rsel.value=d.rule_id||'';
@@ -4073,6 +4119,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var b=d.breakdown;
     if(!b){host.innerHTML='<div class="ro" style="padding:14px 2px">The assigned rule has no parameters yet. Edit it above.</div>';return;}
     var marginPct=b.saleTotal?Math.round(b.margin/b.saleTotal*100):0;
+    var omitNote=(d.omitted?('<div class="sub" style="margin:8px 0 0;color:#b45309">'+d.omitted+' item'+(d.omitted===1?'':'s')+' marked <b>Omit</b> '+(d.includeOmit?'ARE included':'are excluded')+' in this budget/price'+(d.includeOmit?'':' — tick “Include Omit items” above to include them')+'.</div>'):'');
     var card=function(v,l,s,warn){return '<div class="stat'+(warn?' warn':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';};
     // Cost + margin are temporarily zeroed — the cost model is under review (see backlog).
     var cards='<div class="statgrid" style="margin:14px 0">'
@@ -4103,13 +4150,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         }).join('')+'</tbody></table></div>';
     }
     var warn=d.missingDims?'<div style="background:#fff4ce;border:1px solid #f0d97a;border-radius:10px;padding:10px 14px;margin:0 0 12px;font-size:13px;color:#7a5b00">⚠ '+d.missingDims+' window'+(d.missingDims===1?' has':'s have')+' no Width/Height — their m² charges (extra windows above the included count, and COM units) are £0 until you add dimensions.</div>':'';
-    host.innerHTML=cards+warn+table+itemsHtml;
+    host.innerHTML=cards+omitNote+warn+table+itemsHtml;
   }
   async function downloadPricePdf(){
     var code=document.getElementById('fpJob').value; if(!code){tShow('Pick a job first');return;}
     var btn=document.getElementById('fpPdfBtn'); var was=btn.textContent; btn.textContent='Building…'; btn.disabled=true;
     try{
-      var r=await fetch('/api/job/'+encodeURIComponent(code)+'/price.pdf',{headers:{Authorization:'Bearer '+token}});
+      var r=await fetch('/api/job/'+encodeURIComponent(code)+'/price.pdf'+(fpOmitOn()?'?includeOmit=1':''),{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'Export failed');return;}
       var blob=await r.blob(); var u=URL.createObjectURL(blob);
       var a=document.createElement('a'); a.href=u; a.download=code+'-price-breakdown.pdf'; document.body.appendChild(a); a.click(); a.remove();

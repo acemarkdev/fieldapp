@@ -125,13 +125,14 @@ export function renderPricePdf(data: PriceData): Promise<Buffer> {
   return done;
 }
 
-export async function buildJobPricePdf(jobRef: string, tenantId: string): Promise<{ buffer: Buffer; job: any } | null> {
+export async function buildJobPricePdf(jobRef: string, tenantId: string, includeOmit = false): Promise<{ buffer: Buffer; job: any } | null> {
   const job = await getJobByRef(jobRef);
   if (job.tenant_id !== tenantId) throw new Error('forbidden');
   const ruleId = await getJobRuleId(job.id);
   const rule = ruleId ? await getPricingRule(ruleId, tenantId) : null;
   if (!rule || !(rule.params as any)?.sale) return null;  // no rule assigned -> nothing to export
-  const items = await listSurveyItems(job.id);
+  let items = await listSurveyItems(job.id);
+  if (!includeOmit) items = items.filter((it: any) => it.install_status !== 'omit');
   const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
   const priceItems: PriceItem[] = items.map((it: any) => {
     const f = ipMap.get(it.id);

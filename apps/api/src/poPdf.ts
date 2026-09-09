@@ -43,7 +43,7 @@ const dim = (it: any) => (it.width_mm || it.height_mm) ? `${it.width_mm ?? '—'
 const joinParts = (...xs: any[]) => xs.map((x) => (x == null || x === '') ? '' : String(x)).filter(Boolean).join(' · ') || '—';
 
 export interface PoPdfData {
-  job: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null; site_code?: string | null };
+  job: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null; site_code?: string | null; delivery_address?: string | null; delivery_postcode?: string | null };
   phase: number;
   items: any[];
   generatedAt: Date;
@@ -73,14 +73,16 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
     doc.font('Helvetica-Bold').fillColor(MUTED).text(label, infoX, y, { width: 90, continued: false });
     doc.font('Helvetica').fillColor(INK).text(val, infoX + 92, y, { width: W * 0.45 - 92 });
   };
+  const deliv = [data.job.delivery_address, data.job.delivery_postcode].filter(Boolean).join(', ');
   line('Job', `${code}${data.job.site_code && data.job.site_code !== code ? '  (' + data.job.site_code + ')' : ''}`, infoY);
   line('Site', data.job.name || '—', infoY + 13);
-  if (addr) line('Address', addr, infoY + 26);
-  line('PO phase', String(data.phase), infoY + 39);
-  line('Date', data.generatedAt.toLocaleDateString('en-GB'), infoY + 52);
-  line('Items', String(data.items.length), infoY + 65);
+  if (addr) line('Site address', addr, infoY + 26);
+  line('Deliver to', deliv || addr || '—', infoY + 39);
+  line('PO phase', String(data.phase), infoY + 52);
+  line('Date', data.generatedAt.toLocaleDateString('en-GB'), infoY + 65);
+  line('Items', String(data.items.length), infoY + 78);
 
-  let y = 108;
+  let y = 118;
   doc.moveTo(L, y).lineTo(R, y).strokeColor(LINE).lineWidth(1).stroke();
   y += 8;
 
