@@ -31,6 +31,7 @@ import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams
   getPinsMultiPlan, setPinsMultiPlan } from './store';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
+import { buildJobPoPdf } from './poPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
@@ -203,6 +204,7 @@ const itemRow = (it: any, job: any, teams: any[]) => ({
   id: it.id, full_code: it.full_code, block: it.block ?? null, elevation: it.elevation ?? null, floor: it.floor ?? null,
   flat: it.flat, room: it.room_code, item: it.item_code, stage: it.stage,
   kind: it.kind ?? 'item', snag_comment: it.snag_comment ?? null, incomplete: !!it.incomplete,
+  po_phase: it.po_phase ?? null,
   install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
   effective_rate: formatPennies(effectiveRatePennies(it, teams)),
   synced: !!it.monday_item_id,
@@ -928,11 +930,28 @@ const server = createServer(async (req, res) => {
           else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; }
           else if (action === 'room') room = raw.toUpperCase() || null;
           const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
-          if (await codeExists(ctx.tenant_id, full_code, id)) { dupes++; continue; }
+          if (await codeExists(it.job_id, full_code, id)) { dupes++; continue; }
           const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, full_code }).eq('id', id).eq('tenant_id', ctx.tenant_id);
           if (!error) updated++;
         }
         send(res, 200, { ok: true, updated, skipped: locked + dupes, locked, dupes }); return;
+      }
+      if (action === 'po') {
+        // Group items into a PO phase. Only Surveyed items accept a phase (others are skipped);
+        // clearing (blank value) is allowed on any stage.
+        if (!allow('items.edit')) return;
+        const raw = String(value ?? '').trim();
+        if (raw === '') { const n = await bulkUpdateItems(allowed, { po_phase: null }, ctx.tenant_id); send(res, 200, { ok: true, updated: n }); return; }
+        const ph = Math.round(Number(raw));
+        if (!Number.isFinite(ph) || ph < 1) { send(res, 400, { error: 'PO phase must be a whole number (1 or higher).' }); return; }
+        let updated = 0, skipped = 0;
+        for (const id of allowed) {
+          const it: any = await getSurveyItem(id);
+          if (it.stage !== 'surveyed') { skipped++; continue; }
+          const { error } = await db().from('survey_items').update({ po_phase: ph }).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          if (!error) updated++;
+        }
+        send(res, 200, { ok: true, updated, skipped }); return;
       }
       if (action === 'delete') {
         // Destructive — managers only (matches the DB delete policy: admin/office).
@@ -1061,7 +1080,7 @@ const server = createServer(async (req, res) => {
       const SPEC_BOOL = ['transom_equal', 'mullion_equal'];
       const STAGES = ['scanned', 'in_survey', 'surveyed', 'synced'];
       // Spec/rate/team/stage edits need items.edit; a status-only change needs items.fit (or edit).
-      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body) || ('stage' in body)
+      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body) || ('stage' in body) || ('po_phase' in body)
         || SPEC_STR.some((k) => k in body) || SPEC_NUM.some((k) => k in body) || SPEC_BOOL.some((k) => k in body);
       if (touchesSpec) { if (!allow('items.edit')) return; }
       else if ('install_status' in body) {
@@ -1076,6 +1095,20 @@ const server = createServer(async (req, res) => {
       for (const k of SPEC_NUM) if (k in body) { const v = body[k]; patch[k] = (v === '' || v == null) ? null : Math.round(Number(v)); }
       for (const k of SPEC_BOOL) if (k in body) patch[k] = !!body[k];
       if ('stage' in body) { if (!STAGES.includes(String(body.stage))) { send(res, 400, { error: 'Invalid stage.' }); return; } patch.stage = body.stage; }
+      // PO phase: a number grouping items into a purchase order. Assigning one is allowed only on
+      // a Surveyed item (clearing it is always allowed). Uses the item's current stage unless this
+      // same request is also promoting it to 'surveyed'.
+      if ('po_phase' in body) {
+        const raw = body.po_phase;
+        if (raw === '' || raw == null) { patch.po_phase = null; }
+        else {
+          const n = Math.round(Number(raw));
+          if (!Number.isFinite(n) || n < 1) { send(res, 400, { error: 'PO phase must be a whole number (1 or higher).' }); return; }
+          const effectiveStage = (patch.stage as string) ?? item.stage;
+          if (effectiveStage !== 'surveyed') { send(res, 400, { error: 'A PO phase can only be assigned once the item is Surveyed.' }); return; }
+          patch.po_phase = n;
+        }
+      }
       // Editing Flat / Room rebuilds the item code — allowed only until it's synced to Monday.
       if ('flat' in body || 'room' in body) {
         if (!allow('items.edit')) return;
@@ -1367,6 +1400,26 @@ const server = createServer(async (req, res) => {
       } catch (e: any) {
         send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) });
       }
+      return;
+    }
+    // Purchase-order PDF for one PO phase (Surveyed items only). Browser downloads it.
+    if (p.startsWith('/api/job/') && p.endsWith('/po.pdf') && req.method === 'GET') {
+      if (!allow('items.edit')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const phase = Math.round(Number(url.searchParams.get('phase')));
+      if (!Number.isFinite(phase) || phase < 1) { send(res, 400, { error: 'Pick a valid PO phase.' }); return; }
+      let job: any;
+      try { job = await getJobByRef(code); } catch { send(res, 404, { error: 'Job not found' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      try {
+        const { buffer } = await buildJobPoPdf(code, ctx.tenant_id, phase);
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-disposition': `attachment; filename="${job.client_code}.${job.job_code}-PO-phase-${phase}.pdf"`,
+          'cache-control': 'no-store',
+        });
+        res.end(buffer);
+      } catch (e: any) { send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) }); }
       return;
     }
     if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'GET') {
@@ -1708,6 +1761,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .scanned{background:#eef0f4;color:var(--muted)}.in_survey{background:var(--amber-soft);color:var(--amber)}
   .surveyed{background:var(--soft);color:var(--purple)}.synced{background:var(--green-soft);color:var(--green)}
   input.rate{width:74px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px}
+  input.pocell{width:48px;border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:12px;text-align:center}
   .planbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}
   .calbar{display:flex;gap:10px;align-items:center;margin:16px 0}
   .calnav{border:1px solid var(--line);background:#fff;border-radius:9px;width:34px;height:34px;font-size:18px;cursor:pointer;color:var(--purple)}
@@ -1858,6 +1912,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <button id="filesBtn" class="jobstoggle" style="display:none" onclick="openJobFiles(current)">Files</button>
           <button id="editJobBtn" class="jobstoggle" style="display:none" onclick="openEditJob(current)">Edit job</button>
           <button id="delJobBtn" class="del" style="display:none" onclick="delJob()">Delete job</button>
+          <span id="poPdfWrap" style="display:none;gap:6px;align-items:center"><span style="font-size:12px;color:var(--muted)">PO</span><select id="poPhaseSel" class="colfilter" style="width:auto" title="PO phase"></select><button class="add" onclick="downloadPoPdf()" title="Download the purchase-order PDF for this PO phase (Surveyed items)">PO PDF</button></span>
           <button id="newBtn" class="newbtn" onclick="openCreate()">+ New item</button>
         </div>
       </div>
@@ -1884,7 +1939,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <select id="bulkField" class="bulk bsel" onchange="bulkFieldPick()">
             <option value="team">Team</option><option value="status">Install status</option>
             <option value="block">Block</option><option value="elevation">Elevation</option>
-            <option value="floor">Floor</option><option value="flat">Flat</option><option value="room">Room</option>
+            <option value="floor">Floor</option><option value="flat">Flat</option><option value="room">Room</option><option value="po">PO phase</option>
           </select>
           <span id="bulkValWrap"></span>
           <button id="bulkApplyBtn" class="bulk bapply" onclick="bulkEditApply()">Apply</button>
@@ -1900,6 +1955,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <th>ROOM<br><select id="roomFilter" class="colfilter" onchange="setRoomFilter(this.value)"></select></th>
         <th>ITEM<br><select id="itemColFilter" class="colfilter" onchange="setItemColFilter(this.value)"></select></th>
         <th>STAGE<br><select id="stageFilter" class="colfilter" onchange="setStageFilter(this.value)"></select></th>
+        <th>PO<br><select id="poFilter" class="colfilter" onchange="setPoFilter(this.value)"></select></th>
         <th>RATE (£)</th>
         <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
         <th>TEAM<br><select id="teamFilter" class="colfilter" onchange="setTeamFilter(this.value)"></select></th><th>MONDAY</th>
@@ -2219,7 +2275,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='', stageFilter='', itemColFilter='';
+  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='', stageFilter='', itemColFilter='', poFilter='';
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
@@ -2765,7 +2821,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     // shows the free-text site code, tooltip shows the client.job code.
     jobs.forEach(function(j){ JOBS_BY_ID[j.id]=j; JOB_STATUS[j.id]=j.status||'pending_mapping'; JOB_MAPDATE[j.id]=j.mapping_start_date||''; });
     function mk(id,label,tip){var d=document.createElement('div');d.className='job'+(id===current?' on':'');d.textContent=label;d.title=tip||'';d.setAttribute('data-code',id);
-      d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMapping();loadImport();}else loadItems();};
+      d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';poFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMapping();loadImport();}else loadItems();};
       if(id!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(id);};d.appendChild(b);}
       el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs','ALL');
@@ -2980,6 +3036,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fillColFilter('floorFilter','floor',function(v){floorFilter=v;},floorFilter,'All floors');
     fillColFilter('roomFilter','room',function(v){roomFilter=v;},roomFilter,'All rooms');
     fillColFilter('itemColFilter','item',function(v){itemColFilter=v;},itemColFilter,'All items');
+    fillColFilter('poFilter','po_phase',function(v){poFilter=v;},poFilter,'All PO');
+    fillPoPdfControl();
     // stage filter: distinct stages present, shown with their labels
     var stages=[]; (itemsData.items||[]).forEach(function(it){var st=it.stage||''; if(st&&stages.indexOf(st)<0)stages.push(st);});
     if(stageFilter&&stages.indexOf(stageFilter)<0)stageFilter='';
@@ -2996,6 +3054,32 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function setRoomFilter(v){roomFilter=v;renderItems();}
   function setStageFilter(v){stageFilter=v;renderItems();}
   function setItemColFilter(v){itemColFilter=v;renderItems();}
+  function setPoFilter(v){poFilter=v;renderItems();}
+  // Populate the PO-phase dropdown (distinct phases on Surveyed items) and show the PO PDF control.
+  function fillPoPdfControl(){
+    var wrap=document.getElementById('poPdfWrap'), sel=document.getElementById('poPhaseSel'); if(!wrap||!sel)return;
+    var phases=[]; (itemsData.items||[]).forEach(function(it){ if(it.stage==='surveyed'&&it.po_phase!=null&&phases.indexOf(it.po_phase)<0)phases.push(it.po_phase); });
+    phases.sort(function(a,b){return a-b;});
+    var can=canCap('items.edit')&&current!=='ALL'&&phases.length>0;
+    wrap.style.display=can?'inline-flex':'none';
+    if(!can){sel.innerHTML='';return;}
+    var keep=sel.value;
+    sel.innerHTML=phases.map(function(p){return '<option value="'+p+'">Phase '+p+'</option>';}).join('');
+    if(keep&&phases.indexOf(Number(keep))>=0)sel.value=keep;
+  }
+  async function downloadPoPdf(){
+    if(current==='ALL'){tShow('Pick a job first');return;}
+    var phase=document.getElementById('poPhaseSel').value; if(!phase){tShow('Pick a PO phase');return;}
+    tShow('Building PO PDF…');
+    try{
+      var r=await fetch('/api/job/'+encodeURIComponent(current)+'/po.pdf?phase='+encodeURIComponent(phase),{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PO PDF failed');return;}
+      var blob=await r.blob(); var u=URL.createObjectURL(blob);
+      var a=document.createElement('a'); a.href=u; a.download=curCode()+'-PO-phase-'+phase+'.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){URL.revokeObjectURL(u);},4000);
+      tShow('PO PDF downloaded');
+    }catch(err){tShow('PO PDF failed');}
+  }
   function fillColFilter(selId,field,setFn,cur,allLabel){
     var vals=[], hasNone=false;
     (itemsData.items||[]).forEach(function(it){ var v=it[field]||''; if(v){ if(vals.indexOf(v)<0)vals.push(v); } else hasNone=true; });
@@ -3038,6 +3122,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(roomFilter==='__none'){if(r.room)return false;} else if(roomFilter){if((r.room||'')!==roomFilter)return false;}
       if(stageFilter&&(r.stage||'')!==stageFilter)return false;
       if(itemColFilter==='__none'){if(r.item)return false;} else if(itemColFilter){if((r.item||'')!==itemColFilter)return false;}
+      if(poFilter==='__none'){if(r.po_phase!=null)return false;} else if(poFilter){if((r.po_phase==null?'':String(r.po_phase))!==poFilter)return false;}
       return true;
     });
     var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');
@@ -3072,10 +3157,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var editable=canEdit&&!r.synced;
       var flatCell=editable?'<input class="cedit" value="'+(r.flat||'')+'" placeholder="—" onchange="saveCode(\\''+r.id+'\\',\\'flat\\',this.value)">':(r.flat||'—');
       var roomCell=editable?'<select class="sel" style="min-width:150px" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">'+roomOptions(r.room||'')+'</select>':roomLabel(r.room);
+      // PO phase: editable only on Surveyed items (a manager can group them into a purchase order).
+      var poCell=(canEdit&&r.stage==='surveyed')
+        ?'<input class="pocell" type="number" min="1" step="1" value="'+(r.po_phase!=null?r.po_phase:'')+'" placeholder="—" onchange="savePo(\\''+r.id+'\\',this.value)">'
+        :'<span class="ro"'+(r.stage==='surveyed'?'':' title="Assign a PO phase only once the item is Surveyed"')+'>'+(r.po_phase!=null?r.po_phase:'—')+'</span>';
       tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
         '<td>'+snagTag+unfinTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td>'+
         '<td>'+(r.block||'—')+'</td><td>'+(r.elevation||'—')+'</td><td>'+flatCell+'</td><td>'+(r.floor||'—')+'</td><td>'+roomCell+'</td><td>'+(r.item||'—')+'</td>'+
         '<td><span class="pill '+r.stage+'">'+(STAGE[r.stage]||r.stage)+'</span></td>'+
+        '<td>'+poCell+'</td>'+
         '<td>'+rateInput+'</td><td>'+statusSel+'</td><td>'+teamSel+'</td><td>'+monday+'</td>';
       tb.appendChild(tr);
     });
@@ -3089,6 +3179,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function save(id,field,value){var b={};b[field]=value;await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(b)});tShow('Saved');}
   async function saveRate(id,value){await api('/api/item/'+id,{method:'PUT',body:JSON.stringify({rate_override_pennies:value===''?null:Math.round(Number(value)*100)})});tShow('Rate saved');}
+  async function savePo(id,value){var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify({po_phase:value===''?null:value})})).json();if(d.ok){tShow(value===''?'PO phase cleared':'PO phase set');loadItems();}else{tShow(d.error||'Failed');loadItems();}}
   function toggleJobs(){
     var a=document.querySelector('#itemsView aside'); if(!a)return;
     var hide=a.style.display!=='none'; a.style.display=hide?'none':'';
@@ -3130,6 +3221,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var f=sel.value; var w=document.getElementById('bulkValWrap');
     if(f==='team') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— team —</option>'+teamOptionList('')+'</select>';
     else if(f==='status') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— status —</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('')+'</select>';
+    else if(f==='po') w.innerHTML='<input id="bulkVal" class="bulk" type="number" min="1" step="1" placeholder="PO phase (blank = clear)" style="width:150px">';
     else w.innerHTML='<input id="bulkVal" class="bulk" placeholder="'+(f.charAt(0).toUpperCase()+f.slice(1))+' value" style="width:130px;text-transform:uppercase">';
   }
   async function bulkEditApply(){

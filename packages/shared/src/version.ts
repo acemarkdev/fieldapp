@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.78.2';
+export const APP_VERSION = '0.79.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.79.0', date: '2026-09-09', changes: [
+    'Purchase orders. New PO column in the Items table: assign a phase number (1, 2, 3…) to group items — editable only once an item is Surveyed. Filter the table by PO phase, and set a phase on many items at once via bulk edit (Set on selected → PO phase). A “PO PDF” button (top of the Items view) generates a landscape purchase-order document for a chosen phase, listing every Surveyed item with BOTH the full item code and a short code (“Flat 16A Bathroom”, or the item code like W1/D1 when there’s no flat), full spec (type / material / style, W×H, glass / glazing / safety, open / cill, qty) and the style sketch. Requires migration 0037.',
+  ] },
   { version: '0.78.2', date: '2026-09-09', changes: [
     'Fix: the “Clear screen & delete draft” button on the Excel import panel was invisible — it used a white-on-purple style meant for the selection bar, so it rendered white-on-white on the light toolbar. Both it and the red “Delete items imported” button now have proper import-toolbar styling and are clearly visible.',
   ] },
