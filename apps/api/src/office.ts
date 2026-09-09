@@ -19,7 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, toMm } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -639,6 +639,20 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // Excel import — remove items previously committed from an import for this job (skips synced).
+    if (p.startsWith('/api/job/') && p.endsWith('/import-items') && req.method === 'DELETE') {
+      if (!allow('jobs.manage')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      try {
+        const r = await deleteImportedItems(ctx.tenant_id, job.id);
+        audit(ctx, 'import.delete_items', 'job', code, `Deleted ${r.deleted} imported item(s) on ${job.client_code}.${job.job_code}${r.skippedSynced ? ' · kept ' + r.skippedSynced + ' synced' : ''}`);
+        send(res, 200, { ok: true, ...r });
+      } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+
     // Excel import — commit the staged grid into the Items table. Rows missing mandatory data are
     // still created, but flagged incomplete ('Unfinished') so they can be completed later.
     if (p.startsWith('/api/job/') && p.endsWith('/import-commit') && req.method === 'POST') {
@@ -668,7 +682,7 @@ const server = createServer(async (req, res) => {
         const incomplete = !isRowComplete(r);
         if (incomplete) unfinished++;
         fields.push({
-          tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned', incomplete,
+          tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned', incomplete, from_import: true,
           block, elevation, floor: floor || null, flat: flat || null, room_code: room || null, item_code: item,
           material: str(r.material), item_type: str(r.item_type), window_type: str(r.window_type),
           glass: str(r.glass), safety_glass: str(r.safety_glass), glazing: str(r.glazing), glazing_bars: str(r.glazing_bars),
@@ -1598,6 +1612,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
   .snagtag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:var(--magenta);padding:2px 5px;border-radius:5px;vertical-align:middle}
   .unfintag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:#b45309;padding:2px 5px;border-radius:5px;vertical-align:middle}
+  /* Required-but-empty fields on the item edit form (same colour as the Unfinished badge) */
+  .field.needfill>label{color:#b45309;font-weight:700}
+  .field.needfill input,.field.needfill select,.field.needfill textarea{background:#fff1e6;box-shadow:inset 0 0 0 1px #e8a570}
+  .field.needfill>label::after{content:' • required';font-size:10px;font-weight:700;color:#b45309;letter-spacing:.02em}
+  .needfill-note{margin:2px 22px 0;padding:9px 12px;background:#fff1e6;border:1px solid #e8a570;border-radius:8px;color:#8a4406;font-size:12.5px}
   /* Excel import grid */
   .imp-wrap{overflow:auto;max-height:60vh;border:1px solid var(--line);border-radius:10px;background:#fff}
   table.impgrid{border-collapse:collapse;font-size:12px;white-space:nowrap}
@@ -2055,6 +2074,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div class="imp-wrap"><table class="impgrid" id="impGrid"></table></div>
         </div>
         <div id="impEmpty" class="empty" style="margin-top:6px">No import yet — pick a job on the left, then choose an .xlsx file.</div>
+        <div id="impDelWrap" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+          <button class="bulk bdel" onclick="deleteImportedItems()">Delete items imported to this job</button>
+          <span class="imp-summary" style="margin-left:8px">Removes items previously uploaded from Excel for this job. Items already synced to Monday are kept.</span>
+        </div>
       </div>
 
       <div id="mapBody" style="margin-top:14px"></div>
@@ -2418,6 +2441,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     card.style.display='';
     impRows=[]; impFilters={}; impStatusFilter=''; impFileName='';
     var ss=document.getElementById('impStatusSel'); if(ss)ss.value='';
+    var dw=document.getElementById('impDelWrap'); if(dw)dw.style.display=(canCap('jobs.manage')&&current&&current!=='ALL')?'':'none';
     if(!current||current==='ALL'){ area.style.display='none'; empty.style.display=''; empty.textContent='Pick a job on the left, then choose an .xlsx file.'; return; }
     try{
       var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-draft')).json();
@@ -2447,10 +2471,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function clearImportDraft(){
     if(!current||current==='ALL')return;
-    if(!confirm('Clear the import draft for '+current+'? Items already uploaded to the table are not affected.')) return;
+    if(!confirm('Clear the import draft for this job? Items already uploaded to the table are not affected.')) return;
     try{ await api('/api/job/'+encodeURIComponent(current)+'/import-draft',{method:'DELETE'}); }catch(e){}
     impRows=[]; impFileName=''; var fi=document.getElementById('impFile'); if(fi)fi.value='';
     loadImport(); tShow('Draft cleared');
+  }
+  // Delete items previously committed from an Excel import for this job (synced items are kept).
+  async function deleteImportedItems(){
+    if(!current||current==='ALL')return;
+    if(!confirm('Delete all items imported from Excel for this job?\\n\\nItems already synced to Monday are kept. This cannot be undone.')) return;
+    tShow('Deleting…');
+    try{
+      var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-items',{method:'DELETE'})).json();
+      if(d.ok){ tShow('Deleted '+d.deleted+' imported item'+(d.deleted===1?'':'s')+(d.skippedSynced?(' · kept '+d.skippedSynced+' synced'):'')); loadItems(); }
+      else tShow(d.error||'Delete failed');
+    }catch(e){ tShow('Delete failed'); }
   }
 
   async function assignMapDate(){
@@ -4177,6 +4212,25 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('modalTitle').innerHTML=(d.is_snag?'Snag ':'Item ')+'<span class="mono">'+esc(it.full_code)+'</span>';
     document.getElementById('modalBody').innerHTML=html;
     if(document.getElementById('f_design'))stylePreview(); // show the design sketch if a code is set
+    if(specEditable)highlightNeedFill(it); // flag the required fields still to complete
+  }
+  // Highlight (in the Unfinished colour) the required fields that are still empty, so the user
+  // knows exactly what to fill in to mark the item finished.
+  function highlightNeedFill(it){
+    function empty(v){return v==null||String(v).trim()==='';}
+    var map={f_material:empty(it.material),f_type:empty(it.item_type),f_glass:empty(it.glass),f_glazing:empty(it.glazing),f_openinout:empty(it.open_in_out),f_width:!(Number(it.width_mm)>0),f_height:!(Number(it.height_mm)>0)};
+    var anyField=false;
+    Object.keys(map).forEach(function(fid){ if(!map[fid])return; anyField=true; var el=document.getElementById(fid); if(!el)return; var f=el.closest('.field'); if(f)f.classList.add('needfill'); });
+    // Code fields (Block/Elevation/Room/Flat) are edited in the Items table, not here — note them.
+    var code=[];
+    if(empty(it.block))code.push('Block'); if(empty(it.elevation))code.push('Elevation');
+    if(empty(it.room_code))code.push('Room'); if(empty(it.flat)&&empty(it.floor))code.push('Flat or Floor');
+    if(anyField||code.length){
+      var body=document.getElementById('modalBody');
+      var note=document.createElement('div'); note.className='needfill-note';
+      note.innerHTML='<b>To finish this item</b>, complete the highlighted field'+(anyField?'s':'')+' below'+(code.length?(', and set in the Items table: <b>'+esc(code.join(', '))+'</b>'):'')+'.';
+      var g=body.querySelector('.groupt'); if(g&&g.parentNode){g.parentNode.insertBefore(note,g);} else {body.insertBefore(note,body.firstChild);}
+    }
   }
   function collectDetail(){
     function g(x){var e=document.getElementById(x);return e?e.value:undefined;}

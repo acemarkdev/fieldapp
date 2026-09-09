@@ -690,3 +690,14 @@ export async function deleteImportDraft(tenantId: string, jobId: string): Promis
   const { error } = await db().from('import_drafts').delete().eq('tenant_id', tenantId).eq('job_id', jobId);
   if (error) throw error;
 }
+// Remove items that were created from an Excel import for this job. Items already synced to
+// Monday are kept (so we never orphan a synced board row); returns how many were deleted/skipped.
+export async function deleteImportedItems(tenantId: string, jobId: string): Promise<{ deleted: number; skippedSynced: number }> {
+  const { data: synced, error: e1 } = await db().from('survey_items')
+    .select('id').eq('tenant_id', tenantId).eq('job_id', jobId).eq('from_import', true).not('monday_item_id', 'is', null);
+  if (e1) throw e1;
+  const { data, error } = await db().from('survey_items').delete()
+    .eq('tenant_id', tenantId).eq('job_id', jobId).eq('from_import', true).is('monday_item_id', null).select('id');
+  if (error) throw error;
+  return { deleted: data?.length ?? 0, skippedSynced: synced?.length ?? 0 };
+}

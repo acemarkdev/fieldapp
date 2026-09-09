@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.76.0';
+export const APP_VERSION = '0.77.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.77.0', date: '2026-09-09', changes: [
+    'Import from Excel: a “Delete items imported to this job” button removes items previously uploaded from a sheet (items already synced to Monday are kept), so you can re-import cleanly. Item edit screen: the required fields still needed to finish an item are now highlighted in the same amber as the Unfinished badge, with a short note at the top listing anything to set in the Items table (Block/Elevation/Room/Flat) — so it’s obvious what to complete. Requires migration 0036.',
+  ] },
   { version: '0.76.0', date: '2026-09-09', changes: [
     'Jobs can now share the same client.job code (e.g. two “AXS.PAD” sites). The free-text Site code is now each job’s unique identifier — give the second job a different Site code. Item codes are now unique per job (not per tenant), so each site can independently hold the same B3…W2 code. Jobs are addressed internally by a stable id, so renaming a Site code no longer risks clashes. Import from Excel: the clear button is now “Clear screen & delete draft”. Requires migration 0035.',
   ] },
