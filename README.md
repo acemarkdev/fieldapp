@@ -54,6 +54,53 @@ psql "$DATABASE_URL" -f supabase/seed.sql   # or paste seed.sql into the Supabas
 cp .env.example .env
 ```
 
+## Fast local install — office app only ⚡
+
+`npm install` at the repo root installs **every** workspace, including `@ace/mobile`
+(Expo / React Native). That pulls hundreds of MB and runs native build scripts, so it can take
+several minutes — that slowness is the mobile dependencies, **not** the office code.
+
+To run or deploy the **office web app** you don't need the mobile app at all. Install just the two
+workspaces it uses — this is much faster:
+
+```bash
+cd ace-fieldapp
+npm install -w @ace/api -w @ace/shared --ignore-scripts
+```
+
+Then start the office app (reads keys from `.env`):
+
+```bash
+npm run office -w @ace/api
+```
+
+Only install the **mobile** app when you're building FitAWindow for the Play Store — and do that
+from inside `apps/mobile`, not the repo root:
+
+```bash
+cd apps/mobile
+npm install
+EAS_BUILD_NO_EXPO_GO_WARNING=true npx eas-cli@latest build -p android --profile production
+```
+
+**Is a slow install stuck, or just working?** In a second terminal run this twice a few seconds
+apart — if the size keeps growing, it's fine, not hung:
+
+```bash
+du -sh node_modules
+```
+
+> Production deploys go **GitHub → Render**, and Render runs its own install on its servers, so a
+> slow install on your Mac never affects the live office app. Local installs are only for testing.
+
+## Applying database migrations
+
+New features often need a Supabase migration (each `supabase/migrations/00NN_*.sql`). Apply any you
+haven't run yet, in order, either with `supabase db push` or by pasting the file into the Supabase
+SQL editor. Run on your **test** project first, confirm the app works, then run the same on
+production. Recent ones: `0034` (Excel import), `0035` (duplicate job codes / Site code key),
+`0036` (mark Excel-imported items).
+
 Then push this folder to your GitHub repo:
 
 ```bash

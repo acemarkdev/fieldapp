@@ -690,6 +690,13 @@ export async function deleteImportDraft(tenantId: string, jobId: string): Promis
   const { error } = await db().from('import_drafts').delete().eq('tenant_id', tenantId).eq('job_id', jobId);
   if (error) throw error;
 }
+// All item codes already in a job — used by the Excel importer to flag/skip duplicates.
+export async function listItemCodesForJob(tenantId: string, jobId: string): Promise<string[]> {
+  const { data, error } = await db().from('survey_items')
+    .select('full_code').eq('tenant_id', tenantId).eq('job_id', jobId);
+  if (error) throw error;
+  return (data ?? []).map((r: any) => r.full_code).filter(Boolean);
+}
 // Remove items that were created from an Excel import for this job. Items already synced to
 // Monday are kept (so we never orphan a synced board row); returns how many were deleted/skipped.
 export async function deleteImportedItems(tenantId: string, jobId: string): Promise<{ deleted: number; skippedSynced: number }> {

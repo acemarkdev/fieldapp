@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.77.0';
+export const APP_VERSION = '0.78.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.78.0', date: '2026-09-09', changes: [
+    'Import from Excel: duplicate checking. A “Check duplicates” checkbox (on by default) on the Mapping import panel — when on, rows whose item code repeats in the sheet, or already exists in the job’s Items, are highlighted red and marked as duplicates live in the grid (with a “Duplicates only” filter). On Upload to Items, those duplicates are skipped: uploaded rows clear from the screen, skipped ones stay with a reason (“Already in Items” / “Duplicate row”) so you can fix them. Untick the box to skip all duplicate checking. The setting is remembered per browser.',
+  ] },
   { version: '0.77.0', date: '2026-09-09', changes: [
     'Import from Excel: a “Delete items imported to this job” button removes items previously uploaded from a sheet (items already synced to Monday are kept), so you can re-import cleanly. Item edit screen: the required fields still needed to finish an item are now highlighted in the same amber as the Unfinished badge, with a short note at the top listing anything to set in the Items table (Block/Elevation/Room/Flat) — so it’s obvious what to complete. Requires migration 0036.',
   ] },

@@ -19,7 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, toMm } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -639,6 +639,16 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // Excel import — existing item codes for this job (so the grid can flag duplicates live).
+    if (p.startsWith('/api/job/') && p.endsWith('/item-codes') && req.method === 'GET') {
+      if (!allow('items.create')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      send(res, 200, { codes: await listItemCodesForJob(ctx.tenant_id, job.id) });
+      return;
+    }
+
     // Excel import — remove items previously committed from an import for this job (skips synced).
     if (p.startsWith('/api/job/') && p.endsWith('/import-items') && req.method === 'DELETE') {
       if (!allow('jobs.manage')) return;
@@ -663,24 +673,33 @@ const server = createServer(async (req, res) => {
       const b = await readJson(req);
       const rows = Array.isArray(b.rows) ? b.rows : [];
       if (!rows.length) { send(res, 400, { error: 'Nothing to upload — import a sheet first.' }); return; }
+      // When on (default), skip rows whose code already exists in this job, and in-sheet duplicates.
+      const dupCheck = b.dupCheck !== false;
+      const existing = new Set<string>();
+      if (dupCheck) { for (const c of await listItemCodesForJob(ctx.tenant_id, job.id)) existing.add(c); }
       const up = (v: any) => String(v ?? '').trim().toUpperCase();
       const str = (v: any) => { const t = String(v ?? '').trim(); return t || null; };
       const seen = new Set<string>();
       const fields: Record<string, unknown>[] = [];
-      let unfinished = 0, skipped = 0;
-      for (const r of rows) {
+      // Per-input-row outcome, so the client can clear loaded rows and keep skipped ones with a note.
+      const results: string[] = new Array(rows.length);
+      let unfinished = 0, loaded = 0, exists = 0, dup = 0, noitem = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
         const item = up(r.item);
-        if (!item) { skipped++; continue; }                       // no item code ⇒ can't create a row
+        if (!item) { results[i] = 'noitem'; noitem++; continue; }   // no item code ⇒ can't create a row
         const floor = levelSeg(String(r.floor ?? '').trim());
         const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
         const room = up(r.room);
         const block = up(r.block) || null;
         const elevation = up(r.elevation) || null;
         const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item });
-        if (seen.has(full_code)) { skipped++; continue; }
+        if (dupCheck && existing.has(full_code)) { results[i] = 'exists'; exists++; continue; }
+        if (seen.has(full_code)) { results[i] = 'dup'; dup++; continue; }
         seen.add(full_code);
         const incomplete = !isRowComplete(r);
         if (incomplete) unfinished++;
+        results[i] = 'loaded'; loaded++;
         fields.push({
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned', incomplete, from_import: true,
           block, elevation, floor: floor || null, flat: flat || null, room_code: room || null, item_code: item,
@@ -695,8 +714,8 @@ const server = createServer(async (req, res) => {
       }
       try {
         const inserted = await bulkInsertSurveyItems(fields);
-        audit(ctx, 'import.commit', 'job', code, `Imported ${inserted} item(s) from Excel on ${code}${unfinished ? ' · ' + unfinished + ' unfinished' : ''}`);
-        send(res, 200, { ok: true, inserted, unfinished, skipped: skipped + (fields.length - inserted) });
+        audit(ctx, 'import.commit', 'job', code, `Imported ${inserted} item(s) from Excel on ${job.client_code}.${job.job_code}${unfinished ? ' · ' + unfinished + ' unfinished' : ''}${exists ? ' · ' + exists + ' already existed' : ''}${dup ? ' · ' + dup + ' in-sheet dup' : ''}`);
+        send(res, 200, { ok: true, inserted, unfinished, results, counts: { loaded, exists, dup, noitem } });
       } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
       return;
     }
@@ -1631,6 +1650,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   table.impgrid tr.badrow td.stcell{color:#b45309}
   table.impgrid tr.badrow{background:#fff8f0}
   table.impgrid td.miss input{background:#fff1e6}
+  table.impgrid tr.duprow{background:#fdecec}
+  table.impgrid tr.duprow td.stcell{color:#b91c1c;font-weight:800}
   .imp-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
   .imp-summary{font-size:12px;color:var(--muted)}
   a.codelink{font-size:10.5px;color:var(--purple);cursor:pointer;text-decoration:none;border-bottom:1px dashed #cfcde0}
@@ -2068,7 +2089,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
             <button class="add" onclick="saveImportDraft(true)">Save draft</button>
             <button class="newbtn" onclick="commitImport()">Upload to Items</button>
             <button class="bulk bclear" onclick="clearImportDraft()">Clear screen &amp; delete draft</button>
-            <select id="impStatusSel" class="colfilter" onchange="setImpStatus(this.value)" style="width:auto"><option value="">All rows</option><option value="unfinished">Unfinished only</option><option value="complete">Complete only</option></select>
+            <select id="impStatusSel" class="colfilter" onchange="setImpStatus(this.value)" style="width:auto"><option value="">All rows</option><option value="unfinished">Unfinished only</option><option value="complete">Complete only</option><option value="dupe">Duplicates only</option></select>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink)"><input type="checkbox" id="impDupChk" checked onchange="setImpDup(this.checked)"> Check duplicates</label>
             <span id="impSummary" class="imp-summary"></span>
           </div>
           <div class="imp-wrap"><table class="impgrid" id="impGrid"></table></div>
@@ -2288,6 +2310,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   // ---- Excel import (Operations ▸ Mapping ▸ Import from Excel) ----
   var impRows=[], impFilters={}, impStatusFilter='', impFileName='', impSaveTimer=null;
+  var impExistingCodes={};                       // full_codes already in the job's Items table
+  var impDupOn=(localStorage.getItem('ace_imp_dupcheck')!=='0'); // duplicate checking, default ON
+  // Rebuild an item's full code from a grid row (mirrors the server's buildItemCode, room included).
+  function impRowCode(r){
+    var cc=curCode(); if(!cc)return '';
+    function up(v){return String(v==null?'':v).trim().toUpperCase();}
+    function lvl(v){var s=String(v==null?'':v).trim().replace(/^F(?=[0-9])/i,''); if(!s)return ''; return /^[0-9]+$/.test(s)?('F'+s):s.toUpperCase();}
+    var item=up(r.item); if(!item)return '';
+    var level=(r.flat!=null&&String(r.flat).trim()!=='')?lvl(r.flat):lvl(r.floor);
+    var parts=cc.split('.');
+    return [parts[0],parts[1],up(r.block),up(r.elevation),level,up(r.room),item].filter(function(x){return x;}).join('.');
+  }
   // Grid columns, in order. * = required (missing ⇒ Unfinished). Mirrors @ace/shared IMPORT_FIELDS.
   var IMP_COLS=[
     {k:'block',l:'Block'},{k:'elevation',l:'Elev'},{k:'flat',l:'Flat'},{k:'floor',l:'Floor'},
@@ -2383,7 +2417,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       rows.push(obj);
     }
     if(!rows.length){ tShow('No item rows found in the sheet'); return; }
-    if(mismatch>0&&!confirm(mismatch+' of '+rows.length+' rows have a different Area/Site than the selected job ('+current+'). Import into '+current+' anyway?')) return;
+    var jobLabel=(JOBS_BY_ID[current]||{}).site_code||curCode();
+    if(mismatch>0&&!confirm(mismatch+' of '+rows.length+' rows have a different Area/Site than the selected job ('+jobLabel+'). Import into '+jobLabel+' anyway?')) return;
     impRows=rows; impFilters={}; impStatusFilter='';
     var ss=document.getElementById('impStatusSel'); if(ss)ss.value='';
     renderImportGrid();
@@ -2404,17 +2439,31 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     g.innerHTML=head;
     renderImportBody();
   }
-  function impRowMatches(r){
+  function impRowMatches(r,dupReason){
     for(var k in impFilters){ var f=(impFilters[k]||'').trim().toLowerCase(); if(!f)continue; var v=String(r[k]==null?'':r[k]).toLowerCase(); if(v.indexOf(f)<0)return false; }
     if(impStatusFilter==='unfinished'&&rowComplete(r))return false;
     if(impStatusFilter==='complete'&&!rowComplete(r))return false;
+    if(impStatusFilter==='dupe'&&!dupReason)return false;
     return true;
+  }
+  // Count each code across the grid (for in-sheet duplicate detection).
+  function impCodeCounts(){ var m={}; impRows.forEach(function(r){ var c=impRowCode(r); if(c)m[c]=(m[c]||0)+1; }); return m; }
+  // Why a row would be skipped on upload: a post-commit reason, an existing item, or an in-sheet dup.
+  function impDupReason(r,counts){
+    if(r.__skip)return r.__skip;
+    if(!impDupOn)return '';
+    var c=impRowCode(r); if(!c)return '';
+    if(impExistingCodes[c])return 'Already in Items';
+    if(counts[c]>1)return 'Duplicate row';
+    return '';
   }
   function renderImportBody(){
     var tb=document.getElementById('impBody'); if(!tb)return;
-    var html='', shown=0, unfin=0;
+    var counts=impCodeCounts();
+    var html='', shown=0, unfin=0, dupN=0;
     impRows.forEach(function(r,idx){
-      if(!impRowMatches(r))return; shown++;
+      var dupReason=impDupReason(r,counts);
+      if(!impRowMatches(r,dupReason))return; shown++;
       var miss=impMissing(r); var bad=miss.length>0; if(bad)unfin++;
       var missSet={}; miss.forEach(function(m){missSet[m]=1;});
       var tds='<td class="stcell">'+(idx+1)+'</td>';
@@ -2423,26 +2472,39 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         var mc=(missSet[c.k]||isLevel)?' miss':'';
         tds+='<td class="'+(c.wide?'wide':'')+mc+'"><input value="'+av(r[c.k]==null?'':r[c.k])+'" onchange="impEdit('+idx+',\\''+c.k+'\\',this.value)"></td>';
       });
-      tds+='<td class="stcell" title="'+(bad?('Missing: '+av(miss.join(', '))):'')+'">'+(bad?'Unfinished':'Complete')+'</td>';
-      html+='<tr class="'+(bad?'badrow':'')+'">'+tds+'</tr>';
+      var st, cls;
+      if(dupReason){ st='⚠ '+dupReason; cls='duprow'; }
+      else { st=bad?'Unfinished':'Complete'; cls=bad?'badrow':''; }
+      tds+='<td class="stcell" title="'+(dupReason?av(dupReason):(bad?('Missing: '+av(miss.join(', '))):''))+'">'+esc(st)+'</td>';
+      html+='<tr class="'+cls+'">'+tds+'</tr>';
     });
     tb.innerHTML=html;
+    impRows.forEach(function(r){ if(impDupReason(r,counts))dupN++; });
     var totUnfin=impRows.filter(function(r){return !rowComplete(r);}).length;
-    document.getElementById('impSummary').textContent=shown+' of '+impRows.length+' rows shown · '+totUnfin+' unfinished'+(impFileName?(' · '+impFileName):'');
+    document.getElementById('impSummary').textContent=shown+' of '+impRows.length+' rows shown · '+totUnfin+' unfinished'+(impDupOn?(' · '+dupN+' duplicate'+(dupN===1?'':'s')):'')+(impFileName?(' · '+impFileName):'');
   }
   function setImpFilter(k,v){ impFilters[k]=v; renderImportBody(); }
   function setImpStatus(v){ impStatusFilter=v; renderImportBody(); }
-  function impEdit(idx,key,val){ if(!impRows[idx])return; impRows[idx][key]=val; renderImportBody(); if(impSaveTimer)clearTimeout(impSaveTimer); impSaveTimer=setTimeout(function(){saveImportDraft(false);},900); }
+  function setImpDup(on){ impDupOn=!!on; localStorage.setItem('ace_imp_dupcheck',on?'1':'0'); renderImportBody(); }
+  function impEdit(idx,key,val){ if(!impRows[idx])return; impRows[idx][key]=val; delete impRows[idx].__skip; renderImportBody(); if(impSaveTimer)clearTimeout(impSaveTimer); impSaveTimer=setTimeout(function(){saveImportDraft(false);},900); }
 
+  // Load the codes already in this job's Items, so the grid can flag duplicates live.
+  async function loadExistingCodes(){
+    impExistingCodes={};
+    if(!current||current==='ALL')return;
+    try{ var d=await (await api('/api/job/'+encodeURIComponent(current)+'/item-codes')).json(); (d.codes||[]).forEach(function(c){ if(c)impExistingCodes[c]=1; }); }catch(e){}
+  }
   async function loadImport(){
     var card=document.getElementById('importCard'); if(!card)return;
     var empty=document.getElementById('impEmpty'), area=document.getElementById('impArea');
     if(!canCap('items.create')){ card.style.display='none'; return; }
     card.style.display='';
-    impRows=[]; impFilters={}; impStatusFilter=''; impFileName='';
+    impRows=[]; impFilters={}; impStatusFilter=''; impFileName=''; impExistingCodes={};
     var ss=document.getElementById('impStatusSel'); if(ss)ss.value='';
+    var chk=document.getElementById('impDupChk'); if(chk)chk.checked=impDupOn;
     var dw=document.getElementById('impDelWrap'); if(dw)dw.style.display=(canCap('jobs.manage')&&current&&current!=='ALL')?'':'none';
     if(!current||current==='ALL'){ area.style.display='none'; empty.style.display=''; empty.textContent='Pick a job on the left, then choose an .xlsx file.'; return; }
+    await loadExistingCodes();
     try{
       var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-draft')).json();
       impRows=d.rows||[]; impFileName=d.filename||'';
@@ -2460,13 +2522,37 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function commitImport(){
     if(!impRows.length){ tShow('Nothing to upload — import a sheet first'); return; }
     await saveImportDraft(false);
+    var jobName=(JOBS_BY_ID[current]||{}).site_code||curCode();
     var unfin=impRows.filter(function(r){return !rowComplete(r);}).length;
-    if(!confirm('Upload '+impRows.length+' item'+(impRows.length===1?'':'s')+' to the Items table for '+current+'?'+(unfin?('\\n\\n'+unfin+' row'+(unfin===1?' is':'s are')+' missing required data and will be marked Unfinished.'):''))) return;
+    var msg='Upload '+impRows.length+' item'+(impRows.length===1?'':'s')+' to the Items table for '+jobName+'?';
+    if(impDupOn)msg+='\\n\\nDuplicate check is ON: rows already in Items (or repeated in the sheet) will be skipped and left on screen.';
+    if(unfin)msg+='\\n\\n'+unfin+' row'+(unfin===1?' is':'s are')+' missing required data and will be marked Unfinished.';
+    if(!confirm(msg)) return;
     tShow('Uploading…');
     try{
-      var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-commit',{method:'POST',body:JSON.stringify({rows:impRows})})).json();
-      if(d.ok){ tShow('Imported '+d.inserted+' item'+(d.inserted===1?'':'s')+(d.unfinished?(' · '+d.unfinished+' unfinished'):'')+(d.skipped?(' · '+d.skipped+' skipped'):'')); }
-      else tShow(d.error||'Upload failed');
+      var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-commit',{method:'POST',body:JSON.stringify({rows:impRows,dupCheck:impDupOn})})).json();
+      if(!d.ok){ tShow(d.error||'Upload failed'); return; }
+      var res=d.results||[]; var c=d.counts||{};
+      // Clear rows that were loaded; keep the rest on screen with a reason note.
+      var kept=[];
+      impRows.forEach(function(r,i){
+        var st=res[i];
+        if(st==='loaded')return;
+        if(st==='exists')r.__skip='Already in Items';
+        else if(st==='dup')r.__skip='Duplicate row';
+        else if(st==='noitem')r.__skip='No item code';
+        kept.push(r);
+      });
+      impRows=kept;
+      await saveImportDraft(false);
+      if(kept.length){ renderImportGrid(); } else { document.getElementById('impArea').style.display='none'; var e=document.getElementById('impEmpty'); e.style.display=''; e.textContent='All rows uploaded — nothing left to import.'; }
+      loadExistingCodes();
+      loadItems();
+      var parts=['Imported '+(c.loaded||0)];
+      if(c.exists)parts.push(c.exists+' already in Items');
+      if(c.dup)parts.push(c.dup+' in-sheet dup');
+      if(d.unfinished)parts.push(d.unfinished+' unfinished');
+      tShow(parts.join(' · '));
     }catch(e){ tShow('Upload failed'); }
   }
   async function clearImportDraft(){
