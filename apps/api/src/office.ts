@@ -2088,11 +2088,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div class="imp-toolbar">
             <button class="add" onclick="saveImportDraft(true)">Save draft</button>
             <button class="newbtn" onclick="commitImport()">Upload to Items</button>
-            <button class="bulk bclear" onclick="clearImportDraft()">Clear screen &amp; delete draft</button>
+            <button class="bulk bclear" onclick="clearImportDraft()" title="Empties this grid and the saved draft so you can import a fresh, adjusted file. Does NOT touch items already on the Items board.">Clear screen &amp; delete draft</button>
             <select id="impStatusSel" class="colfilter" onchange="setImpStatus(this.value)" style="width:auto"><option value="">All rows</option><option value="unfinished">Unfinished only</option><option value="complete">Complete only</option><option value="dupe">Duplicates only</option></select>
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink)"><input type="checkbox" id="impDupChk" checked onchange="setImpDup(this.checked)"> Check duplicates</label>
             <span id="impSummary" class="imp-summary"></span>
           </div>
+          <div class="imp-summary" style="margin:0 0 8px"><b>Clear screen &amp; delete draft</b> empties this grid so you can re-import an adjusted file (it only clears the draft — items already on the Items board are untouched).</div>
           <div class="imp-wrap"><table class="impgrid" id="impGrid"></table></div>
         </div>
         <div id="impEmpty" class="empty" style="margin-top:6px">No import yet — pick a job on the left, then choose an .xlsx file.</div>
@@ -2557,10 +2558,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function clearImportDraft(){
     if(!current||current==='ALL')return;
-    if(!confirm('Clear the import draft for this job? Items already uploaded to the table are not affected.')) return;
+    if(!confirm('Clear the screen and delete this job\\'s import draft?\\n\\nThe grid empties and the file picker resets so you can import a fresh (adjusted) file. Items already on the Items board are NOT affected.')) return;
     try{ await api('/api/job/'+encodeURIComponent(current)+'/import-draft',{method:'DELETE'}); }catch(e){}
     impRows=[]; impFileName=''; var fi=document.getElementById('impFile'); if(fi)fi.value='';
-    loadImport(); tShow('Draft cleared');
+    loadImport(); tShow('Screen cleared — import your adjusted file');
   }
   // Delete items previously committed from an Excel import for this job (synced items are kept).
   async function deleteImportedItems(){

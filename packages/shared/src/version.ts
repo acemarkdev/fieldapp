@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.78.0';
+export const APP_VERSION = '0.78.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.78.1', date: '2026-09-09', changes: [
+    'Import from Excel: clearer wording for the two clear/delete buttons. “Clear screen & delete draft” (in the grid toolbar) empties the on-screen grid and resets the file picker so you can re-import an adjusted version of the same sheet — it only clears the draft, not the Items board. A short hint and a tooltip now spell this out, distinct from “Delete items imported to this job”, which removes rows already uploaded to the Items board.',
+  ] },
   { version: '0.78.0', date: '2026-09-09', changes: [
     'Import from Excel: duplicate checking. A “Check duplicates” checkbox (on by default) on the Mapping import panel — when on, rows whose item code repeats in the sheet, or already exists in the job’s Items, are highlighted red and marked as duplicates live in the grid (with a “Duplicates only” filter). On Upload to Items, those duplicates are skipped: uploaded rows clear from the screen, skipped ones stay with a reason (“Already in Items” / “Duplicate row”) so you can fix them. Untick the box to skip all duplicate checking. The setting is remembered per browser.',
   ] },
