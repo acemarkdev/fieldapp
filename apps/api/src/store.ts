@@ -657,3 +657,24 @@ export async function countItemsCreated(tenantId: string, fromISO: string, toISO
   if (error) throw error;
   return count ?? 0;
 }
+
+
+// ---- Excel import staging (Operations ▸ Mapping ▸ Import from Excel) ----
+// One draft grid per job, held server-side so it survives and is visible to the whole team
+// until the user commits it to the Items table.
+export async function getImportDraft(tenantId: string, jobId: string): Promise<{ rows: any[]; filename: string | null; updated_at: string | null } | null> {
+  const { data, error } = await db().from('import_drafts')
+    .select('rows,filename,updated_at').eq('tenant_id', tenantId).eq('job_id', jobId).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { rows: Array.isArray((data as any).rows) ? (data as any).rows : [], filename: (data as any).filename ?? null, updated_at: (data as any).updated_at ?? null };
+}
+export async function saveImportDraft(tenantId: string, jobId: string, rows: any[], filename: string | null, userId: string | null): Promise<void> {
+  const { error } = await db().from('import_drafts')
+    .upsert({ tenant_id: tenantId, job_id: jobId, rows, filename, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id,job_id' });
+  if (error) throw error;
+}
+export async function deleteImportDraft(tenantId: string, jobId: string): Promise<void> {
+  const { error } = await db().from('import_drafts').delete().eq('tenant_id', tenantId).eq('job_id', jobId);
+  if (error) throw error;
+}

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.74.0';
+export const APP_VERSION = '0.75.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.75.0', date: '2026-09-09', changes: [
+    'Operations → Mapping: Import from Excel. Upload a survey sheet (the Main tab) to load every row into an editable, filterable grid — all columns editable, saved as a per-job draft on the server (survives, visible to the team). When ready, ‘Upload to Items’ creates the items in one go. Any row missing required data (Block, Elevation, Flat or Floor, Room, Item, Material, Item type, Glass, Glazing, Width, Height, Open in/out) is still created but flagged ‘Unfinished’ — a new status shown in the Items view with its own filter, and an item clears the flag automatically once its details are completed. Requires migration 0034 (adds import_drafts + survey_items.incomplete).',
+  ] },
   { version: '0.74.0', date: '2026-09-08', changes: [
     'Admin → Billing: usage billing per tenant. Set a per-item rate for each tenant; the screen shows items created in a chosen month × that rate, with a total, for monthly invoicing. Each admin sees their own tenant; the Acemark (vendor) super-admin sees every tenant and can edit each rate inline. Counts all survey items created that month. Requires migration 0033 (adds tenants.item_rate_pennies).',
   ] },

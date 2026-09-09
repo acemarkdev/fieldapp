@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ACE Field",
+    "name": "FitAWindow",
     "slug": "ace-field",
     "version": "0.65.1",
     "orientation": "portrait",
@@ -8,13 +8,13 @@
     "userInterfaceStyle": "light",
     "splash": { "backgroundColor": "#3a2b72" },
     "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true },
-    "android": { "package": "uk.co.acegroup.field" },
+    "ios": { "supportsTablet": true, "bundleIdentifier": "uk.co.acegroup.field" },
+    "android": { "package": "uk.co.acegroup.field", "versionCode": 1 },
     "web": { "bundler": "metro" },
     "plugins": [
       ["expo-image-picker", {
-        "photosPermission": "ACE Field needs access to your photos to attach survey images.",
-        "cameraPermission": "ACE Field needs the camera to take survey photos."
+        "photosPermission": "FitAWindow needs access to your photos to attach survey images.",
+        "cameraPermission": "FitAWindow needs the camera to take survey photos."
       }]
     ]
   }

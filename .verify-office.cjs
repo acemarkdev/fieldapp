@@ -1,1503 +1,2992 @@
-// ACE Office web app (Stage 1): real Supabase-Auth login, view jobs/items,
-// edit fitting rate / install status / team, and push an item to Monday.
-// The service-role key and Monday token stay on the server; the browser only
-// ever holds the logged-in user's short-lived JWT.
-//
-// Run:  node --env-file=.env --import tsx apps/api/src/office.ts
-// Then open http://localhost:3000. Needs SUPABASE_URL, SUPABASE_ANON_KEY,
-// SUPABASE_SERVICE_ROLE_KEY, MONDAY_API_TOKEN in .env, and a login created via create-admin.
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 
-import { createServer } from 'node:http';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
-import { db, ACE_TENANT } from './supabase';
-import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule, deletePricingRule,
-  getJobRuleId, setJobRuleId, listItemPricing, setItemPricing,
-  latestTestResults, insertTestResult, allTestResults, listTestVersions, listDemoLeads, listCustomers,
-  listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
-import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { isRowComplete, toMm } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft } from './store';
-import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
-import { listJobs, getJob, getJobByCode, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
-  getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
-  insertSurveyItem, listItemPhotos, signedPhotoUrl,
-  filterItemIdsByTenant, bulkUpdateItems,
-  listAppUsers, getAppUser, updateAppUser, setItemTeamFromMonday, applyMondayPull,
-  listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket,
-  listJobPlans, createJobPlan, deleteJobPlan, listPinnedItems, setItemPin, uploadPlan, signedPlanUrl, ensurePlanBucket,
-  getPinsMultiPlan, setPinsMultiPlan } from './store';
-import { buildJobReportPdf } from './reportPdf';
-import { buildJobPricePdf } from './pricingPdf';
-import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
-import { promoteItem } from './promote';
-import { recogniseItemPhoto } from './recognise';
-import { Monday } from './monday';
-import { REQUIRED_MONDAY_COLUMNS, norm as normColTitle } from './mapItem';
+// apps/api/src/office.ts
+var import_node_http = require("node:http");
+var import_node_fs = require("node:fs");
+var import_node_url = require("node:url");
+var import_node_path = require("node:path");
+var import_supabase_js2 = require("@supabase/supabase-js");
 
-// Normalise a column title for loose matching (Fitters pull, etc.).
-const normTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+// apps/api/src/supabase.ts
+var import_supabase_js = require("@supabase/supabase-js");
+var client = null;
+function db() {
+  if (client) return client;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (server-side only).");
+  }
+  client = (0, import_supabase_js.createClient)(url, key, { auth: { persistSession: false } });
+  return client;
+}
+var ACE_TENANT = "00000000-0000-0000-0000-0000000000ac";
 
-// Pick the Monday date column that most likely holds the planned install date.
-// Ranks by title keyword (install > fit > plan > schedule > due > date). If several
-// date columns exist and none matches a keyword we return null rather than guess.
-function pickDateColumn(cols: { id: string; title: string; type: string }[]): { id: string; title: string } | null {
-  const dates = cols.filter((c) => c.type === 'date');
+// apps/api/src/store.ts
+async function getJobByCode(clientCode, jobCode) {
+  const { data, error } = await db().from("jobs").select("*").eq("client_code", clientCode).eq("job_code", jobCode).single();
+  if (error) throw error;
+  return data;
+}
+async function createJob(tenantId, j) {
+  const { data, error } = await db().from("jobs").insert({ tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null }).select().single();
+  if (error) throw error;
+  return data;
+}
+async function getJob(id) {
+  const { data, error } = await db().from("jobs").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+async function setJobBoard(jobId, boardId, slug) {
+  const patch = { monday_board_id: boardId };
+  if (boardId === null) patch.monday_account_slug = null;
+  else if (slug !== void 0) patch.monday_account_slug = slug;
+  const { error } = await db().from("jobs").update(patch).eq("id", jobId);
+  if (error) throw error;
+}
+async function insertSurveyItem(fields) {
+  const { data, error } = await db().from("survey_items").insert(fields).select().single();
+  if (error) throw error;
+  return data;
+}
+async function listChildSnags(parentId) {
+  const { data, error } = await db().from("survey_items").select("*").eq("parent_item_id", parentId).order("full_code");
+  if (error) throw error;
+  return data ?? [];
+}
+async function createSnagItem(parentId, opts) {
+  const parent = await getSurveyItem(parentId);
+  const kids = await listChildSnags(parentId);
+  const taken = new Set(kids.map((k) => k.full_code));
+  let n = 1;
+  while (taken.has(`${parent.full_code}-S${n}`)) n++;
+  const full_code = `${parent.full_code}-S${n}`;
+  const row = {
+    tenant_id: parent.tenant_id,
+    job_id: parent.job_id,
+    kind: "snag",
+    parent_item_id: parentId,
+    block: parent.block,
+    elevation: parent.elevation,
+    flat: parent.flat,
+    room_code: parent.room_code,
+    item_code: parent.item_code,
+    floor: parent.floor,
+    full_code,
+    material: parent.material,
+    item_type: parent.item_type,
+    glass: parent.glass,
+    safety_glass: parent.safety_glass,
+    glazing: parent.glazing,
+    width_mm: parent.width_mm,
+    height_mm: parent.height_mm,
+    stage: "surveyed",
+    install_status: "snag",
+    snag_comment: opts.comment,
+    comments: opts.comment,
+    team_id: opts.team_id ?? null,
+    rate_override_pennies: opts.rate_override_pennies ?? null
+  };
+  const { data, error } = await db().from("survey_items").insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+async function addItemPhoto(tenantId, itemId, kind, storagePath) {
+  const { error } = await db().from("item_photos").insert({ tenant_id: tenantId, item_id: itemId, kind, storage_path: storagePath });
+  if (error) throw error;
+}
+async function markPhotoPushed(id) {
+  const { error } = await db().from("item_photos").update({ monday_pushed: true }).eq("id", id);
+  if (error) throw error;
+}
+async function listItemPhotos(itemId) {
+  const { data, error } = await db().from("item_photos").select("*").eq("item_id", itemId).order("created_at");
+  if (error) throw error;
+  return data ?? [];
+}
+async function signedPhotoUrl(path, seconds = 3600) {
+  const { data, error } = await db().storage.from(PHOTO_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
+}
+async function filterItemIdsByTenant(ids, tenantId) {
+  const { data, error } = await db().from("survey_items").select("id").in("id", ids).eq("tenant_id", tenantId);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.id);
+}
+async function bulkUpdateItems(ids, patch, tenantId) {
+  const { data, error } = await db().from("survey_items").update(patch).in("id", ids).eq("tenant_id", tenantId).select("id");
+  if (error) throw error;
+  return (data ?? []).length;
+}
+async function bulkDeleteItems(ids, tenantId) {
+  if (!ids.length) return 0;
+  const { data, error } = await db().from("survey_items").delete().in("id", ids).eq("tenant_id", tenantId).select("id");
+  if (error) throw error;
+  return (data ?? []).length;
+}
+async function countItemsForJob(jobId) {
+  const { count, error } = await db().from("survey_items").select("id", { count: "exact", head: true }).eq("job_id", jobId);
+  if (error) throw error;
+  return count ?? 0;
+}
+async function deleteJob(id, tenantId) {
+  const { error } = await db().from("jobs").delete().eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function getSurveyItem(id) {
+  const { data, error } = await db().from("survey_items").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+async function getTeam(id) {
+  if (!id) return null;
+  const { data, error } = await db().from("fitter_teams").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+async function listJobs(tenantId) {
+  const { data, error } = await db().from("jobs").select("*").eq("tenant_id", tenantId).order("job_code");
+  if (error) throw error;
+  return data ?? [];
+}
+async function insertAuditLog(e) {
+  const { error } = await db().from("audit_log").insert(e);
+  if (error) throw error;
+}
+async function listAuditLog(tenantId, limit = 300) {
+  const { data, error } = await db().from("audit_log").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+async function codeExists(tenantId, fullCode, exceptId) {
+  const { data, error } = await db().from("survey_items").select("id").eq("tenant_id", tenantId).eq("full_code", fullCode).neq("id", exceptId).limit(1);
+  if (error) throw error;
+  return !!(data && data.length);
+}
+async function setJobMappingDate(id, date, tenantId) {
+  const { error } = await db().from("jobs").update({ mapping_start_date: date, status: date ? "pending_mapping" : "new" }).eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function bulkInsertSurveyItems(rows) {
+  if (!rows.length) return 0;
+  const { data, error } = await db().from("survey_items").upsert(rows, { onConflict: "tenant_id,full_code", ignoreDuplicates: true }).select("id");
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+async function listSurveyItems(jobId) {
+  const { data, error } = await db().from("survey_items").select("*").eq("job_id", jobId).order("full_code", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+async function listPricingRules(tenantId) {
+  const { data, error } = await db().from("pricing_rules").select("*").eq("tenant_id", tenantId).order("name");
+  if (error) throw error;
+  return data ?? [];
+}
+async function getPricingRule(id, tenantId) {
+  const { data, error } = await db().from("pricing_rules").select("*").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+async function createPricingRule(tenantId, r) {
+  const { data, error } = await db().from("pricing_rules").insert({ tenant_id: tenantId, name: r.name, customer: r.customer ?? null, model: r.model ?? "axs_flat_v1", params: r.params ?? {} }).select().single();
+  if (error) throw error;
+  return data;
+}
+async function updatePricingRule(id, tenantId, patch) {
+  const { error } = await db().from("pricing_rules").update(patch).eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function deletePricingRule(id, tenantId) {
+  const { error } = await db().from("pricing_rules").delete().eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function getJobRuleId(jobId) {
+  const { data } = await db().from("job_pricing").select("pricing_rule_id").eq("job_id", jobId).maybeSingle();
+  return data?.pricing_rule_id ?? null;
+}
+async function setJobRuleId(jobId, tenantId, ruleId) {
+  const { error } = await db().from("job_pricing").upsert({ job_id: jobId, tenant_id: tenantId, pricing_rule_id: ruleId, updated_at: (/* @__PURE__ */ new Date()).toISOString() }, { onConflict: "job_id" });
+  if (error) throw error;
+}
+async function listItemPricing(itemIds) {
+  if (!itemIds.length) return [];
+  const { data, error } = await db().from("item_pricing").select("item_id,is_variation,variation_amount_pennies").in("item_id", itemIds);
+  if (error) throw error;
+  return data ?? [];
+}
+async function setItemPricing(itemId, tenantId, patch) {
+  const { error } = await db().from("item_pricing").upsert({ item_id: itemId, tenant_id: tenantId, ...patch, updated_at: (/* @__PURE__ */ new Date()).toISOString() }, { onConflict: "item_id" });
+  if (error) throw error;
+}
+async function latestTestResults(tenantId, appVersion) {
+  const { data, error } = await db().from("test_results").select("scenario_code,status,comment,tested_by,created_at").eq("tenant_id", tenantId).eq("app_version", appVersion).order("created_at", { ascending: false });
+  if (error) throw error;
+  const latest = {};
+  for (const r of data ?? []) if (!latest[r.scenario_code]) latest[r.scenario_code] = r;
+  return latest;
+}
+async function insertTestResult(tenantId, r) {
+  const { error } = await db().from("test_results").insert({ tenant_id: tenantId, ...r });
+  if (error) throw error;
+}
+async function allTestResults(tenantId, appVersion) {
+  const { data, error } = await db().from("test_results").select("scenario_code,status,comment,tested_by,created_at").eq("tenant_id", tenantId).eq("app_version", appVersion).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+async function listScheduledItems(tenantId) {
+  const { data, error } = await db().from("survey_items").select("id,full_code,room_code,item_code,install_status,planned_install_date,team_id,job_id, jobs(client_code,job_code,name)").eq("tenant_id", tenantId).not("planned_install_date", "is", null).order("planned_install_date");
+  if (error) throw error;
+  return data ?? [];
+}
+async function listTeams(tenantId) {
+  const { data, error } = await db().from("fitter_teams").select("*").eq("tenant_id", tenantId);
+  if (error) throw error;
+  return data ?? [];
+}
+async function roomCodeCounts(tenantId) {
+  const { data, error } = await db().from("survey_items").select("room_code").eq("tenant_id", tenantId);
+  if (error) throw error;
+  const out = {};
+  for (const r of data ?? []) {
+    const c = String(r.room_code ?? "").trim().toUpperCase();
+    if (c) out[c] = (out[c] ?? 0) + 1;
+  }
+  return out;
+}
+async function listAppUsers(tenantId) {
+  const { data, error } = await db().from("app_users").select("id,tenant_id,auth_user_id,name,email,role,active,team_id,client_code").eq("tenant_id", tenantId).order("name");
+  if (error) throw error;
+  return data ?? [];
+}
+async function getAppUser(id) {
+  const { data, error } = await db().from("app_users").select("id,tenant_id,auth_user_id,name,email,role,active,team_id,client_code").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+async function updateAppUser(id, patch, tenantId) {
+  const { error } = await db().from("app_users").update(patch).eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function applyMondayPull(id, patch, tenantId) {
+  const a = await db().from("survey_items").update(patch).eq("id", id).eq("tenant_id", tenantId);
+  if (a.error) throw a.error;
+  const b = await db().from("survey_items").update({ needs_resync: false }).eq("id", id).eq("tenant_id", tenantId);
+  if (b.error) throw b.error;
+}
+async function createTeam(tenantId, name, ratePennies) {
+  const { data, error } = await db().from("fitter_teams").insert({ tenant_id: tenantId, name, default_rate_pennies: ratePennies }).select().single();
+  if (error) throw error;
+  return data;
+}
+async function updateTeam(id, patch) {
+  const { error } = await db().from("fitter_teams").update(patch).eq("id", id);
+  if (error) throw error;
+}
+async function countItemsUsingTeam(teamId) {
+  const { count, error } = await db().from("survey_items").select("id", { count: "exact", head: true }).eq("team_id", teamId);
+  if (error) throw error;
+  return count ?? 0;
+}
+async function deleteTeam(id) {
+  const { error } = await db().from("fitter_teams").delete().eq("id", id);
+  if (error) throw error;
+}
+async function markItemSynced(id, mondayItemId) {
+  const { error } = await db().from("survey_items").update({ monday_item_id: mondayItemId, stage: "synced", needs_resync: false }).eq("id", id);
+  if (error) throw error;
+}
+var PHOTO_BUCKET = "photos";
+async function ensurePhotoBucket() {
+  const { data } = await db().storage.getBucket(PHOTO_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(PHOTO_BUCKET, { public: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+}
+async function uploadPhoto(path, bytes, contentType = "image/png") {
+  const { error } = await db().storage.from(PHOTO_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+async function downloadPhoto(path) {
+  const { data, error } = await db().storage.from(PHOTO_BUCKET).download(path);
+  if (error) throw error;
+  return new Uint8Array(await data.arrayBuffer());
+}
+var PLAN_BUCKET = "plans";
+async function ensurePlanBucket() {
+  const { data } = await db().storage.getBucket(PLAN_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(PLAN_BUCKET, { public: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+}
+async function uploadPlan(path, bytes, contentType = "image/png") {
+  const { error } = await db().storage.from(PLAN_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+async function signedPlanUrl(path, seconds = 3600) {
+  const { data, error } = await db().storage.from(PLAN_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
+}
+async function downloadPlan(path) {
+  const { data, error } = await db().storage.from(PLAN_BUCKET).download(path);
+  if (error) throw error;
+  return new Uint8Array(await data.arrayBuffer());
+}
+async function listJobPlans(jobId) {
+  const { data, error } = await db().from("job_plans").select("id,tenant_id,job_id,name,storage_path,sort").eq("job_id", jobId).order("sort").order("created_at");
+  if (error) throw error;
+  return data ?? [];
+}
+async function createJobPlan(tenantId, jobId, name, storagePath, sort = 0) {
+  const { data, error } = await db().from("job_plans").insert({ tenant_id: tenantId, job_id: jobId, name, storage_path: storagePath, sort }).select().single();
+  if (error) throw error;
+  return data;
+}
+async function deleteJobPlan(id, tenantId) {
+  const { error } = await db().from("job_plans").delete().eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+var JOBFILE_BUCKET = "jobfiles";
+async function ensureJobFileBucket() {
+  const { data } = await db().storage.getBucket(JOBFILE_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(JOBFILE_BUCKET, { public: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+}
+async function uploadJobFile(path, bytes, contentType) {
+  const { error } = await db().storage.from(JOBFILE_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+async function signedJobFileUrl(path, seconds = 3600) {
+  const { data, error } = await db().storage.from(JOBFILE_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
+}
+async function insertJobFile(row) {
+  const { data, error } = await db().from("job_files").insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+async function listJobFiles(jobId) {
+  const { data, error } = await db().from("job_files").select("*").eq("job_id", jobId).order("created_at");
+  if (error) throw error;
+  return data ?? [];
+}
+async function getJobFile(id) {
+  const { data, error } = await db().from("job_files").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+async function deleteJobFile(id, tenantId) {
+  const f = await getJobFile(id);
+  if (f) {
+    try {
+      await db().storage.from(JOBFILE_BUCKET).remove([f.storage_path]);
+    } catch {
+    }
+  }
+  const { error } = await db().from("job_files").delete().eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function listPinnedItems(jobId) {
+  const { data, error } = await db().from("survey_items").select("id,full_code,room_code,item_code,kind,install_status,plan_id,plan_x,plan_y").eq("job_id", jobId).order("full_code");
+  if (error) throw error;
+  return data ?? [];
+}
+async function setItemPin(id, planId, x, y, tenantId) {
+  const { error } = await db().from("survey_items").update({ plan_id: planId, plan_x: x, plan_y: y }).eq("id", id).eq("tenant_id", tenantId);
+  if (error) throw error;
+}
+async function getPinsMultiPlan(tenantId) {
+  const { data } = await db().from("tenants").select("pins_multi_plan").eq("id", tenantId).maybeSingle();
+  return !!data?.pins_multi_plan;
+}
+async function setPinsMultiPlan(tenantId, value) {
+  const { error } = await db().from("tenants").update({ pins_multi_plan: value }).eq("id", tenantId);
+  if (error) throw error;
+}
+
+// apps/api/src/office.ts
+var import_shared5 = require("@ace/shared");
+
+// apps/api/src/reportPdf.ts
+var import_pdfkit = __toESM(require("pdfkit"), 1);
+var import_shared = require("@ace/shared");
+var PRIMARY = "#3a2b72";
+var MAGENTA = "#e6187e";
+var INK = "#1e1b2e";
+var MUTED = "#6b6880";
+var LINE = "#d9d6e6";
+function statusColor(s2) {
+  if (s2 === "installed_no_snag") return "#16a34a";
+  if (s2 === "snag" || s2 === "installed_snag" || s2 === "misfit") return MAGENTA;
+  if (s2) return "#d97706";
+  return "#8b88a3";
+}
+var STATUS_LABEL = {
+  scheduled: "Scheduled",
+  installed_no_snag: "Installed",
+  installed_snag: "Installed + snag",
+  snag: "Snag",
+  misfit: "MisFit",
+  delayed: "Delayed"
+};
+var dim = (it) => it.width_mm || it.height_mm ? `${it.width_mm ?? "\u2014"} \xD7 ${it.height_mm ?? "\u2014"}` : "\u2014";
+var s = (v) => v == null || v === "" ? "\u2014" : String(v);
+var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var shortDate = (iso) => {
+  const m = (iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[3])} ${MON[Number(m[2]) - 1]}` : "\u2014";
+};
+function renderReportPdf(data) {
+  const doc = new import_pdfkit.default({
+    size: "A4",
+    margin: 40,
+    info: {
+      Title: `${data.job.client_code}.${data.job.job_code} \u2014 ${data.type === "survey" ? "Survey" : "Install"} report`,
+      Author: "ACE Field"
+    }
+  });
+  const chunks = [];
+  const done = new Promise((resolve) => {
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+  const M = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const contentW = right - M;
+  const parents = data.items.filter((i) => (i.kind ?? "item") !== "snag");
+  const snags = data.items.filter((i) => (i.kind ?? "item") === "snag");
+  let pinCounter = 0;
+  const pinNoByCode = /* @__PURE__ */ new Map();
+  doc.rect(0, 0, doc.page.width, 84).fill(PRIMARY);
+  doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(20).text(`${data.job.client_code}.${data.job.job_code}`, M, 20);
+  doc.font("Helvetica").fontSize(11).fillColor("#e8e5f5").text(data.job.name || "", M, 46, { width: contentW - 170 });
+  doc.font("Helvetica-Bold").fontSize(12).fillColor("#ffffff").text(data.type === "survey" ? "SURVEY REPORT" : "INSTALL REPORT", right - 170, 24, { width: 170, align: "right" });
+  doc.font("Helvetica").fontSize(9).fillColor("#e8e5f5").text(data.generatedAt.toLocaleString("en-GB"), right - 170, 44, { width: 170, align: "right" });
+  doc.y = 100;
+  doc.fillColor(INK);
+  if (data.job.site_address) {
+    doc.font("Helvetica").fontSize(10).fillColor(MUTED).text(data.job.site_address, M, doc.y);
+  }
+  const isInstall = data.type !== "survey";
+  const hideRates = data.type === "customer_install";
+  const counts = {};
+  let labour = 0;
+  for (const it of data.items) {
+    const st = it.install_status || "unset";
+    counts[st] = (counts[st] ?? 0) + 1;
+    const rate = (0, import_shared.effectiveRatePennies)(it, data.teams);
+    if (rate != null) labour += rate;
+  }
+  doc.moveDown(0.4);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(`${parents.length} item${parents.length === 1 ? "" : "s"}` + (snags.length ? `  \xB7  ${snags.length} snag${snags.length === 1 ? "" : "s"}` : "") + (hideRates ? "" : `  \xB7  labour ${(0, import_shared.formatPennies)(labour)}`), M, doc.y);
+  if (isInstall) {
+    const chips = Object.entries(counts).filter(([k]) => k !== "unset").map(([k, v]) => `${v} ${STATUS_LABEL[k] ?? k}`).join("   ");
+    if (chips) doc.font("Helvetica").fontSize(9.5).fillColor(MUTED).text(chips, { width: contentW });
+    const dates = parents.map((it) => it.planned_install_date).filter(Boolean).sort();
+    const unscheduled = parents.filter((it) => !it.planned_install_date).length;
+    if (dates.length) {
+      const range2 = dates[0] === dates[dates.length - 1] ? shortDate(dates[0]) : `${shortDate(dates[0])} \u2013 ${shortDate(dates[dates.length - 1])}`;
+      doc.font("Helvetica").fontSize(9.5).fillColor(MUTED).text(`Scheduled ${range2}${unscheduled ? `   \xB7   ${unscheduled} not scheduled` : ""}`, { width: contentW });
+    } else {
+      doc.font("Helvetica").fontSize(9.5).fillColor(MUTED).text("No install dates scheduled yet (pull them from Monday).", { width: contentW });
+    }
+  }
+  doc.moveDown(0.6);
+  hr(doc, M, right);
+  for (const plan of data.plans) {
+    ensureSpace(doc, 260);
+    heading(doc, `Plan \u2014 ${plan.name}`, M);
+    try {
+      const img = doc.openImage(plan.bytes);
+      const maxW = contentW, maxH = 360;
+      const scale = Math.min(maxW / img.width, maxH / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      const x0 = M, y0 = doc.y;
+      doc.image(img, x0, y0, { width: w, height: h });
+      doc.rect(x0, y0, w, h).strokeColor(LINE).lineWidth(0.8).stroke();
+      plan.pins.forEach((pin) => {
+        const n = ++pinCounter;
+        if (pin.code) {
+          const arr = pinNoByCode.get(pin.code) ?? [];
+          arr.push(n);
+          pinNoByCode.set(pin.code, arr);
+        }
+        const px = x0 + pin.x * w, py = y0 + pin.y * h;
+        const r = 6;
+        doc.fillOpacity(0.55).circle(px, py, r).fill(statusColor(pin.status));
+        doc.fillOpacity(1);
+        doc.circle(px, py, r).lineWidth(0.75).strokeColor("#ffffff").stroke();
+        doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(7).text(String(n), px - r, py - 3.3, { width: r * 2, align: "center" });
+        doc.fillColor(INK);
+      });
+      doc.y = y0 + h + 8;
+      if (plan.pins.length) {
+        doc.font("Helvetica-Oblique").fontSize(8.5).fillColor(MUTED).text("Numbered pins match the # column in the items table below.", M, doc.y, { width: contentW });
+      }
+    } catch {
+      doc.font("Helvetica-Oblique").fontSize(10).fillColor(MUTED).text("(plan image could not be embedded)", M, doc.y);
+    }
+    doc.moveDown(0.6);
+    doc.fillColor(INK);
+  }
+  ensureSpace(doc, 120);
+  heading(doc, data.type === "survey" ? "Items & specification" : "Items & install status", M);
+  const cols = data.type === "survey" ? [
+    { k: "pin", t: "#", w: 0.05 },
+    { k: "code", t: "Code", w: 0.28 },
+    { k: "room", t: "Room / Item", w: 0.12 },
+    { k: "type", t: "Type", w: 0.14 },
+    { k: "size", t: "W \xD7 H (mm)", w: 0.13 },
+    { k: "glass", t: "Glass", w: 0.14 },
+    { k: "design", t: "Design", w: 0.14 }
+  ] : hideRates ? [
+    // customer install — no team/rate columns
+    { k: "pin", t: "#", w: 0.05 },
+    { k: "code", t: "Code", w: 0.34 },
+    { k: "room", t: "Room / Item", w: 0.15 },
+    { k: "type", t: "Type", w: 0.16 },
+    { k: "sched", t: "Scheduled", w: 0.13 },
+    { k: "status", t: "Install", w: 0.17 }
+  ] : [
+    { k: "pin", t: "#", w: 0.05 },
+    { k: "code", t: "Code", w: 0.27 },
+    { k: "room", t: "Room / Item", w: 0.11 },
+    { k: "type", t: "Type", w: 0.11 },
+    { k: "sched", t: "Scheduled", w: 0.11 },
+    { k: "team", t: "Team", w: 0.1 },
+    { k: "rate", t: "Rate", w: 0.08 },
+    { k: "status", t: "Install", w: 0.17 }
+  ];
+  const teamName = (id) => data.teams.find((t) => t.id === id)?.name ?? "\u2014";
+  const rowsData = parents.map((it) => ({
+    pin: (pinNoByCode.get(it.full_code) ?? []).join(", ") || "\u2014",
+    code: s(it.full_code),
+    room: `${s(it.room_code)} / ${s(it.item_code)}`,
+    type: s(it.item_type || it.material),
+    size: dim(it),
+    glass: s(it.glass),
+    design: s(it.design_code),
+    team: teamName(it.team_id),
+    rate: (0, import_shared.formatPennies)((0, import_shared.effectiveRatePennies)(it, data.teams)),
+    sched: shortDate(it.planned_install_date),
+    status: STATUS_LABEL[it.install_status] ?? s(it.install_status),
+    _statusRaw: it.install_status ?? null
+  }));
+  table(doc, M, contentW, cols, rowsData);
+  if (snags.length) {
+    ensureSpace(doc, 90);
+    heading(doc, `Snags (${snags.length})`, M);
+    doc.font("Helvetica").fontSize(9.5).fillColor(INK);
+    for (const sn of snags) {
+      ensureSpace(doc, 34);
+      const dot = statusColor(sn.install_status ?? "snag");
+      doc.circle(M + 3, doc.y + 5, 3).fill(dot);
+      doc.fillColor(INK);
+      doc.font("Helvetica-Bold").fontSize(9.5).text(s(sn.full_code), M + 12, doc.y, { continued: true }).font("Helvetica").fillColor(MUTED).text("   " + (STATUS_LABEL[sn.install_status] ?? s(sn.install_status)));
+      doc.fillColor(INK).font("Helvetica").fontSize(9.5).text(s(sn.snag_comment || sn.comments), M + 12, doc.y, { width: contentW - 12 });
+      doc.moveDown(0.5);
+    }
+  }
+  if (data.photos.length) {
+    doc.addPage();
+    heading(doc, data.type === "survey" ? "Survey photos" : "Install photos", M);
+    for (const grp of data.photos) {
+      if (!grp.images.length) continue;
+      ensureSpace(doc, 150);
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(INK).text(grp.label, M, doc.y);
+      doc.moveDown(0.2);
+      const gap = 8, per = 4, cellW = (contentW - gap * (per - 1)) / per, cellH = cellW * 0.75;
+      let x = M, y = doc.y, col = 0;
+      for (const buf of grp.images) {
+        if (col === per) {
+          col = 0;
+          x = M;
+          y += cellH + gap;
+        }
+        if (y + cellH > doc.page.height - doc.page.margins.bottom) {
+          doc.addPage();
+          y = doc.y;
+          x = M;
+          col = 0;
+        }
+        try {
+          doc.image(buf, x, y, { fit: [cellW, cellH], align: "center", valign: "center" });
+          doc.rect(x, y, cellW, cellH).strokeColor(LINE).lineWidth(0.6).stroke();
+        } catch {
+        }
+        x += cellW + gap;
+        col++;
+      }
+      doc.y = y + cellH + 14;
+    }
+  }
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i++) {
+    doc.switchToPage(range.start + i);
+    doc.font("Helvetica").fontSize(8).fillColor(MUTED).text(
+      `${data.job.client_code}.${data.job.job_code} \xB7 ${data.type === "survey" ? "Survey" : "Install"} report \xB7 page ${i + 1} of ${range.count}`,
+      M,
+      doc.page.height - 28,
+      { width: contentW, align: "center" }
+    );
+  }
+  doc.end();
+  return done;
+}
+function hr(doc, x0, x1) {
+  doc.moveTo(x0, doc.y).lineTo(x1, doc.y).strokeColor(LINE).lineWidth(1).stroke();
+  doc.moveDown(0.5);
+}
+function heading(doc, text, x) {
+  doc.moveDown(0.4);
+  doc.font("Helvetica-Bold").fontSize(13).fillColor(PRIMARY).text(text, x, doc.y);
+  doc.moveDown(0.3);
+  doc.fillColor(INK);
+}
+function ensureSpace(doc, need) {
+  if (doc.y + need > doc.page.height - doc.page.margins.bottom) doc.addPage();
+}
+function table(doc, x, width, cols, rows) {
+  const pad = 4, minRowH = 18;
+  const widths = cols.map((c) => c.w * width);
+  const xs = [];
+  let cx = x;
+  for (const w of widths) {
+    xs.push(cx);
+    cx += w;
+  }
+  const codeIdx = cols.findIndex((c) => c.k === "code");
+  const drawHeader = () => {
+    const hy = doc.y;
+    doc.rect(x, hy, width, minRowH).fill("#efeaf9");
+    doc.fillColor(PRIMARY).font("Helvetica-Bold").fontSize(8.5);
+    cols.forEach((c, i) => doc.text(c.t, xs[i] + pad, hy + 5, { width: widths[i] - pad * 2, ellipsis: true, lineBreak: false }));
+    doc.y = hy + minRowH;
+    doc.font("Helvetica").fontSize(8.5).fillColor(INK);
+  };
+  drawHeader();
+  rows.forEach((r, ri) => {
+    doc.font("Helvetica").fontSize(8.5);
+    let rowH = minRowH;
+    if (codeIdx >= 0) {
+      const ch = doc.heightOfString(String(r.code ?? ""), { width: widths[codeIdx] - pad * 2 });
+      rowH = Math.max(minRowH, Math.ceil(ch) + 8);
+    }
+    if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      drawHeader();
+    }
+    if (ri % 2 === 1) doc.rect(x, doc.y, width, rowH).fill("#faf9fd").fillColor(INK);
+    const y = doc.y;
+    cols.forEach((c, i) => {
+      if (c.k === "status" && r._statusRaw !== void 0) {
+        doc.circle(xs[i] + pad + 3, y + 9, 3).fill(statusColor(r._statusRaw));
+        doc.fillColor(INK);
+        doc.font("Helvetica").fontSize(8.5).text(String(r[c.k] ?? ""), xs[i] + pad + 10, y + 5, { width: widths[i] - pad * 2 - 10, ellipsis: true, lineBreak: false });
+      } else if (c.k === "code") {
+        doc.font("Helvetica").fontSize(8.5).fillColor(INK).text(String(r[c.k] ?? ""), xs[i] + pad, y + 5, { width: widths[i] - pad * 2, lineBreak: true });
+      } else {
+        doc.font("Helvetica").fontSize(8.5).fillColor(INK).text(String(r[c.k] ?? ""), xs[i] + pad, y + 5, { width: widths[i] - pad * 2, ellipsis: true, lineBreak: false });
+      }
+    });
+    doc.y = y + rowH;
+    doc.moveTo(x, doc.y).lineTo(x + width, doc.y).strokeColor(LINE).lineWidth(0.4).stroke();
+  });
+  doc.moveDown(0.4);
+}
+async function buildJobReportPdf(clientCode, jobCode, tenantId, type) {
+  const job = await getJobByCode(clientCode, jobCode);
+  if (job.tenant_id !== tenantId) throw new Error("forbidden");
+  const items = await listSurveyItems(job.id);
+  const teams = await listTeams(tenantId);
+  const jobPlans = (await listJobPlans(job.id)).filter((pl) => pl.job_id === job.id);
+  const plans = [];
+  for (const pl of jobPlans) {
+    let bytes;
+    try {
+      bytes = Buffer.from(await downloadPlan(pl.storage_path));
+    } catch {
+      continue;
+    }
+    const pins = items.filter((it) => it.plan_id === pl.id && it.plan_x != null && it.plan_y != null).map((it) => ({ x: it.plan_x, y: it.plan_y, label: it.item_code || it.full_code || "", code: it.full_code ?? null, status: it.install_status ?? null }));
+    plans.push({ name: pl.name, bytes, pins });
+  }
+  const wantKinds = type === "survey" ? /* @__PURE__ */ new Set(["reference", "survey", "sketch"]) : /* @__PURE__ */ new Set(["install", "sketch"]);
+  const PER_ITEM = 4, MAX_ITEMS = 40;
+  const photos = [];
+  let used = 0;
+  for (const it of items) {
+    if (used >= MAX_ITEMS) break;
+    let rows;
+    try {
+      rows = await listItemPhotos(it.id);
+    } catch {
+      continue;
+    }
+    const pick = rows.filter((r) => wantKinds.has(r.kind)).slice(0, PER_ITEM);
+    if (!pick.length) continue;
+    const images = [];
+    for (const r of pick) {
+      try {
+        images.push(Buffer.from(await downloadPhoto(r.storage_path)));
+      } catch {
+      }
+    }
+    if (images.length) {
+      photos.push({ label: it.full_code || it.item_code || "item", images });
+      used++;
+    }
+  }
+  const buffer = await renderReportPdf({
+    type,
+    job: { client_code: job.client_code, job_code: job.job_code, name: job.name, site_address: job.site_address, monday_board_id: job.monday_board_id },
+    items,
+    teams,
+    plans,
+    photos,
+    generatedAt: /* @__PURE__ */ new Date()
+  });
+  return { buffer, job };
+}
+
+// apps/api/src/pricingPdf.ts
+var import_pdfkit2 = __toESM(require("pdfkit"), 1);
+var import_shared2 = require("@ace/shared");
+var PRIMARY2 = "#3a2b72";
+var INK2 = "#1e1b2e";
+var MUTED2 = "#6b6880";
+var LINE2 = "#d9d6e6";
+function renderPricePdf(data) {
+  const doc = new import_pdfkit2.default({ size: "A4", margin: 40, info: { Title: `${data.job.client_code}.${data.job.job_code} \u2014 price breakdown`, Author: "ACE Group" } });
+  const chunks = [];
+  const done = new Promise((resolve) => {
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+  const M = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const contentW = right - M;
+  const b = data.breakdown;
+  doc.rect(0, 0, doc.page.width, 84).fill(PRIMARY2);
+  doc.fillColor("#fff").font("Helvetica-Bold").fontSize(20).text(`${data.job.client_code}.${data.job.job_code}`, M, 20);
+  doc.font("Helvetica").fontSize(11).fillColor("#e8e5f5").text(data.job.name || "", M, 46, { width: contentW - 180 });
+  doc.font("Helvetica-Bold").fontSize(12).fillColor("#fff").text("PRICE BREAKDOWN", right - 180, 24, { width: 180, align: "right" });
+  doc.font("Helvetica").fontSize(9).fillColor("#e8e5f5").text(data.generatedAt.toLocaleDateString("en-GB"), right - 180, 44, { width: 180, align: "right" });
+  doc.y = 100;
+  doc.fillColor(INK2);
+  if (data.job.site_address) doc.font("Helvetica").fontSize(10).fillColor(MUTED2).text(data.job.site_address, M, doc.y);
+  doc.font("Helvetica").fontSize(10).fillColor(MUTED2).text(`Customer: ${data.customer || "\u2014"}     Pricing: ${data.ruleName || "\u2014"}`, M, doc.y + (data.job.site_address ? 4 : 0));
+  doc.moveDown(0.5);
+  doc.font("Helvetica-Bold").fontSize(15).fillColor(PRIMARY2).text(`Customer price: ${(0, import_shared2.formatPennies)(b.saleTotal)}`, M, doc.y);
+  doc.moveDown(0.5);
+  doc.moveTo(M, doc.y).lineTo(right, doc.y).strokeColor(LINE2).lineWidth(1).stroke();
+  doc.moveDown(0.5);
+  const cols = [
+    { t: "Flat", w: 0.16, a: "left" },
+    { t: "Windows", w: 0.14, a: "right" },
+    { t: "Base", w: 0.18, a: "right" },
+    { t: "Extra (biggest)", w: 0.18, a: "right" },
+    { t: "Extra \xA3", w: 0.16, a: "right" },
+    { t: "Flat total", w: 0.18, a: "right" }
+  ];
+  const xs = [];
+  let cx = M;
+  for (const c of cols) {
+    xs.push(cx);
+    cx += c.w * contentW;
+  }
+  const rowH = 18;
+  const header = () => {
+    const hy = doc.y;
+    doc.rect(M, hy, contentW, rowH).fill("#efeaf9");
+    doc.fillColor(PRIMARY2).font("Helvetica-Bold").fontSize(8.5);
+    cols.forEach((c, i) => doc.text(c.t, xs[i] + 4, hy + 5, { width: c.w * contentW - 8, align: c.a, lineBreak: false }));
+    doc.y = hy + rowH;
+    doc.font("Helvetica").fontSize(9).fillColor(INK2);
+  };
+  const line = (cells, bold = false, tint) => {
+    if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      header();
+    }
+    const y = doc.y;
+    if (tint) {
+      doc.rect(M, y, contentW, rowH).fill(tint);
+      doc.fillColor(INK2);
+    }
+    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9).fillColor(INK2);
+    cols.forEach((c, i) => doc.text(cells[i] ?? "", xs[i] + 4, y + 5, { width: c.w * contentW - 8, align: c.a, lineBreak: false }));
+    doc.y = y + rowH;
+    doc.moveTo(M, doc.y).lineTo(right, doc.y).strokeColor(LINE2).lineWidth(0.4).stroke();
+  };
+  const sumLine = (label, amount) => {
+    if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      header();
+    }
+    const y = doc.y;
+    doc.font("Helvetica").fontSize(9).fillColor(INK2);
+    doc.text(label, xs[0] + 4, y + 5, { width: xs[5] - xs[0] - 8, lineBreak: false, ellipsis: true });
+    doc.text(amount, xs[5] + 4, y + 5, { width: cols[5].w * contentW - 8, align: "right", lineBreak: false });
+    doc.y = y + rowH;
+    doc.moveTo(M, doc.y).lineTo(right, doc.y).strokeColor(LINE2).lineWidth(0.4).stroke();
+  };
+  header();
+  b.flats.forEach((f, i) => line([
+    f.flat,
+    String(f.windows),
+    (0, import_shared2.formatPennies)(f.base),
+    f.extraWindows ? `${f.extraWindows} \xB7 ${f.extraM2} m\xB2` : "\u2014",
+    f.extraAmount ? (0, import_shared2.formatPennies)(f.extraAmount) : "\u2014",
+    (0, import_shared2.formatPennies)(f.total)
+  ], false, i % 2 ? "#faf9fd" : void 0));
+  if (b.doors.count) sumLine(`Doors \xD7 ${b.doors.count}`, (0, import_shared2.formatPennies)(b.doors.amount));
+  if (b.communal.windows) sumLine(`Communal windows \xD7 ${b.communal.windows}  (${b.communal.m2} m\xB2)`, (0, import_shared2.formatPennies)(b.communal.amount));
+  for (const v of b.variations) sumLine(`Variation ${v.code ?? ""}`.trim(), (0, import_shared2.formatPennies)(v.amount));
+  const gy = doc.y;
+  doc.rect(M, gy, contentW, rowH + 2).fill(PRIMARY2);
+  doc.fillColor("#fff").font("Helvetica-Bold").fontSize(10);
+  doc.text("Customer price (total)", xs[0] + 4, gy + 5, { width: cols.slice(0, 5).reduce((s2, c) => s2 + c.w, 0) * contentW - 8, lineBreak: false });
+  doc.text((0, import_shared2.formatPennies)(b.saleTotal), xs[5] + 4, gy + 5, { width: cols[5].w * contentW - 8, align: "right", lineBreak: false });
+  doc.y = gy + rowH + 2;
+  doc.fillColor(INK2);
+  doc.moveDown(1);
+  doc.font("Helvetica-Oblique").fontSize(8).fillColor(MUTED2).text("Prices exclude VAT unless stated. Snags are excluded from this breakdown; variations are billed at the agreed amounts shown.", M, doc.y, { width: contentW });
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i++) {
+    doc.switchToPage(range.start + i);
+    doc.font("Helvetica").fontSize(8).fillColor(MUTED2).text(
+      `${data.job.client_code}.${data.job.job_code} \xB7 price breakdown \xB7 ${data.generatedAt.toLocaleDateString("en-GB")} \xB7 page ${i + 1} of ${range.count}`,
+      M,
+      doc.page.height - 28,
+      { width: contentW, align: "center" }
+    );
+  }
+  doc.end();
+  return done;
+}
+async function buildJobPricePdf(clientCode, jobCode, tenantId) {
+  const job = await getJobByCode(clientCode, jobCode);
+  if (job.tenant_id !== tenantId) throw new Error("forbidden");
+  const ruleId = await getJobRuleId(job.id);
+  const rule = ruleId ? await getPricingRule(ruleId, tenantId) : null;
+  if (!rule || !rule.params?.sale) return null;
+  const items = await listSurveyItems(job.id);
+  const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
+  const priceItems = items.map((it) => {
+    const f = ipMap.get(it.id);
+    return {
+      id: it.id,
+      full_code: it.full_code,
+      kind: it.kind,
+      category: (0, import_shared2.classifyCategory)({ item_type: it.item_type, item_code: it.item_code }),
+      width_mm: it.width_mm,
+      height_mm: it.height_mm,
+      flat: it.flat,
+      is_variation: !!f?.is_variation,
+      variation_amount: f?.variation_amount_pennies ?? 0
+    };
+  });
+  const breakdown = (0, import_shared2.priceJob)(priceItems, rule);
+  const buffer = await renderPricePdf({
+    job: { client_code: job.client_code, job_code: job.job_code, name: job.name, site_address: job.site_address },
+    customer: rule.customer ?? null,
+    ruleName: rule.name,
+    breakdown,
+    generatedAt: /* @__PURE__ */ new Date()
+  });
+  return { buffer, job };
+}
+
+// apps/api/src/adminUser.ts
+async function createOrLinkUser(email, password) {
+  const admin = db().auth.admin;
+  let userId = null;
+  let created = false;
+  const { data } = await admin.createUser({ email, password, email_confirm: true });
+  if (data?.user) {
+    userId = data.user.id;
+    created = true;
+  } else {
+    const list = await admin.listUsers();
+    const found = list.data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (!found) throw new Error("Could not create or find the auth user");
+    userId = found.id;
+    await admin.updateUserById(userId, { password });
+  }
+  const { data: appUser, error } = await db().from("app_users").update({ auth_user_id: userId }).eq("email", email).select("id").maybeSingle();
+  if (error) throw error;
+  return { id: userId, created, linked: !!appUser };
+}
+async function inviteUser(tenantId, email, name, role, password) {
+  const existing = await db().from("app_users").select("id").eq("tenant_id", tenantId).eq("email", email).maybeSingle();
+  let appUserId;
+  if (existing.data) {
+    appUserId = existing.data.id;
+    await db().from("app_users").update({ name, role, active: true }).eq("id", appUserId);
+  } else {
+    const ins = await db().from("app_users").insert({ tenant_id: tenantId, email, name, role }).select("id").single();
+    if (ins.error) throw ins.error;
+    appUserId = ins.data.id;
+  }
+  const link = await createOrLinkUser(email, password);
+  return { created: link.created, appUserId };
+}
+async function updateAuthEmail(authUserId, email) {
+  await db().auth.admin.updateUserById(authUserId, { email, email_confirm: true });
+}
+async function findAuthUserIdByEmail(email) {
+  const admin = db().auth.admin;
+  const target = email.trim().toLowerCase();
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error("Could not list logins: " + error.message);
+    const users = data?.users ?? [];
+    const found = users.find((u) => u.email?.toLowerCase() === target);
+    if (found) return found.id;
+    if (users.length < 200) break;
+  }
+  return null;
+}
+async function resetUserPassword(email, password, authUserId) {
+  const admin = db().auth.admin;
+  let userId = authUserId ?? null;
+  if (!userId) userId = await findAuthUserIdByEmail(email);
+  if (userId) {
+    const { error: error2 } = await admin.updateUserById(userId, { password });
+    if (error2) throw new Error("Could not set the new password: " + error2.message);
+    return;
+  }
+  const { data, error } = await admin.createUser({ email, password, email_confirm: true });
+  if (error || !data?.user) throw new Error("Could not create a login: " + (error?.message ?? "unknown error"));
+  const link = await db().from("app_users").update({ auth_user_id: data.user.id }).eq("email", email);
+  if (link.error) throw new Error("Password set but linking the account failed: " + link.error.message);
+}
+
+// apps/api/src/monday.ts
+var MONDAY_URL = "https://api.monday.com/v2";
+var Monday = class {
+  token;
+  constructor(token = process.env.MONDAY_API_TOKEN ?? "") {
+    if (!token) throw new Error("MONDAY_API_TOKEN is not set (server environment only).");
+    this.token = token;
+  }
+  async gql(query, variables = {}) {
+    const res = await fetch(MONDAY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: this.token,
+        "API-Version": "2024-10"
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    const json = await res.json();
+    if (json.errors) throw new Error("Monday API error: " + JSON.stringify(json.errors));
+    return json.data;
+  }
+  /** The token's Monday account slug (e.g. "ace189144") — the subdomain in board/item URLs. */
+  async getAccountSlug() {
+    const d = await this.gql(`query { account { slug } }`);
+    return d.account?.slug ?? null;
+  }
+  /** Board columns, with settings parsed — used to match survey fields by title. */
+  async getColumns(boardId) {
+    const d = await this.gql(
+      `query ($b: [ID!]) { boards(ids: $b) { columns { id title type settings_str } } }`,
+      { b: [boardId] }
+    );
+    return (d.boards?.[0]?.columns ?? []).map((c) => ({
+      id: c.id,
+      title: c.title,
+      type: c.type,
+      settings: c.settings_str ? JSON.parse(c.settings_str) : {}
+    }));
+  }
+  /** Idempotency: find an existing item on the board by its (exact) name = full code.
+   *  Scans the board and matches in JS — robust across Monday schema versions.
+   *  (In production we store monday_item_id after the first create, so this is only a fallback.) */
+  async findItemIdByName(boardId, name) {
+    const d = await this.gql(
+      `query ($b: [ID!]) { boards(ids: $b) { items_page(limit: 500) { items { id name } } } }`,
+      { b: [boardId] }
+    );
+    const items = d.boards?.[0]?.items_page?.items ?? [];
+    const hit = items.find((i) => i.name === name);
+    return hit ? hit.id : null;
+  }
+  /** Read one column's text for every item on a board (paged). Used to pull the Fitters
+   *  (team) assignment back from Monday. Returns each item's id, name (= full code) and the
+   *  column's display text (e.g. "Team P01"), or null when unset. */
+  async getColumnTextForItems(boardId, columnId) {
+    const out = [];
+    let cursor = null;
+    for (let page = 0; page < 50; page++) {
+      const d = cursor ? await this.gql(
+        `query ($c: String!, $col: [String!]) { next_items_page(cursor: $c, limit: 200) { cursor items { id name column_values(ids: $col) { text } } } }`,
+        { c: cursor, col: [columnId] }
+      ) : await this.gql(
+        `query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 200) { cursor items { id name column_values(ids: $col) { text } } } } }`,
+        { b: [boardId], col: [columnId] }
+      );
+      const pageData = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) out.push({ id: i.id, name: i.name, text: i.column_values?.[0]?.text ?? null });
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+  async createItem(boardId, name, columnValues) {
+    const d = await this.gql(
+      `mutation ($b: ID!, $n: String!, $cv: JSON!) {
+         create_item(board_id: $b, item_name: $n, column_values: $cv, create_labels_if_missing: false) { id }
+       }`,
+      { b: boardId, n: name, cv: JSON.stringify(columnValues) }
+    );
+    return d.create_item.id;
+  }
+  /** Create a new column on a board (used to auto-provision required columns on link). */
+  async createColumn(boardId, title, columnType) {
+    const d = await this.gql(
+      `mutation ($b: ID!, $t: String!, $ct: ColumnType!) {
+         create_column(board_id: $b, title: $t, column_type: $ct) { id }
+       }`,
+      { b: boardId, t: title, ct: columnType }
+    );
+    return d.create_column.id;
+  }
+  /** Duplicate an item on the same board (used for snags); returns the new item id. */
+  async duplicateItem(boardId, itemId, withUpdates = false) {
+    const d = await this.gql(
+      `mutation ($b: ID!, $i: ID!, $u: Boolean) {
+         duplicate_item(board_id: $b, item_id: $i, with_updates: $u) { id }
+       }`,
+      { b: boardId, i: itemId, u: withUpdates }
+    );
+    return d.duplicate_item.id;
+  }
+  async changeColumnValues(boardId, itemId, columnValues) {
+    await this.gql(
+      `mutation ($b: ID!, $i: ID!, $cv: JSON!) {
+         change_multiple_column_values(board_id: $b, item_id: $i, column_values: $cv) { id }
+       }`,
+      { b: boardId, i: itemId, cv: JSON.stringify(columnValues) }
+    );
+  }
+  /** Upload a file into a file column (e.g. Design Sketch). Uses Monday's multipart file endpoint. */
+  async addFileToColumn(itemId, columnId, bytes, fileName, contentType = "image/png") {
+    const form = new FormData();
+    form.append(
+      "query",
+      `mutation ($file: File!) { add_file_to_column(item_id: ${itemId}, column_id: "${columnId}", file: $file) { id } }`
+    );
+    form.append("variables[file]", new Blob([bytes], { type: contentType }), fileName);
+    const res = await fetch("https://api.monday.com/v2/file", {
+      method: "POST",
+      headers: { Authorization: this.token },
+      body: form
+    });
+    const json = await res.json();
+    if (json.errors) throw new Error("Monday file upload error: " + JSON.stringify(json.errors));
+    return json.data.add_file_to_column.id;
+  }
+};
+
+// apps/api/src/mapItem.ts
+var INSTALL_STATUS_LABEL = {
+  scheduled: "Scheduled",
+  installed_no_snag: "Installed no snag",
+  installed_snag: "Installed + snag",
+  snag: "Snag",
+  misfit: "MisFit",
+  delayed: "Delayed"
+};
+var norm = (s2) => s2.trim().toLowerCase().replace(/\s+/g, " ");
+var REQUIRED_MONDAY_COLUMNS = [
+  { title: "Block", type: "text" },
+  { title: "Elevation", type: "text" },
+  { title: "Flat / Plot No.", type: "text" },
+  { title: "Room", type: "text" },
+  { title: "Item", type: "text" },
+  { title: "Floor", type: "text" },
+  { title: "Item Type", type: "text" },
+  { title: "Window Type", type: "text" },
+  { title: "Design Code", type: "text" },
+  { title: "Glass", type: "text" },
+  { title: "Safety Glass", type: "text" },
+  { title: "Glazing", type: "text" },
+  { title: "Glazing Bars", type: "text" },
+  { title: "Open In / Open Out", type: "text" },
+  { title: "Add-Ons Required", type: "text" },
+  { title: "Coupled", type: "text" },
+  { title: "Comments", type: "long_text" },
+  { title: "Full Location Ref", type: "long_text" },
+  { title: "Width", type: "numbers" },
+  { title: "Height (inc Cill)", type: "numbers" },
+  { title: "Cill Depth", type: "text" },
+  { title: "Transom 1 (from top)", type: "numbers" },
+  { title: "Transom 2 (from top)", type: "numbers" },
+  { title: "Transom Equal", type: "checkbox" },
+  { title: "Mullion 1 (from left)", type: "numbers" },
+  { title: "Mullion 2 (from left)", type: "numbers" },
+  { title: "Mullion Equal", type: "checkbox" },
+  { title: "Labour Cost", type: "numbers" },
+  { title: "Material", type: "dropdown" },
+  { title: "Fitters", type: "dropdown" },
+  { title: "Install Status", type: "status" },
+  { title: "Picture Before", type: "file" },
+  { title: "Picture After", type: "file" },
+  { title: "Design Sketch", type: "file" }
+];
+var NON_WRITABLE = /* @__PURE__ */ new Set([
+  "mirror",
+  "lookup",
+  "formula",
+  "button",
+  "subtasks",
+  "board_relation",
+  "dependency",
+  "progress",
+  "auto_number",
+  "name",
+  "file",
+  "doc",
+  "creation_log",
+  "last_updated",
+  "item_id",
+  "vote",
+  "time_tracking"
+]);
+function byTitle(cols) {
+  const m = /* @__PURE__ */ new Map();
+  for (const c of cols) {
+    if (NON_WRITABLE.has(c.type)) continue;
+    const key = norm(c.title);
+    if (!m.has(key)) m.set(key, c);
+  }
+  return m;
+}
+function labelList(col) {
+  const s2 = col.settings?.labels;
+  if (Array.isArray(s2)) return s2.map((x) => typeof x === "string" ? x : x.name ?? x.label).filter(Boolean);
+  if (s2 && typeof s2 === "object") return Object.values(s2).filter((v) => typeof v === "string");
+  return [];
+}
+function matchLabel(col, wanted) {
+  const hit = labelList(col).find((l) => norm(l) === norm(wanted));
+  return hit ?? wanted;
+}
+function buildColumnValues(cols, { item, teamName, ratePounds }) {
+  const map = byTitle(cols);
+  const out = {};
+  const entries = [
+    { title: "Block", value: item.block },
+    { title: "Elevation", value: item.elevation },
+    { title: "Flat / Plot No.", value: item.flat },
+    { title: "Room", value: item.room_code },
+    { title: "Item", value: item.item_code },
+    { title: "Floor", value: item.floor },
+    { title: "Material", value: item.material },
+    { title: "Item Type", value: item.item_type },
+    { title: "Window Type", value: item.window_type },
+    { title: "Design Code", value: item.design_code },
+    { title: "Glass", value: item.glass },
+    { title: "Safety Glass", value: item.safety_glass },
+    { title: "Glazing", value: item.glazing },
+    { title: "Glazing Bars", value: item.glazing_bars },
+    { title: "Width", value: item.width_mm },
+    { title: "Height (inc Cill)", value: item.height_mm },
+    { title: "Cill Depth", value: item.cill_depth ?? item.cill_depth_mm },
+    { title: "Transom 1 (from top)", value: item.transom1_mm },
+    { title: "Transom 2 (from top)", value: item.transom2_mm },
+    { title: "Transom Equal", value: item.transom_equal },
+    { title: "Mullion 1 (from left)", value: item.mullion1_mm },
+    { title: "Mullion 2 (from left)", value: item.mullion2_mm },
+    { title: "Mullion Equal", value: item.mullion_equal },
+    { title: "Open In / Open Out", value: item.open_in_out },
+    { title: "Add-Ons Required", value: item.add_ons },
+    { title: "Coupled", value: item.coupled },
+    { title: "Comments", value: item.comments },
+    { title: "Full Location Ref", value: item.full_code },
+    { title: "Fitters", value: teamName ?? null },
+    { title: "Install Status", value: item.install_status ? INSTALL_STATUS_LABEL[item.install_status] : null },
+    { title: "Labour Cost", value: ratePounds ?? null }
+  ];
+  for (const { title, value } of entries) {
+    if (value == null || value === "") continue;
+    const col = map.get(norm(title));
+    if (!col) continue;
+    switch (col.type) {
+      case "dropdown":
+        out[col.id] = { labels: [matchLabel(col, String(value))] };
+        break;
+      case "status":
+      case "color":
+        out[col.id] = { label: matchLabel(col, String(value)) };
+        break;
+      case "numbers":
+      case "numeric":
+        out[col.id] = String(value);
+        break;
+      case "checkbox":
+        out[col.id] = value ? { checked: "true" } : { checked: "false" };
+        break;
+      default:
+        out[col.id] = String(value);
+    }
+  }
+  return out;
+}
+
+// apps/api/src/syncItem.ts
+async function upsertSurveyItem(monday, boardId, inputs) {
+  const fullCode = inputs.item.full_code;
+  if (!fullCode) throw new Error("Item has no full_code \u2014 cannot sync.");
+  const snagComment = inputs.item.snag_comment;
+  const itemName = inputs.item.kind === "snag" && snagComment ? `${fullCode} \u2014 ${snagComment}`.slice(0, 255) : fullCode;
+  const cols = await monday.getColumns(boardId);
+  const columnValues = buildColumnValues(cols, inputs);
+  const existingId = await monday.findItemIdByName(boardId, itemName);
+  if (existingId) {
+    await monday.changeColumnValues(boardId, existingId, columnValues);
+    return { itemId: existingId, action: "updated", fullCode };
+  }
+  const itemId = await monday.createItem(boardId, itemName, columnValues);
+  return { itemId, action: "created", fullCode };
+}
+
+// apps/api/src/promote.ts
+var import_shared3 = require("@ace/shared");
+async function promoteItem(itemId) {
+  const item = await getSurveyItem(itemId);
+  const job = await getJob(item.job_id);
+  if (!job.monday_board_id) throw new Error(`Job ${job.client_code}.${job.job_code} has no Monday board linked.`);
+  const team = await getTeam(item.team_id);
+  const ratePennies = (0, import_shared3.effectiveRatePennies)(item, team ? [team] : []);
+  const ratePounds = ratePennies != null ? ratePennies / 100 : null;
+  const monday = new Monday();
+  const res = await upsertSurveyItem(monday, job.monday_board_id, {
+    item,
+    ratePounds,
+    teamName: team?.name ?? null
+    // sets the Fitters dropdown, matched by name
+  });
+  await markItemSynced(itemId, res.itemId);
+  if (!job.monday_account_slug) {
+    try {
+      const slug = await monday.getAccountSlug();
+      if (slug) await setJobBoard(job.id, job.monday_board_id, slug);
+    } catch {
+    }
+  }
+  const COLUMN_FOR_KIND = {
+    before: "picture before",
+    after: "picture after",
+    survey: "design sketch",
+    sketch: "design sketch"
+  };
+  let photosPushed = 0;
+  let photoError;
+  try {
+    const pending = (await listItemPhotos(itemId)).filter((p) => COLUMN_FOR_KIND[p.kind] && !p.monday_pushed);
+    if (pending.length) {
+      const cols = await monday.getColumns(job.monday_board_id);
+      const norm2 = (s2) => s2.trim().toLowerCase().replace(/\s+/g, " ");
+      const fileCol = (title) => cols.find((c) => norm2(c.title) === title && c.type === "file");
+      const missing = /* @__PURE__ */ new Set();
+      for (const ph of pending) {
+        const wantTitle = COLUMN_FOR_KIND[ph.kind];
+        const col = fileCol(wantTitle);
+        if (!col) {
+          missing.add(wantTitle);
+          continue;
+        }
+        const bytes = await downloadPhoto(ph.storage_path);
+        await monday.addFileToColumn(res.itemId, col.id, bytes, ph.storage_path.split("/").pop() ?? "photo.jpg");
+        await markPhotoPushed(ph.id);
+        photosPushed++;
+      }
+      if (missing.size) {
+        const pretty = [...missing].map((t) => t.replace(/\b\w/g, (m) => m.toUpperCase())).join('", "');
+        photoError = `No file column(s) named "${pretty}" on board ${job.monday_board_id}.`;
+      }
+    }
+  } catch (e) {
+    photoError = e?.message ?? String(e);
+    console.warn(`[promote] photo push failed for ${itemId}: ${photoError}`);
+  }
+  return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id, photosPushed, photoError };
+}
+
+// apps/api/src/recognise.ts
+var import_shared4 = require("@ace/shared");
+function visionConfig() {
+  const url = process.env.VISION_API_URL;
+  const model = process.env.VISION_MODEL;
+  if (!url || !model) {
+    throw new Error("Vision assist is off \u2014 set VISION_API_URL and VISION_MODEL (+ VISION_API_KEY if required) in .env.");
+  }
+  return { url: url.replace(/\/+$/, ""), key: process.env.VISION_API_KEY ?? "", model };
+}
+async function recogniseImage(bytes, mime = "image/jpeg") {
+  const { url, key, model } = visionConfig();
+  const dataUri = `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
+  const res = await fetch(`${url}/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...key ? { authorization: `Bearer ${key}` } : {} },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_tokens: 500,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: import_shared4.RECOGNITION_PROMPT },
+          { type: "image_url", image_url: { url: dataUri } }
+        ]
+      }]
+    })
+  });
+  if (!res.ok) throw new Error(`Vision API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const json = await res.json();
+  const content = json?.choices?.[0]?.message?.content ?? "";
+  return (0, import_shared4.parseRecognition)(typeof content === "string" ? content : JSON.stringify(content));
+}
+async function recogniseItemPhoto(itemId) {
+  const photos = await listItemPhotos(itemId);
+  if (photos.length === 0) throw new Error("This item has no photo to analyse yet.");
+  const latest = photos[photos.length - 1];
+  const bytes = await downloadPhoto(latest.storage_path);
+  return recogniseImage(bytes);
+}
+
+// apps/api/src/office.ts
+var import_shared6 = require("@ace/shared");
+var import_meta = {};
+var normTitle = (s2) => s2.toLowerCase().replace(/[^a-z0-9]/g, "");
+function pickDateColumn(cols) {
+  const dates = cols.filter((c) => c.type === "date");
   if (!dates.length) return null;
-  const rank = (t: string) => {
+  const rank = (t) => {
     const n = normTitle(t);
-    if (n.includes('install')) return 5;
-    if (n.includes('fit')) return 4;
-    if (n.includes('plan')) return 3;
-    if (n.includes('schedule')) return 2;
-    if (n.includes('due')) return 1;
-    if (n.includes('date')) return 0;
+    if (n.includes("install")) return 5;
+    if (n.includes("fit")) return 4;
+    if (n.includes("plan")) return 3;
+    if (n.includes("schedule")) return 2;
+    if (n.includes("due")) return 1;
+    if (n.includes("date")) return 0;
     return -1;
   };
   const ranked = dates.map((c) => ({ c, r: rank(c.title) })).filter((x) => x.r >= 0).sort((a, b) => b.r - a.r);
   if (ranked.length) return ranked[0].c;
   return dates.length === 1 ? dates[0] : null;
 }
-// Monday date cells read back as "YYYY-MM-DD" (optionally with a time) — keep the date.
-function parseMondayDate(text: string | null): string | null {
-  const m = (text ?? '').trim().match(/^(\d{4}-\d{2}-\d{2})/);
+function parseMondayDate(text) {
+  const m = (text ?? "").trim().match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : null;
 }
-
-// ---- Clearview style catalogue (shared with the mobile picker) ----
-// Sketch PNGs live in the mobile app's assets, keyed by design code; metadata is a
-// generated JSON. The office serves both so desk staff get the same visual picker.
-const __dir = dirname(fileURLToPath(import.meta.url));
-const STYLES_DIR = join(__dir, '../../mobile/assets/styles');
-
-// Extract the optional programme date fields (YYYY-MM-DD or null) from a request body.
-function pickJobDates(b: any): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
-  for (const k of JOB_DATE_FIELDS) {
-    if (k in (b ?? {})) { const v = (b as any)[k]; out[k] = (v == null || v === '') ? null : String(v).slice(0, 10); }
+var __dir = (0, import_node_path.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
+var STYLES_DIR = (0, import_node_path.join)(__dir, "../../mobile/assets/styles");
+var STYLE_META = (() => {
+  try {
+    return JSON.parse((0, import_node_fs.readFileSync)((0, import_node_path.join)(__dir, "styleMeta.generated.json"), "utf8"));
+  } catch {
+    return {};
   }
-  return out;
-}
-interface StyleMetaRow { type: string; wide: number | null; high: number | null; opening: number | null; fixed: number | null }
-const STYLE_META: Record<string, StyleMetaRow> = (() => {
-  try { return JSON.parse(readFileSync(join(__dir, 'styleMeta.generated.json'), 'utf8')); } catch { return {}; }
 })();
-// Codes that actually have a sketch on disk (the picker only shows these).
-const STYLE_IMAGE_CODES: Set<string> = (() => {
-  try { return new Set(readdirSync(STYLES_DIR).filter((f) => f.endsWith('.png')).map((f) => f.replace(/\.png$/, ''))); }
-  catch { return new Set<string>(); }
+var STYLE_IMAGE_CODES = (() => {
+  try {
+    return new Set((0, import_node_fs.readdirSync)(STYLES_DIR).filter((f) => f.endsWith(".png")).map((f) => f.replace(/\.png$/, "")));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
 })();
-// Catalogue rows = styles that have both metadata and a sketch, sorted numerically.
-// In-app QA scenarios (the list the testers work through). Lives in code so it's versioned
-// with the app; only results go to the database.
-const TEST_SCENARIOS: any[] = (() => {
-  try { return JSON.parse(readFileSync(join(__dir, 'testScenarios.json'), 'utf8')); } catch { return []; }
+var TEST_SCENARIOS = (() => {
+  try {
+    return JSON.parse((0, import_node_fs.readFileSync)((0, import_node_path.join)(__dir, "testScenarios.json"), "utf8"));
+  } catch {
+    return [];
+  }
 })();
-
-const STYLE_CATALOGUE = Object.keys(STYLE_META)
-  .filter((code) => STYLE_IMAGE_CODES.has(code))
-  .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b))
-  .map((code) => ({ code, ...STYLE_META[code] }));
-
-const genPassword = () => 'ACE-' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
-import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG,
-  CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL, can, type Capability } from '@ace/shared';
-
-// Assignable roles = the single shared list (includes invoice_manager). Never hard-code.
-const ROLES: string[] = [...SHARED_ROLES];
-const ROLE_MATRIX = { caps: CAPABILITIES, roles: SHARED_ROLES, labels: ROLE_LABEL, matrix: ROLE_CAPS };
-
-const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install', before: 'Picture Before', after: 'Picture After' };
-
-const PORT = Number(process.env.PORT ?? 3000);
-
+var STYLE_CATALOGUE = Object.keys(STYLE_META).filter((code) => STYLE_IMAGE_CODES.has(code)).sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b)).map((code) => ({ code, ...STYLE_META[code] }));
+var genPassword = () => "ACE-" + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
+var ROLES = [...import_shared6.ROLES];
+var ROLE_MATRIX = { caps: import_shared6.CAPABILITIES, roles: import_shared6.ROLES, labels: import_shared6.ROLE_LABEL, matrix: import_shared6.ROLE_CAPS };
+var PHOTO_KIND_LABEL = { reference: "Reference", survey: "Survey", sketch: "Sketch", install: "Install", before: "Picture Before", after: "Picture After" };
+var PORT = Number(process.env.PORT ?? 3e3);
 function authClient() {
   const url = process.env.SUPABASE_URL, anon = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anon) throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY must be set in .env.');
-  return createClient(url, anon, { auth: { persistSession: false } });
+  if (!url || !anon) throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY must be set in .env.");
+  return (0, import_supabase_js2.createClient)(url, anon, { auth: { persistSession: false } });
 }
-
-const send = (res: any, code: number, data: unknown, type = 'application/json') => {
-  const headers: Record<string, string> = { 'content-type': type };
-  if (type === 'application/json') headers['cache-control'] = 'no-store'; // never cache API data
+var send = (res, code, data, type = "application/json") => {
+  const headers = { "content-type": type };
+  if (type === "application/json") headers["cache-control"] = "no-store";
   res.writeHead(code, headers);
-  res.end(type === 'application/json' ? JSON.stringify(data) : (data as string));
+  res.end(type === "application/json" ? JSON.stringify(data) : data);
 };
-const readJson = (req: any): Promise<any> => new Promise((resolve) => {
-  let b = ''; req.on('data', (c: any) => (b += c)); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } });
+var readJson = (req) => new Promise((resolve) => {
+  let b = "";
+  req.on("data", (c) => b += c);
+  req.on("end", () => {
+    try {
+      resolve(b ? JSON.parse(b) : {});
+    } catch {
+      resolve({});
+    }
+  });
 });
-
-// Pull a Monday board id + account slug from either a bare id or a full board URL.
-// Handles the trap where the account subdomain (e.g. "ace189144") contains digits.
-function parseMondayRef(input: unknown): { board: string | null; slug: string | null } {
-  const s = String(input ?? '').trim();
-  if (!s) return { board: null, slug: null };
-  const slug = (s.match(/https?:\/\/([a-z0-9-]+)\.monday\.com/i)?.[1]) ?? null;
-  let board = s.match(/\/boards\/(\d+)/)?.[1] ?? null;          // prefer the id right after /boards/
+function parseMondayRef(input) {
+  const s2 = String(input ?? "").trim();
+  if (!s2) return { board: null, slug: null };
+  const slug = s2.match(/https?:\/\/([a-z0-9-]+)\.monday\.com/i)?.[1] ?? null;
+  let board = s2.match(/\/boards\/(\d+)/)?.[1] ?? null;
   if (!board) {
-    if (/^\d{4,}$/.test(s)) board = s;                          // a bare board id
-    else board = (s.match(/\d{4,}/g) ?? []).sort((a, b) => b.length - a.length)[0] ?? null; // longest digit run
+    if (/^\d{4,}$/.test(s2)) board = s2;
+    else board = (s2.match(/\d{4,}/g) ?? []).sort((a, b) => b.length - a.length)[0] ?? null;
   }
   return { board, slug };
 }
-
-// Build a Monday item link that resolves to the correct account.
-const mondayItemUrl = (job: any, itemId: string) =>
-  `https://${job.monday_account_slug ? job.monday_account_slug + '.monday.com' : 'monday.com'}/boards/${job.monday_board_id}/pulses/${itemId}`;
-
-// Dashboard figures for a tenant (shared by the authed dashboard tab and the /live wallboard).
-async function dashboardData(tenantId: string) {
+var mondayItemUrl = (job, itemId) => `https://${job.monday_account_slug ? job.monday_account_slug + ".monday.com" : "monday.com"}/boards/${job.monday_board_id}/pulses/${itemId}`;
+async function dashboardData(tenantId) {
   const jobs = await listJobs(tenantId);
   const teams = await listTeams(tenantId);
-  const INSTALLED = new Set(['installed_no_snag', 'installed_snag']);
-  const STATUS_ORDER: [string, string][] = [
-    ['scheduled', 'Scheduled'], ['installed_no_snag', 'Installed'], ['installed_snag', 'Installed + snag'],
-    ['snag', 'Snag'], ['misfit', 'MisFit'], ['delayed', 'Delayed'], ['none', 'No status'],
+  const INSTALLED = /* @__PURE__ */ new Set(["installed_no_snag", "installed_snag"]);
+  const STATUS_ORDER = [
+    ["scheduled", "Scheduled"],
+    ["installed_no_snag", "Installed"],
+    ["installed_snag", "Installed + snag"],
+    ["snag", "Snag"],
+    ["misfit", "MisFit"],
+    ["delayed", "Delayed"],
+    ["none", "No status"]
   ];
-  const statusCounts: Record<string, number> = {};
+  const statusCounts = {};
   const perJob = await Promise.all(jobs.map(async (j) => {
     const items = await listSurveyItems(j.id);
-    const snags = items.filter((it) => (it as any).kind === 'snag');
+    const snags = items.filter((it) => it.kind === "snag");
     const synced = items.filter((it) => it.monday_item_id).length;
     const installed = items.filter((it) => it.install_status && INSTALLED.has(it.install_status)).length;
     const openSnags = snags.filter((it) => !(it.install_status && INSTALLED.has(it.install_status))).length;
-    const dirty = items.filter((it) => it.monday_item_id && (it as any).needs_resync).length;
-    const labourP = items.reduce((s, it) => s + (effectiveRatePennies(it, teams) ?? 0), 0);
-    for (const it of items) statusCounts[it.install_status ?? 'none'] = (statusCounts[it.install_status ?? 'none'] ?? 0) + 1;
+    const dirty = items.filter((it) => it.monday_item_id && it.needs_resync).length;
+    const labourP = items.reduce((s2, it) => s2 + ((0, import_shared6.effectiveRatePennies)(it, teams) ?? 0), 0);
+    for (const it of items) statusCounts[it.install_status ?? "none"] = (statusCounts[it.install_status ?? "none"] ?? 0) + 1;
     return {
-      code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
-      items: items.length, windows: items.length - snags.length, snags: snags.length,
-      synced, installed, openSnags, dirty, labour: formatPennies(labourP), labourP,
+      code: `${j.client_code}.${j.job_code}`,
+      name: j.name,
+      board: !!j.monday_board_id,
+      items: items.length,
+      windows: items.length - snags.length,
+      snags: snags.length,
+      synced,
+      installed,
+      openSnags,
+      dirty,
+      labour: (0, import_shared6.formatPennies)(labourP),
+      labourP
     };
   }));
   const t = perJob.reduce((a, j) => ({
-    items: a.items + j.items, synced: a.synced + j.synced, installed: a.installed + j.installed,
-    snags: a.snags + j.snags, openSnags: a.openSnags + j.openSnags, dirty: a.dirty + j.dirty, labourP: a.labourP + j.labourP,
+    items: a.items + j.items,
+    synced: a.synced + j.synced,
+    installed: a.installed + j.installed,
+    snags: a.snags + j.snags,
+    openSnags: a.openSnags + j.openSnags,
+    dirty: a.dirty + j.dirty,
+    labourP: a.labourP + j.labourP
   }), { items: 0, synced: 0, installed: 0, snags: 0, openSnags: 0, dirty: 0, labourP: 0 });
-  const breakdown = STATUS_ORDER.map(([key, label]) => ({ key, label, count: statusCounts[key] ?? 0 })).filter((s) => s.count > 0);
+  const breakdown = STATUS_ORDER.map(([key, label]) => ({ key, label, count: statusCounts[key] ?? 0 })).filter((s2) => s2.count > 0);
   return {
-    totals: { jobs: jobs.length, items: t.items, synced: t.synced, installed: t.installed,
-      snags: t.snags, openSnags: t.openSnags, dirty: t.dirty, labour: formatPennies(t.labourP) },
-    breakdown, jobs: perJob,
+    totals: {
+      jobs: jobs.length,
+      items: t.items,
+      synced: t.synced,
+      installed: t.installed,
+      snags: t.snags,
+      openSnags: t.openSnags,
+      dirty: t.dirty,
+      labour: (0, import_shared6.formatPennies)(t.labourP)
+    },
+    breakdown,
+    jobs: perJob
   };
 }
-
-// Unified item-code builder (mapping + Items-view edits). The "level" segment is the Flat if
-// set, otherwise the mapping Floor; a plain number renders as F{n}, a label (e.g. GF) as-is.
-// Order: CLIENT.JOB.BLOCK.ELEV.LEVEL.ROOM.ITEM  (empty parts skipped).
-function levelSeg(v: any): string {
-  const s = String(v ?? '').trim().replace(/^F(?=[0-9])/i, '');
-  if (!s) return '';
-  return /^[0-9]+$/.test(s) ? `F${s}` : s.toUpperCase();
+function levelSeg(v) {
+  const s2 = String(v ?? "").trim().replace(/^F(?=[0-9])/i, "");
+  if (!s2) return "";
+  return /^[0-9]+$/.test(s2) ? `F${s2}` : s2.toUpperCase();
 }
-function buildItemCode(p: { client: string; job: string; block?: any; elevation?: any; flat?: any; floor?: any; room?: any; item: any }): string {
-  const up = (v: any) => String(v ?? '').trim().toUpperCase();
-  const level = (p.flat != null && String(p.flat).trim() !== '') ? levelSeg(p.flat) : levelSeg(p.floor);
-  return [p.client, p.job, up(p.block), up(p.elevation), level, up(p.room), up(p.item)].filter(Boolean).join('.');
+function buildItemCode(p) {
+  const up = (v) => String(v ?? "").trim().toUpperCase();
+  const level = p.flat != null && String(p.flat).trim() !== "" ? levelSeg(p.flat) : levelSeg(p.floor);
+  return [p.client, p.job, up(p.block), up(p.elevation), level, up(p.room), up(p.item)].filter(Boolean).join(".");
 }
-
-// One item row for the Items table (shared by single-job and All-jobs views).
-const itemRow = (it: any, job: any, teams: any[]) => ({
-  id: it.id, full_code: it.full_code, block: it.block ?? null, elevation: it.elevation ?? null, floor: it.floor ?? null,
-  flat: it.flat, room: it.room_code, item: it.item_code, stage: it.stage,
-  kind: it.kind ?? 'item', snag_comment: it.snag_comment ?? null, incomplete: !!it.incomplete,
-  install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
-  effective_rate: formatPennies(effectiveRatePennies(it, teams)),
+var itemRow = (it, job, teams) => ({
+  id: it.id,
+  full_code: it.full_code,
+  block: it.block ?? null,
+  elevation: it.elevation ?? null,
+  floor: it.floor ?? null,
+  flat: it.flat,
+  room: it.room_code,
+  item: it.item_code,
+  stage: it.stage,
+  kind: it.kind ?? "item",
+  snag_comment: it.snag_comment ?? null,
+  install_status: it.install_status,
+  team_id: it.team_id,
+  rate_override_pennies: it.rate_override_pennies,
+  effective_rate: (0, import_shared6.formatPennies)((0, import_shared6.effectiveRatePennies)(it, teams)),
   synced: !!it.monday_item_id,
   dirty: !!it.monday_item_id && !!it.needs_resync,
-  monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
+  monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null
 });
-
-// Resolve the caller's app_users row from their bearer token.
-async function context(req: any): Promise<{ id: string; tenant_id: string; role: string; name: string; client_code?: string | null; team_id?: string | null } | null> {
-  const h = String(req.headers['authorization'] ?? '');
-  const token = h.startsWith('Bearer ') ? h.slice(7) : '';
+async function context(req) {
+  const h = String(req.headers["authorization"] ?? "");
+  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
   if (!token) return null;
   const { data } = await authClient().auth.getUser(token);
   const user = data?.user;
   if (!user) return null;
-  const cols = 'id,tenant_id,role,name,active,email,client_code,team_id';
-  // First try the linked auth id (password logins), then fall back to email (SSO / first login).
-  let { data: rows } = await db().from('app_users').select(cols).eq('auth_user_id', user.id).order('created_at').limit(1);
-  let u: any = rows && rows[0];
+  const cols = "id,tenant_id,role,name,active,email,client_code";
+  let { data: rows } = await db().from("app_users").select(cols).eq("auth_user_id", user.id).order("created_at").limit(1);
+  let u = rows && rows[0];
   if (!u && user.email) {
     const email = user.email.toLowerCase();
-    const byEmail = await db().from('app_users').select(cols).eq('email', email).order('created_at').limit(1);
+    const byEmail = await db().from("app_users").select(cols).eq("email", email).order("created_at").limit(1);
     u = byEmail.data && byEmail.data[0];
-    if (u) await db().from('app_users').update({ auth_user_id: user.id }).eq('id', u.id); // link this identity (e.g. Microsoft SSO)
+    if (u) await db().from("app_users").update({ auth_user_id: user.id }).eq("id", u.id);
   }
   if (!u || !u.active) return null;
-  return u as any;
+  return u;
 }
-
-// Fire-and-forget audit entry (never blocks or breaks the main request).
-function audit(ctx: any, action: string, entity: string | null, entityId: string | null, summary: string | null): void {
-  insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action, entity, entity_id: entityId, summary })
-    .catch((e) => console.warn('[audit]', e?.message ?? e));
+function audit(ctx, action, entity, entityId, summary) {
+  insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action, entity, entity_id: entityId, summary }).catch((e) => console.warn("[audit]", e?.message ?? e));
 }
-
-const server = createServer(async (req, res) => {
+var server = (0, import_node_http.createServer)(async (req, res) => {
   try {
-    const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+    const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
     const p = url.pathname;
-
-    if (p === '/') {
-      const html = PAGE
-        .replaceAll('__APP_VERSION__', APP_VERSION)
-        .replace('__CHANGELOG_JSON__', () => JSON.stringify(CHANGELOG))
-        .replace('__ROLE_MATRIX_JSON__', () => JSON.stringify(ROLE_MATRIX))
-        .replaceAll('__SUPABASE_URL__', () => process.env.SUPABASE_URL ?? '')
-        .replaceAll('__SUPABASE_ANON_KEY__', () => process.env.SUPABASE_ANON_KEY ?? '')
-        .replaceAll('__SSO_ENABLED__', () => (process.env.AZURE_SSO_ENABLED === 'true' ? 'true' : 'false'))
-        .replaceAll('__APP_ENV__', () => (process.env.APP_ENV === 'test' ? 'test' : (process.env.APP_ENV === 'prod' ? 'prod' : '')));
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(html); return;
-    }
-
-    // Style sketch image (public: loaded via <img>, which can't send the bearer token;
-    // the drawings are generic product sketches, not tenant data). Guards path traversal
-    // by only serving codes we found on disk at startup.
-    if (p.startsWith('/api/style-image/')) {
-      const code = decodeURIComponent(p.slice('/api/style-image/'.length));
-      if (!STYLE_IMAGE_CODES.has(code)) { res.writeHead(404); res.end('not found'); return; }
-      try {
-        const bytes = readFileSync(join(STYLES_DIR, `${code}.png`));
-        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
-        res.end(bytes);
-      } catch { res.writeHead(404); res.end('not found'); }
+    if (p === "/") {
+      const html = PAGE.replaceAll("__APP_VERSION__", import_shared6.APP_VERSION).replace("__CHANGELOG_JSON__", () => JSON.stringify(import_shared6.CHANGELOG)).replace("__ROLE_MATRIX_JSON__", () => JSON.stringify(ROLE_MATRIX)).replaceAll("__SUPABASE_URL__", () => process.env.SUPABASE_URL ?? "").replaceAll("__SUPABASE_ANON_KEY__", () => process.env.SUPABASE_ANON_KEY ?? "").replaceAll("__SSO_ENABLED__", () => process.env.AZURE_SSO_ENABLED === "true" ? "true" : "false").replaceAll("__APP_ENV__", () => process.env.APP_ENV === "test" ? "test" : process.env.APP_ENV === "prod" ? "prod" : "");
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(html);
       return;
     }
-    // Style catalogue metadata for the picker (code, type, wide, high). Non-sensitive.
-    if (p === '/api/styles') { send(res, 200, STYLE_CATALOGUE); return; }
-
-    // Self-hosted pdf.js (public: loaded as an ES module via dynamic import(), which can't attach
-    // the bearer token). Whitelisted library files only — generic code, no tenant data. Used to
-    // rasterise a multi-page PDF into one plan image per page, in the browser.
-    if (p.startsWith('/vendor/pdfjs/')) {
-      const fname = p.slice('/vendor/pdfjs/'.length);
-      if (fname !== 'pdf.min.mjs' && fname !== 'pdf.worker.min.mjs') { res.writeHead(404); res.end('not found'); return; }
+    if (p.startsWith("/api/style-image/")) {
+      const code = decodeURIComponent(p.slice("/api/style-image/".length));
+      if (!STYLE_IMAGE_CODES.has(code)) {
+        res.writeHead(404);
+        res.end("not found");
+        return;
+      }
       try {
-        const bytes = readFileSync(join(__dir, '../vendor/pdfjs', fname));
-        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' });
+        const bytes = (0, import_node_fs.readFileSync)((0, import_node_path.join)(STYLES_DIR, `${code}.png`));
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "public, max-age=86400" });
         res.end(bytes);
-      } catch { res.writeHead(404); res.end('not found'); }
+      } catch {
+        res.writeHead(404);
+        res.end("not found");
+      }
       return;
     }
-
-    // Standalone auto-refreshing wallboard (pin it as a browser tab). Key-gated, no login.
-    if (p === '/live') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(LIVE_PAGE); return; }
-    if (p === '/api/live') {
-      const want = process.env.LIVE_KEY ?? '';
-      if (!want) { send(res, 503, { error: 'Live view is off — set LIVE_KEY in .env to enable it.' }); return; }
-      if ((url.searchParams.get('key') ?? '') !== want) { send(res, 401, { error: 'Bad or missing key.' }); return; }
+    if (p === "/api/styles") {
+      send(res, 200, STYLE_CATALOGUE);
+      return;
+    }
+    if (p === "/live") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(LIVE_PAGE);
+      return;
+    }
+    if (p === "/api/live") {
+      const want = process.env.LIVE_KEY ?? "";
+      if (!want) {
+        send(res, 503, { error: "Live view is off \u2014 set LIVE_KEY in .env to enable it." });
+        return;
+      }
+      if ((url.searchParams.get("key") ?? "") !== want) {
+        send(res, 401, { error: "Bad or missing key." });
+        return;
+      }
       send(res, 200, await dashboardData(ACE_TENANT));
       return;
     }
-
-    if (p === '/api/login' && req.method === 'POST') {
+    if (p === "/api/login" && req.method === "POST") {
       const { email, password } = await readJson(req);
       const { data, error } = await authClient().auth.signInWithPassword({ email, password });
-      if (error || !data.session) { send(res, 401, { error: 'Invalid email or password' }); return; }
-      const { data: u } = await db().from('app_users').select('name,role,client_code,team_id').eq('auth_user_id', data.user.id).maybeSingle();
-      send(res, 200, { token: data.session.access_token, name: u?.name ?? email, role: u?.role ?? 'user', client_code: u?.client_code ?? null, team_id: (u as any)?.team_id ?? null });
+      if (error || !data.session) {
+        send(res, 401, { error: "Invalid email or password" });
+        return;
+      }
+      const { data: u } = await db().from("app_users").select("name,role,client_code").eq("auth_user_id", data.user.id).maybeSingle();
+      send(res, 200, { token: data.session.access_token, name: u?.name ?? email, role: u?.role ?? "user", client_code: u?.client_code ?? null });
       return;
     }
-
     const ctx = await context(req);
-    if (!ctx) { send(res, 401, { error: 'Not authenticated' }); return; }
-
-    // Server-side role guard. The office server uses the service-role key (bypasses RLS),
-    // so this is what actually stops a role from doing something the UI merely hides.
-    // Returns true if allowed; otherwise sends 403 and returns false (caller must `return`).
-    const allow = (cap: Capability): boolean => {
-      if (can(ctx.role, cap)) return true;
+    if (!ctx) {
+      send(res, 401, { error: "Not authenticated" });
+      return;
+    }
+    const allow = (cap) => {
+      if ((0, import_shared6.can)(ctx.role, cap)) return true;
       send(res, 403, { error: `Your role (${ctx.role}) is not allowed to do that.` });
       return false;
     };
-
-    if (p === '/api/me') { send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role, client_code: ctx.client_code ?? null, team_id: (ctx as any).team_id ?? null }); return; }
-
-    // ---- Customer portal (role 'customer' only): their own client's jobs + the rate-free PDF ----
-    // A customer is confined to a strict whitelist; everything else is refused.
-    if (ctx.role === 'customer') {
-      const allowedForCustomer =
-        p === '/api/me' ||
-        p === '/api/customer/jobs' ||
-        (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET');
-      if (!allowedForCustomer) { send(res, 403, { error: 'Not allowed.' }); return; }
+    if (p === "/api/me") {
+      send(res, 200, { id: ctx.id, name: ctx.name, role: ctx.role, client_code: ctx.client_code ?? null });
+      return;
     }
-    if (p === '/api/customer/jobs' && req.method === 'GET') {
-      if (ctx.role !== 'customer' || !ctx.client_code) { send(res, 403, { error: 'forbidden' }); return; }
+    if (ctx.role === "customer") {
+      const allowedForCustomer = p === "/api/me" || p === "/api/customer/jobs" || p.startsWith("/api/job/") && p.endsWith("/report.pdf") && req.method === "GET";
+      if (!allowedForCustomer) {
+        send(res, 403, { error: "Not allowed." });
+        return;
+      }
+    }
+    if (p === "/api/customer/jobs" && req.method === "GET") {
+      if (ctx.role !== "customer" || !ctx.client_code) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const jobs = (await listJobs(ctx.tenant_id)).filter((j) => j.client_code === ctx.client_code);
       send(res, 200, jobs.map((j) => ({ code: `${j.client_code}.${j.job_code}`, name: j.name })));
       return;
     }
-
-    if (p === '/api/dashboard') { send(res, 200, await dashboardData(ctx.tenant_id)); return; }
-
-    // Install calendar: every scheduled item across all jobs/teams (office-wide planner).
-    if (p === '/api/calendar' && req.method === 'GET') {
-      if (!allow('calendar.view')) return;
+    if (p === "/api/dashboard") {
+      send(res, 200, await dashboardData(ctx.tenant_id));
+      return;
+    }
+    if (p === "/api/calendar" && req.method === "GET") {
+      if (!allow("dashboard.view")) return;
       const teams = await listTeams(ctx.tenant_id);
       const tname = new Map(teams.map((t) => [t.id, t.name]));
       const rows = await listScheduledItems(ctx.tenant_id);
-      const items = rows.map((r: any) => ({
-        id: r.id, full_code: r.full_code, room_code: r.room_code, item_code: r.item_code,
-        install_status: r.install_status, date: r.planned_install_date,
-        job: r.jobs ? `${r.jobs.client_code}.${r.jobs.job_code}` : '', jobName: r.jobs?.name ?? '',
-        team: r.team_id ? (tname.get(r.team_id) ?? '') : '', team_id: r.team_id ?? '',
+      const items = rows.map((r) => ({
+        id: r.id,
+        full_code: r.full_code,
+        room_code: r.room_code,
+        item_code: r.item_code,
+        install_status: r.install_status,
+        date: r.planned_install_date,
+        job: r.jobs ? `${r.jobs.client_code}.${r.jobs.job_code}` : "",
+        jobName: r.jobs?.name ?? "",
+        team: r.team_id ? tname.get(r.team_id) ?? "" : "",
+        team_id: r.team_id ?? ""
       }));
       send(res, 200, { items, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })) });
       return;
     }
-
-    // ---- Finance: pricing rules (admin / invoice_manager only) ----
-    if (p === '/api/pricing-rules' && req.method === 'GET') {
-      if (!allow('finance.view')) return;
+    if (p === "/api/pricing-rules" && req.method === "GET") {
+      if (!allow("finance.view")) return;
       send(res, 200, await listPricingRules(ctx.tenant_id));
       return;
     }
-    if (p === '/api/pricing-rules' && req.method === 'POST') {
-      if (!allow('finance.manage')) return;
+    if (p === "/api/pricing-rules" && req.method === "POST") {
+      if (!allow("finance.manage")) return;
       const b = await readJson(req);
-      const name = String(b.name ?? '').trim();
-      if (!name) { send(res, 400, { error: 'A rule name is required.' }); return; }
+      const name = String(b.name ?? "").trim();
+      if (!name) {
+        send(res, 400, { error: "A rule name is required." });
+        return;
+      }
       try {
-        const created = await createPricingRule(ctx.tenant_id, { name, customer: b.customer ?? null, model: b.model || 'axs_flat_v1', params: b.params ?? {} });
+        const created = await createPricingRule(ctx.tenant_id, { name, customer: b.customer ?? null, model: b.model || "axs_flat_v1", params: b.params ?? {} });
         send(res, 200, { ok: true, id: created.id });
-      } catch (err: any) {
-        if (err?.code === '23505') { send(res, 409, { error: `A rule called "${name}" already exists.` }); return; }
+      } catch (err) {
+        if (err?.code === "23505") {
+          send(res, 409, { error: `A rule called "${name}" already exists.` });
+          return;
+        }
         send(res, 500, { error: err?.message ?? String(err) });
       }
       return;
     }
-    if (p.startsWith('/api/pricing-rules/') && req.method === 'PUT') {
-      if (!allow('finance.manage')) return;
-      const id = p.split('/')[3] ?? '';
+    if (p.startsWith("/api/pricing-rules/") && req.method === "PUT") {
+      if (!allow("finance.manage")) return;
+      const id = p.split("/")[3] ?? "";
       const b = await readJson(req);
-      const patch: Record<string, unknown> = {};
-      if (b.name !== undefined) patch.name = String(b.name).trim();
-      if (b.customer !== undefined) patch.customer = b.customer || null;
-      if (b.model !== undefined) patch.model = b.model || 'axs_flat_v1';
-      if (b.params !== undefined) patch.params = b.params;
-      if (b.active !== undefined) patch.active = !!b.active;
-      try { await updatePricingRule(id, ctx.tenant_id, patch); send(res, 200, { ok: true }); }
-      catch (err: any) {
-        if (err?.code === '23505') { send(res, 409, { error: 'Another rule already has that name.' }); return; }
+      const patch = {};
+      if (b.name !== void 0) patch.name = String(b.name).trim();
+      if (b.customer !== void 0) patch.customer = b.customer || null;
+      if (b.model !== void 0) patch.model = b.model || "axs_flat_v1";
+      if (b.params !== void 0) patch.params = b.params;
+      if (b.active !== void 0) patch.active = !!b.active;
+      try {
+        await updatePricingRule(id, ctx.tenant_id, patch);
+        send(res, 200, { ok: true });
+      } catch (err) {
+        if (err?.code === "23505") {
+          send(res, 409, { error: "Another rule already has that name." });
+          return;
+        }
         send(res, 500, { error: err?.message ?? String(err) });
       }
       return;
     }
-    if (p.startsWith('/api/pricing-rules/') && req.method === 'DELETE') {
-      if (!allow('finance.manage')) return;
-      const id = p.split('/')[3] ?? '';
+    if (p.startsWith("/api/pricing-rules/") && req.method === "DELETE") {
+      if (!allow("finance.manage")) return;
+      const id = p.split("/")[3] ?? "";
       await deletePricingRule(id, ctx.tenant_id);
       send(res, 200, { ok: true });
       return;
     }
-
-    // ---- In-app QA test tab ----
-    if (p === '/api/tests' && req.method === 'GET') {
-      if (!allow('dashboard.view')) return;
-      const sel = (url.searchParams.get('version') || APP_VERSION).trim() || APP_VERSION;
-      const results = await latestTestResults(ctx.tenant_id, sel);
-      const versions = await listTestVersions(ctx.tenant_id);
-      if (!versions.some((v) => v.version === APP_VERSION)) versions.unshift({ version: APP_VERSION, count: 0, last: '' });
-      send(res, 200, { version: sel, current: APP_VERSION, scenarios: TEST_SCENARIOS, results, versions });
+    if (p === "/api/tests" && req.method === "GET") {
+      if (!allow("dashboard.view")) return;
+      const results = await latestTestResults(ctx.tenant_id, import_shared6.APP_VERSION);
+      send(res, 200, { version: import_shared6.APP_VERSION, scenarios: TEST_SCENARIOS, results });
       return;
     }
-    if (p === '/api/tests/result' && req.method === 'POST') {
-      if (!allow('dashboard.view')) return;
+    if (p === "/api/tests/result" && req.method === "POST") {
+      if (!allow("dashboard.view")) return;
       const b = await readJson(req);
-      const code = String(b.code ?? '').trim();
-      const status = b.status === 'ok' ? 'ok' : b.status === 'nok' ? 'nok' : '';
-      if (!code || !TEST_SCENARIOS.some((s) => s.code === code)) { send(res, 400, { error: 'Unknown scenario.' }); return; }
-      if (!status) { send(res, 400, { error: 'Status must be ok or nok.' }); return; }
+      const code = String(b.code ?? "").trim();
+      const status = b.status === "ok" ? "ok" : b.status === "nok" ? "nok" : "";
+      if (!code || !TEST_SCENARIOS.some((s2) => s2.code === code)) {
+        send(res, 400, { error: "Unknown scenario." });
+        return;
+      }
+      if (!status) {
+        send(res, 400, { error: "Status must be ok or nok." });
+        return;
+      }
       await insertTestResult(ctx.tenant_id, {
-        scenario_code: code, app_version: APP_VERSION, status,
-        comment: (b.comment ?? '').toString().trim() || null, tested_by: ctx.name ?? null, tested_by_id: ctx.id ?? null,
+        scenario_code: code,
+        app_version: import_shared6.APP_VERSION,
+        status,
+        comment: (b.comment ?? "").toString().trim() || null,
+        tested_by: ctx.name ?? null,
+        tested_by_id: ctx.id ?? null
       });
       send(res, 200, { ok: true });
       return;
     }
-    if (p === '/api/tests/export.csv' && req.method === 'GET') {
-      if (!allow('dashboard.view')) return;
-      const xv = (url.searchParams.get('version') || APP_VERSION).trim() || APP_VERSION;
-      const rows = await allTestResults(ctx.tenant_id, xv);
-      const esc = (v: any) => `"${(v ?? '').toString().replace(/"/g, '""')}"`;
-      const byCode = new Map(TEST_SCENARIOS.map((s) => [s.code, s]));
-      const lines = ['code,area,feature,status,comment,tested_by,at'];
+    if (p === "/api/tests/export.csv" && req.method === "GET") {
+      if (!allow("dashboard.view")) return;
+      const rows = await allTestResults(ctx.tenant_id, import_shared6.APP_VERSION);
+      const esc = (v) => `"${(v ?? "").toString().replace(/"/g, '""')}"`;
+      const byCode = new Map(TEST_SCENARIOS.map((s2) => [s2.code, s2]));
+      const lines = ["code,area,feature,status,comment,tested_by,at"];
       for (const r of rows) {
-        const s: any = byCode.get(r.scenario_code) ?? {};
-        lines.push([r.scenario_code, s.area, s.feature, r.status, r.comment, r.tested_by, r.created_at].map(esc).join(','));
+        const s2 = byCode.get(r.scenario_code) ?? {};
+        lines.push([r.scenario_code, s2.area, s2.feature, r.status, r.comment, r.tested_by, r.created_at].map(esc).join(","));
       }
-      res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': `attachment; filename="test-results-v${xv}.csv"`, 'cache-control': 'no-store' });
-      res.end(lines.join('\n'));
+      res.writeHead(200, { "content-type": "text/csv", "content-disposition": `attachment; filename="test-results-v${import_shared6.APP_VERSION}.csv"`, "cache-control": "no-store" });
+      res.end(lines.join("\n"));
       return;
     }
-
-    // Job pricing: current rule + full budget/sale/margin breakdown (finance only).
-    if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'GET') {
-      if (!allow('finance.view')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.endsWith("/pricing") && req.method === "GET") {
+      if (!allow("finance.view")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const rules = await listPricingRules(ctx.tenant_id);
       const ruleId = await getJobRuleId(job.id);
       const rule = ruleId ? await getPricingRule(ruleId, ctx.tenant_id) : null;
-      let breakdown: unknown = null;
-      let itemList: any[] = [];
-      let missingDims = 0;
-      if (rule && (rule.params as any)?.sale) {
+      let breakdown = null;
+      let itemList = [];
+      if (rule && rule.params?.sale) {
         const items = await listSurveyItems(job.id);
         const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
-        const priceItems: PriceItem[] = items.map((it: any) => {
+        const priceItems = items.map((it) => {
           const f = ipMap.get(it.id);
           return {
-            id: it.id, full_code: it.full_code, kind: it.kind,
-            category: classifyCategory({ item_type: it.item_type, item_code: it.item_code }),
-            width_mm: it.width_mm, height_mm: it.height_mm, flat: it.flat,
-            is_variation: !!f?.is_variation, variation_amount: f?.variation_amount_pennies ?? 0,
+            id: it.id,
+            full_code: it.full_code,
+            kind: it.kind,
+            category: (0, import_shared5.classifyCategory)({ item_type: it.item_type, item_code: it.item_code }),
+            width_mm: it.width_mm,
+            height_mm: it.height_mm,
+            flat: it.flat,
+            is_variation: !!f?.is_variation,
+            variation_amount: f?.variation_amount_pennies ?? 0
           };
         });
-        breakdown = priceJob(priceItems, rule as any);
-        // Windows with no dimensions can't be priced by m² (their extra-window / COM charge is £0).
-        missingDims = priceItems.filter((it) => it.category === 'window' && (it.kind ?? 'item') !== 'snag' && !it.is_variation && !((it.width_mm || 0) > 0 && (it.height_mm || 0) > 0)).length;
-        // Non-snag items with their variation state, so the UI can flag variations.
-        itemList = priceItems.filter((it) => (it.kind ?? 'item') !== 'snag').map((it) => ({
-          id: it.id, full_code: it.full_code, category: it.category, flat: it.flat ?? null,
-          is_variation: !!it.is_variation, variation_amount: it.variation_amount ?? 0,
+        breakdown = (0, import_shared5.priceJob)(priceItems, rule);
+        itemList = priceItems.filter((it) => (it.kind ?? "item") !== "snag").map((it) => ({
+          id: it.id,
+          full_code: it.full_code,
+          category: it.category,
+          flat: it.flat ?? null,
+          is_variation: !!it.is_variation,
+          variation_amount: it.variation_amount ?? 0
         }));
       }
-      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown, items: itemList, missingDims });
+      send(res, 200, { rule_id: ruleId, rule_name: rule?.name ?? null, rules: rules.map((r) => ({ id: r.id, name: r.name })), breakdown, items: itemList });
       return;
     }
-    if (p.startsWith('/api/job/') && p.endsWith('/pricing') && req.method === 'PUT') {
-      if (!allow('finance.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.endsWith("/pricing") && req.method === "PUT") {
+      if (!allow("finance.manage")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
       await setJobRuleId(job.id, ctx.tenant_id, b.rule_id || null);
       send(res, 200, { ok: true });
       return;
     }
-    // Customer price-breakdown PDF (sale side only; finance-gated). Browser downloads it.
-    if (p.startsWith('/api/job/') && p.endsWith('/price.pdf') && req.method === 'GET') {
-      if (!allow('finance.view')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
+    if (p.startsWith("/api/job/") && p.endsWith("/price.pdf") && req.method === "GET") {
+      if (!allow("finance.view")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
       try {
         const out = await buildJobPricePdf(c, j, ctx.tenant_id);
-        if (!out) { send(res, 400, { error: 'Assign a pricing rule to this job first.' }); return; }
+        if (!out) {
+          send(res, 400, { error: "Assign a pricing rule to this job first." });
+          return;
+        }
         res.writeHead(200, {
-          'content-type': 'application/pdf',
-          'content-disposition': `attachment; filename="${c}.${j}-price-breakdown.pdf"`,
-          'cache-control': 'no-store',
+          "content-type": "application/pdf",
+          "content-disposition": `attachment; filename="${c}.${j}-price-breakdown.pdf"`,
+          "cache-control": "no-store"
         });
         res.end(out.buffer);
-      } catch (e: any) {
-        send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) });
+      } catch (e) {
+        send(res, e?.message === "forbidden" ? 403 : 500, { error: e?.message ?? String(e) });
       }
       return;
     }
-
-    // Mark an item as a variation (with a manual amount) — finance only.
-    if (p.startsWith('/api/item/') && p.endsWith('/pricing') && req.method === 'PUT') {
-      if (!allow('finance.manage')) return;
-      const id = p.split('/')[3] ?? '';
+    if (p.startsWith("/api/item/") && p.endsWith("/pricing") && req.method === "PUT") {
+      if (!allow("finance.manage")) return;
+      const id = p.split("/")[3] ?? "";
       const it = await getSurveyItem(id);
-      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (it.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
       const isVar = !!b.is_variation;
-      const amt = b.variation_amount_pennies == null || b.variation_amount_pennies === '' ? null : Math.round(Number(b.variation_amount_pennies));
+      const amt = b.variation_amount_pennies == null || b.variation_amount_pennies === "" ? null : Math.round(Number(b.variation_amount_pennies));
       await setItemPricing(id, ctx.tenant_id, { is_variation: isVar, variation_amount_pennies: isVar ? amt : null });
       send(res, 200, { ok: true });
       return;
     }
-
-    if (p === '/api/jobs' && req.method === 'GET') {
+    if (p === "/api/jobs" && req.method === "GET") {
       let jobs = await listJobs(ctx.tenant_id);
-      // Scanners only see jobs an admin has released for mapping.
-      if (ctx.role === 'scanner') jobs = jobs.filter((j) => (j as any).status === 'pending_mapping');
+      if (ctx.role === "scanner") jobs = jobs.filter((j) => j.status === "pending_mapping");
       send(res, 200, jobs.map((j) => ({
-        code: `${j.client_code}.${j.job_code}`, name: j.name, site_code: (j as any).site_code ?? null,
-        status: (j as any).status ?? 'new', mapping_start_date: (j as any).mapping_start_date ?? null,
+        code: `${j.client_code}.${j.job_code}`,
+        name: j.name,
+        status: j.status ?? "new",
+        mapping_start_date: j.mapping_start_date ?? null
       })));
       return;
     }
-
-    // Jobs + their programme dates, for the Gantt on the Calendar tab.
-    if (p === '/api/gantt' && req.method === 'GET') {
-      if (!allow('calendar.view')) return;
-      const jobs = await listJobs(ctx.tenant_id);
-      const teams = await listTeams(ctx.tenant_id);
-      const teamByJob = await jobTeamIds(ctx.tenant_id);
-      send(res, 200, {
-        jobs: jobs.map((j) => {
-          const o: Record<string, unknown> = { code: `${j.client_code}.${j.job_code}`, name: j.name, team_ids: Array.from(teamByJob.get(j.id) ?? []) };
-          for (const k of JOB_DATE_FIELDS) o[k] = (j as any)[k] ?? null;
-          return o;
-        }),
-        teams: teams.map((t) => ({ id: t.id, name: t.name, active: (t as any).active })),
-      });
-      return;
-    }
-
-    // Demo leads destination email (admin config). GET + PUT.
-    if (p === '/api/config/demo-leads-email' && req.method === 'GET') {
-      if (!allow('users.manage')) return;
-      send(res, 200, { email: (await getConfig('demo_leads_email')) ?? '' });
-      return;
-    }
-    if (p === '/api/config/demo-leads-email' && req.method === 'PUT') {
-      if (!allow('users.manage')) return;
+    if (p.startsWith("/api/job/") && p.endsWith("/mapping-date") && req.method === "POST") {
+      if (!allow("jobs.manage")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
-      const email = String(b.email ?? '').trim();
-      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { send(res, 400, { error: 'Enter a valid email address.' }); return; }
-      await setConfig('demo_leads_email', email);
-      audit(ctx, 'config.demo_leads_email', 'config', 'demo_leads_email', `Set demo leads email to ${email || '(cleared)'}`);
-      send(res, 200, { ok: true });
-      return;
-    }
-
-    // Admin assigns a mapping start date → releases the job to scanners (status 'pending_mapping').
-    if (p.startsWith('/api/job/') && p.endsWith('/mapping-date') && req.method === 'POST') {
-      if (!allow('jobs.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      const b = await readJson(req);
-      const date = String(b.date ?? '').trim() || null;
-      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { send(res, 400, { error: 'Use a valid date (YYYY-MM-DD).' }); return; }
+      const date = String(b.date ?? "").trim() || null;
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        send(res, 400, { error: "Use a valid date (YYYY-MM-DD)." });
+        return;
+      }
       await setJobMappingDate(job.id, date, ctx.tenant_id);
-      send(res, 200, { ok: true, status: date ? 'pending_mapping' : 'new' });
+      send(res, 200, { ok: true, status: date ? "pending_mapping" : "new" });
       return;
     }
-
-    // Scanner mapping bulk-create: block/elevation + rows [{flat, item, item_type}] → items.
-    if (p.startsWith('/api/job/') && p.endsWith('/mapping-items') && req.method === 'POST') {
-      if (!allow('items.create')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.endsWith("/mapping-items") && req.method === "POST") {
+      if (!allow("items.create")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
-      const block = String(b.block ?? '').trim().toUpperCase() || null;
-      const elevation = String(b.elevation ?? '').trim().toUpperCase() || null;
+      const block = String(b.block ?? "").trim().toUpperCase() || null;
+      const elevation = String(b.elevation ?? "").trim().toUpperCase() || null;
       const rows = Array.isArray(b.rows) ? b.rows : [];
-      if (!rows.length) { send(res, 400, { error: 'Nothing to save — preload some items first.' }); return; }
-      const seen = new Set<string>();
-      const fields: Record<string, unknown>[] = [];
+      if (!rows.length) {
+        send(res, 400, { error: "Nothing to save \u2014 preload some items first." });
+        return;
+      }
+      const seen = /* @__PURE__ */ new Set();
+      const fields = [];
       for (const r of rows) {
-        // Floor is stored WITH its F (1 -> F1, GF stays GF). Flat stays a bare number (feeds pricing).
-        const floor = levelSeg(String(r.floor ?? '').trim());
-        const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
-        const item = String(r.item ?? '').trim().toUpperCase();
+        const floor = levelSeg(String(r.floor ?? "").trim());
+        const flat = String(r.flat ?? "").trim().replace(/^F(?=[0-9])/i, "");
+        const item = String(r.item ?? "").trim().toUpperCase();
         if (!item) continue;
-        // Flat (if set) is the level segment in the code, else the mapping Floor. Both are stored.
         const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, item });
-        if (seen.has(full_code)) continue; seen.add(full_code);
-        fields.push({
-          tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
-          block, elevation, floor: floor || null, flat: flat || null, item_code: item,
-          item_type: String(r.item_type ?? '').trim() || null, full_code,
-        });
-      }
-      try {
-        const inserted = await bulkInsertSurveyItems(fields);
-        audit(ctx, 'mapping.save', 'job', code, `Mapped ${inserted} item(s) on ${code}${block ? ' · ' + block : ''}${elevation ? '/' + elevation : ''}`);
-        send(res, 200, { ok: true, inserted, skipped: fields.length - inserted });
-      } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
-      return;
-    }
-
-    // Excel import — staged draft grid (Operations ▸ Mapping ▸ Import from Excel). One per job,
-    // held server-side so it survives and is visible to the whole team until committed.
-    if (p.startsWith('/api/job/') && p.endsWith('/import-draft')) {
-      if (!allow('items.create')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      if (req.method === 'GET') {
-        const d = await getImportDraft(ctx.tenant_id, job.id);
-        send(res, 200, { rows: d?.rows ?? [], filename: d?.filename ?? null, updated_at: d?.updated_at ?? null });
-        return;
-      }
-      if (req.method === 'PUT') {
-        const b = await readJson(req);
-        const rows = Array.isArray(b.rows) ? b.rows : [];
-        await saveImportDraft(ctx.tenant_id, job.id, rows, (b.filename ? String(b.filename) : null), ctx.id);
-        send(res, 200, { ok: true, count: rows.length });
-        return;
-      }
-      if (req.method === 'DELETE') {
-        await deleteImportDraft(ctx.tenant_id, job.id);
-        audit(ctx, 'import.clear', 'job', code, `Cleared Excel import draft on ${code}`);
-        send(res, 200, { ok: true });
-        return;
-      }
-    }
-
-    // Excel import — commit the staged grid into the Items table. Rows missing mandatory data are
-    // still created, but flagged incomplete ('Unfinished') so they can be completed later.
-    if (p.startsWith('/api/job/') && p.endsWith('/import-commit') && req.method === 'POST') {
-      if (!allow('items.create')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      const b = await readJson(req);
-      const rows = Array.isArray(b.rows) ? b.rows : [];
-      if (!rows.length) { send(res, 400, { error: 'Nothing to upload — import a sheet first.' }); return; }
-      const up = (v: any) => String(v ?? '').trim().toUpperCase();
-      const str = (v: any) => { const t = String(v ?? '').trim(); return t || null; };
-      const seen = new Set<string>();
-      const fields: Record<string, unknown>[] = [];
-      let unfinished = 0, skipped = 0;
-      for (const r of rows) {
-        const item = up(r.item);
-        if (!item) { skipped++; continue; }                       // no item code ⇒ can't create a row
-        const floor = levelSeg(String(r.floor ?? '').trim());
-        const flat = String(r.flat ?? '').trim().replace(/^F(?=[0-9])/i, '');
-        const room = up(r.room);
-        const block = up(r.block) || null;
-        const elevation = up(r.elevation) || null;
-        const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item });
-        if (seen.has(full_code)) { skipped++; continue; }
+        if (seen.has(full_code)) continue;
         seen.add(full_code);
-        const incomplete = !isRowComplete(r);
-        if (incomplete) unfinished++;
         fields.push({
-          tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned', incomplete,
-          block, elevation, floor: floor || null, flat: flat || null, room_code: room || null, item_code: item,
-          material: str(r.material), item_type: str(r.item_type), window_type: str(r.window_type),
-          glass: str(r.glass), safety_glass: str(r.safety_glass), glazing: str(r.glazing), glazing_bars: str(r.glazing_bars),
-          width_mm: toMm(r.width_mm), height_mm: toMm(r.height_mm), cill_depth: str(r.cill_depth),
-          transom1_mm: toMm(r.transom1_mm), transom2_mm: toMm(r.transom2_mm), transom3_mm: toMm(r.transom3_mm),
-          mullion1_mm: toMm(r.mullion1_mm), mullion2_mm: toMm(r.mullion2_mm), mullion3_mm: toMm(r.mullion3_mm),
-          open_in_out: str(r.open_in_out), add_ons: str(r.add_ons), coupled: str(r.coupled),
-          design_code: str(r.design_code), comments: str(r.comments), full_code,
+          tenant_id: ctx.tenant_id,
+          job_id: job.id,
+          stage: "scanned",
+          block,
+          elevation,
+          floor: floor || null,
+          flat: flat || null,
+          item_code: item,
+          item_type: String(r.item_type ?? "").trim() || null,
+          full_code
         });
       }
       try {
         const inserted = await bulkInsertSurveyItems(fields);
-        audit(ctx, 'import.commit', 'job', code, `Imported ${inserted} item(s) from Excel on ${code}${unfinished ? ' · ' + unfinished + ' unfinished' : ''}`);
-        send(res, 200, { ok: true, inserted, unfinished, skipped: skipped + (fields.length - inserted) });
-      } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
-      return;
-    }
-    if (p === '/api/jobs' && req.method === 'POST') {
-      if (!allow('jobs.manage')) return;
-      const b = await readJson(req);
-      const client_code = String(b.client_code ?? '').trim().toUpperCase();
-      const job_code = String(b.job_code ?? '').trim().toUpperCase();
-      const name = String(b.name ?? '').trim();
-      const postcode = String(b.postcode ?? '').trim();
-      if (!client_code || !job_code) { send(res, 400, { error: 'Client code and job code are required (they form the job code, e.g. AXS.LAB).' }); return; }
-      if (!name) { send(res, 400, { error: 'A job name is required.' }); return; }
-      if (!postcode) { send(res, 400, { error: 'A postcode is required.' }); return; }
-      try {
-        const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
-        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null, postcode, site_code, dates: pickJobDates(b) });
-        audit(ctx, 'job.create', 'job', `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} — ${name}`);
-        send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
-      } catch (err: any) {
-        if (err?.code === '23505') { send(res, 409, { error: `Job ${client_code}.${job_code} already exists.` }); return; }
+        audit(ctx, "mapping.save", "job", code, `Mapped ${inserted} item(s) on ${code}${block ? " \xB7 " + block : ""}${elevation ? "/" + elevation : ""}`);
+        send(res, 200, { ok: true, inserted, skipped: fields.length - inserted });
+      } catch (err) {
         send(res, 500, { error: err?.message ?? String(err) });
       }
       return;
     }
-
-    // Get a job's editable details (managers) — for the Edit job dialog.
-    if (p.startsWith('/api/job/') && req.method === 'GET' && p.split('/').length === 4) {
-      if (!allow('jobs.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      { const dd: Record<string, unknown> = {}; for (const k of JOB_DATE_FIELDS) dd[k] = (job as any)[k] ?? null;
-        send(res, 200, { code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, ...dd }); }
-      return;
-    }
-    // Edit a job's details (name / address / postcode) — managers only.
-    if (p.startsWith('/api/job/') && req.method === 'PUT' && p.split('/').length === 4) {
-      if (!allow('jobs.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p === "/api/jobs" && req.method === "POST") {
+      if (!allow("jobs.manage")) return;
       const b = await readJson(req);
-      const name = String(b.name ?? '').trim();
-      const postcode = String(b.postcode ?? '').trim();
-      if (!name) { send(res, 400, { error: 'Job name is required.' }); return; }
-      if (!postcode) { send(res, 400, { error: 'Postcode is required.' }); return; }
-      const site_code = String(b.site_code ?? '').trim() || `${job.client_code}.${job.job_code}`;
-      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address: String(b.site_address ?? '').trim() || null, postcode, site_code, dates: pickJobDates(b) });
-      audit(ctx, 'job.update', 'job', code, `Edited details for ${code}`);
-      send(res, 200, { ok: true });
+      const client_code = String(b.client_code ?? "").trim().toUpperCase();
+      const job_code = String(b.job_code ?? "").trim().toUpperCase();
+      const name = String(b.name ?? "").trim();
+      if (!client_code || !job_code) {
+        send(res, 400, { error: "Client code and job code are required (they form the job code, e.g. AXS.LAB)." });
+        return;
+      }
+      if (!name) {
+        send(res, 400, { error: "A job name is required." });
+        return;
+      }
+      try {
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address: b.site_address || null });
+        audit(ctx, "job.create", "job", `${job.client_code}.${job.job_code}`, `Created job ${job.client_code}.${job.job_code} \u2014 ${name}`);
+        send(res, 200, { ok: true, code: `${job.client_code}.${job.job_code}` });
+      } catch (err) {
+        if (err?.code === "23505") {
+          send(res, 409, { error: `Job ${client_code}.${job_code} already exists.` });
+          return;
+        }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
       return;
     }
-
-    // Delete a job — only when it has no items.
-    if (p.startsWith('/api/job/') && req.method === 'DELETE' && p.split('/').length === 4) {
-      if (!allow('jobs.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && req.method === "DELETE" && p.split("/").length === 4) {
+      if (!allow("jobs.manage")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const n = await countItemsForJob(job.id);
-      if (n > 0) { send(res, 409, { error: `This job has ${n} item${n === 1 ? '' : 's'}. Delete or move them first — a job can only be removed when it's empty.` }); return; }
+      if (n > 0) {
+        send(res, 409, { error: `This job has ${n} item${n === 1 ? "" : "s"}. Delete or move them first \u2014 a job can only be removed when it's empty.` });
+        return;
+      }
       await deleteJob(job.id, ctx.tenant_id);
-      audit(ctx, 'job.delete', 'job', code, `Deleted job ${code}`);
+      audit(ctx, "job.delete", "job", code, `Deleted job ${code}`);
       send(res, 200, { ok: true });
       return;
     }
-
-    // ---- job file attachments (drawings / PDFs / zips) ----
-    if (p.startsWith('/api/job/') && p.endsWith('/files') && req.method === 'GET') {
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.endsWith("/files") && req.method === "GET") {
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const files = await listJobFiles(job.id);
       const out = await Promise.all(files.map(async (f) => ({
-        id: f.id, name: f.name, content_type: f.content_type, size_bytes: f.size_bytes, url: await signedJobFileUrl(f.storage_path),
+        id: f.id,
+        name: f.name,
+        content_type: f.content_type,
+        size_bytes: f.size_bytes,
+        url: await signedJobFileUrl(f.storage_path)
       })));
       send(res, 200, out);
       return;
     }
-    if (p.startsWith('/api/job/') && p.endsWith('/files') && req.method === 'POST') {
-      if (!allow('jobs.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.endsWith("/files") && req.method === "POST") {
+      if (!allow("jobs.manage")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
       const files = Array.isArray(b.files) ? b.files : [];
-      let saved = 0; const names: string[] = [];
+      let saved = 0;
+      const names = [];
       for (const f of files) {
-        const name = String(f.name ?? 'file').trim() || 'file';
-        const m = /^data:([^;]*);base64,(.+)$/.exec(String(f.dataUrl ?? ''));
+        const name = String(f.name ?? "file").trim() || "file";
+        const m = /^data:([^;]*);base64,(.+)$/.exec(String(f.dataUrl ?? ""));
         if (!m) continue;
-        const contentType = m[1] || 'application/octet-stream';
-        const bytes = Buffer.from(m[2], 'base64');
-        if (bytes.length > 25 * 1024 * 1024) { send(res, 400, { error: `"${name}" is over 25MB.` }); return; }
-        const safe = name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120);
+        const contentType = m[1] || "application/octet-stream";
+        const bytes = Buffer.from(m[2], "base64");
+        if (bytes.length > 25 * 1024 * 1024) {
+          send(res, 400, { error: `"${name}" is over 25MB.` });
+          return;
+        }
+        const safe = name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
         const path = `${ctx.tenant_id}/${job.id}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${safe}`;
         try {
           await ensureJobFileBucket();
           await uploadJobFile(path, bytes, contentType);
           await insertJobFile({ tenant_id: ctx.tenant_id, job_id: job.id, name, storage_path: path, content_type: contentType, size_bytes: bytes.length });
-          saved++; names.push(name);
-        } catch (err: any) { send(res, 500, { error: 'Upload failed: ' + (err?.message ?? String(err)) }); return; }
+          saved++;
+          names.push(name);
+        } catch (err) {
+          send(res, 500, { error: "Upload failed: " + (err?.message ?? String(err)) });
+          return;
+        }
       }
-      if (saved) audit(ctx, 'job.files', 'job', code, `Added ${saved} file(s) to ${code}: ${names.join(', ')}`);
+      if (saved) audit(ctx, "job.files", "job", code, `Added ${saved} file(s) to ${code}: ${names.join(", ")}`);
       send(res, 200, { ok: true, saved });
       return;
     }
-    if (p.startsWith('/api/job/') && p.includes('/files/') && req.method === 'DELETE') {
-      if (!(ctx.role === 'admin' || ctx.role === 'office')) { send(res, 403, { error: 'Managers only' }); return; }
-      const parts = p.split('/'); const code = decodeURIComponent(parts[3] ?? ''); const fileId = parts[5];
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.includes("/files/") && req.method === "DELETE") {
+      if (!(ctx.role === "admin" || ctx.role === "office")) {
+        send(res, 403, { error: "Managers only" });
+        return;
+      }
+      const parts = p.split("/");
+      const code = decodeURIComponent(parts[3] ?? "");
+      const fileId = parts[5];
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       await deleteJobFile(fileId, ctx.tenant_id);
-      audit(ctx, 'job.files.delete', 'job', code, `Removed a file from ${code}`);
+      audit(ctx, "job.files.delete", "job", code, `Removed a file from ${code}`);
       send(res, 200, { ok: true });
       return;
     }
-
-    if (p === '/api/items' && req.method === 'GET') {
-      const code = url.searchParams.get('job') ?? 'AXS.LAB';
+    if (p === "/api/items" && req.method === "GET") {
+      const code = url.searchParams.get("job") ?? "AXS.LAB";
       const teams = await listTeams(ctx.tenant_id);
-      if (code === 'ALL') {
+      if (code === "ALL") {
         const jobs = await listJobs(ctx.tenant_id);
-        const rows: any[] = [];
-        for (const jb of jobs) { const items = await listSurveyItems(jb.id); for (const it of items) rows.push(itemRow(it, jb, teams)); }
-        send(res, 200, { job: { code: 'ALL', name: 'All jobs', board: null }, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })), items: rows, role: ctx.role });
+        const rows = [];
+        for (const jb of jobs) {
+          const items2 = await listSurveyItems(jb.id);
+          for (const it of items2) rows.push(itemRow(it, jb, teams));
+        }
+        send(res, 200, { job: { code: "ALL", name: "All jobs", board: null }, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })), items: rows, role: ctx.role });
         return;
       }
-      const [c, j] = code.split('.');
+      const [c, j] = code.split(".");
       const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const items = await listSurveyItems(job.id);
       send(res, 200, {
-        job: { code, name: job.name, board: job.monday_board_id, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null },
+        job: { code, name: job.name, board: job.monday_board_id },
         teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
-        items: items.map((it) => itemRow(it, job, teams)), role: ctx.role,
+        items: items.map((it) => itemRow(it, job, teams)),
+        role: ctx.role
       });
       return;
     }
-
-    // Create a new survey item from the desk (populates a fresh board without the mobile app).
-    if (p === '/api/items' && req.method === 'POST') {
-      if (!allow('items.create')) return;
+    if (p === "/api/items" && req.method === "POST") {
+      if (!allow("items.create")) return;
       const b = await readJson(req);
-      const [c, j] = String(b.job ?? '').split('.');
+      const [c, j] = String(b.job ?? "").split(".");
       const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      const room = String(b.room ?? '').trim().toUpperCase();
-      const item = String(b.item ?? '').trim().toUpperCase();
-      if (!room || !item) { send(res, 400, { error: 'Room and Item are required (they form the code).' }); return; }
-      const full_code = assembleFullCode({
-        client: job.client_code, job: job.job_code,
-        block: b.block, elevation: b.elevation, flat: b.flat, room, item, floor: b.floor,
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      const room = String(b.room ?? "").trim().toUpperCase();
+      const item = String(b.item ?? "").trim().toUpperCase();
+      if (!room || !item) {
+        send(res, 400, { error: "Room and Item are required (they form the code)." });
+        return;
+      }
+      const full_code = (0, import_shared6.assembleFullCode)({
+        client: job.client_code,
+        job: job.job_code,
+        block: b.block,
+        elevation: b.elevation,
+        flat: b.flat,
+        room,
+        item,
+        floor: b.floor
       });
-      const num = (v: any) => (v === '' || v == null ? null : Math.round(Number(v)));
-      const str = (v: any) => { const t = (v ?? '').toString().trim(); return t === '' ? null : t; };
-      const fields: Record<string, unknown> = {
-        tenant_id: ctx.tenant_id, job_id: job.id, stage: 'surveyed',
-        block: b.block || null, elevation: b.elevation || null, flat: b.flat || null,
-        room_code: room, item_code: item, floor: b.floor || null, full_code,
-        material: str(b.material), item_type: str(b.item_type), window_type: str(b.window_type),
-        glass: str(b.glass), safety_glass: str(b.safety_glass), glazing: str(b.glazing),
-        width_mm: num(b.width_mm), height_mm: num(b.height_mm), cill_depth_mm: num(b.cill_depth_mm),
-        transom1_mm: num(b.transom1_mm), transom2_mm: num(b.transom2_mm), transom3_mm: num(b.transom3_mm),
-        mullion1_mm: num(b.mullion1_mm), mullion2_mm: num(b.mullion2_mm), mullion3_mm: num(b.mullion3_mm),
-        open_in_out: str(b.open_in_out), add_ons: str(b.add_ons), coupled: str(b.coupled),
+      const num = (v) => v === "" || v == null ? null : Math.round(Number(v));
+      const str = (v) => {
+        const t = (v ?? "").toString().trim();
+        return t === "" ? null : t;
+      };
+      const fields = {
+        tenant_id: ctx.tenant_id,
+        job_id: job.id,
+        stage: "surveyed",
+        block: b.block || null,
+        elevation: b.elevation || null,
+        flat: b.flat || null,
+        room_code: room,
+        item_code: item,
+        floor: b.floor || null,
+        full_code,
+        material: str(b.material),
+        item_type: str(b.item_type),
+        window_type: str(b.window_type),
+        glass: str(b.glass),
+        safety_glass: str(b.safety_glass),
+        glazing: str(b.glazing),
+        width_mm: num(b.width_mm),
+        height_mm: num(b.height_mm),
+        cill_depth_mm: num(b.cill_depth_mm),
+        transom1_mm: num(b.transom1_mm),
+        transom2_mm: num(b.transom2_mm),
+        transom3_mm: num(b.transom3_mm),
+        mullion1_mm: num(b.mullion1_mm),
+        mullion2_mm: num(b.mullion2_mm),
+        mullion3_mm: num(b.mullion3_mm),
+        open_in_out: str(b.open_in_out),
+        add_ons: str(b.add_ons),
+        coupled: str(b.coupled),
         design_code: str(b.design_code),
-        comments: str(b.comments), team_id: b.team_id || null,
+        comments: str(b.comments),
+        team_id: b.team_id || null
       };
       try {
         const created = await insertSurveyItem(fields);
-        audit(ctx, 'item.create', 'item', created.id, `Created ${full_code}`);
+        audit(ctx, "item.create", "item", created.id, `Created ${full_code}`);
         send(res, 200, { ok: true, id: created.id, full_code });
-      } catch (err: any) {
-        if (err?.code === '23505') { send(res, 409, { error: `An item with code ${full_code} already exists.` }); return; }
+      } catch (err) {
+        if (err?.code === "23505") {
+          send(res, 409, { error: `An item with code ${full_code} already exists.` });
+          return;
+        }
         send(res, 500, { error: err?.message ?? String(err) });
       }
       return;
     }
-
-    // Bulk actions on many selected items (multi-line processing).
-    if (p === '/api/items/bulk' && req.method === 'POST') {
+    if (p === "/api/items/bulk" && req.method === "POST") {
       const { ids, action, value } = await readJson(req);
-      if (!Array.isArray(ids) || ids.length === 0) { send(res, 400, { error: 'No items selected.' }); return; }
+      if (!Array.isArray(ids) || ids.length === 0) {
+        send(res, 400, { error: "No items selected." });
+        return;
+      }
       const allowed = await filterItemIdsByTenant(ids, ctx.tenant_id);
-      if (allowed.length === 0) { send(res, 403, { error: 'forbidden' }); return; }
-
-      if (action === 'team') {
-        if (!allow('items.edit')) return;
+      if (allowed.length === 0) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      if (action === "team") {
+        if (!allow("items.edit")) return;
         const n = await bulkUpdateItems(allowed, { team_id: value || null }, ctx.tenant_id);
-        send(res, 200, { ok: true, updated: n }); return;
+        send(res, 200, { ok: true, updated: n });
+        return;
       }
-      if (action === 'status') {
-        if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
+      if (action === "status") {
+        if (!((0, import_shared6.can)(ctx.role, "items.fit") || (0, import_shared6.can)(ctx.role, "items.edit"))) {
+          allow("items.fit");
+          return;
+        }
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
-        send(res, 200, { ok: true, updated: n }); return;
+        send(res, 200, { ok: true, updated: n });
+        return;
       }
-      if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'flat' || action === 'room') {
-        if (!allow('items.edit')) return;
-        // Sets the field AND rebuilds each item's code — skipped for items already synced to Monday.
-        const raw = String(value ?? '').trim();
-        const jobCache: Record<string, any> = {};
+      if (action === "block" || action === "elevation" || action === "floor" || action === "flat" || action === "room") {
+        if (!allow("items.edit")) return;
+        const raw = String(value ?? "").trim();
+        const jobCache = {};
         let updated = 0, locked = 0, dupes = 0;
         for (const id of allowed) {
-          const it: any = await getSurveyItem(id);
-          if (it.monday_item_id) { locked++; continue; } // code locked after sync
+          const it = await getSurveyItem(id);
+          if (it.monday_item_id) {
+            locked++;
+            continue;
+          }
           const job = jobCache[it.job_id] || (jobCache[it.job_id] = await getJob(it.job_id));
           let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code;
-          if (action === 'block') block = raw.toUpperCase() || null;
-          else if (action === 'elevation') elevation = raw.toUpperCase() || null;
-          else if (action === 'floor') { floor = levelSeg(raw) || null; } // Floor and Flat are independent; don't clear the other
-          else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; }
-          else if (action === 'room') room = raw.toUpperCase() || null;
+          if (action === "block") block = raw.toUpperCase() || null;
+          else if (action === "elevation") elevation = raw.toUpperCase() || null;
+          else if (action === "floor") {
+            floor = levelSeg(raw) || null;
+          } else if (action === "flat") {
+            flat = raw.replace(/^F(?=[0-9])/i, "").toUpperCase() || null;
+          } else if (action === "room") room = raw.toUpperCase() || null;
           const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
-          if (await codeExists(ctx.tenant_id, full_code, id)) { dupes++; continue; }
-          const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, full_code }).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          if (await codeExists(ctx.tenant_id, full_code, id)) {
+            dupes++;
+            continue;
+          }
+          const { error } = await db().from("survey_items").update({ block, elevation, flat, floor, room_code: room, full_code }).eq("id", id).eq("tenant_id", ctx.tenant_id);
           if (!error) updated++;
         }
-        send(res, 200, { ok: true, updated, skipped: locked + dupes, locked, dupes }); return;
+        send(res, 200, { ok: true, updated, skipped: locked + dupes, locked, dupes });
+        return;
       }
-      if (action === 'delete') {
-        // Destructive — managers only (matches the DB delete policy: admin/office).
-        if (!(ctx.role === 'admin' || ctx.role === 'office')) { send(res, 403, { error: `Your role (${ctx.role}) can't delete items.` }); return; }
-        const n = await bulkDeleteItems(allowed, ctx.tenant_id);
-        audit(ctx, 'item.delete', 'item', null, `Deleted ${n} item(s)`);
-        send(res, 200, { ok: true, deleted: n }); return;
-      }
-      if (action === 'sync') {
-        if (!allow('monday.sync')) return;
-        let created = 0, updated = 0, failed = 0; const errors: string[] = [];
-        for (const id of allowed) {
-          try { const r = await promoteItem(id); r.action === 'created' ? created++ : updated++; }
-          catch (err: any) { failed++; if (errors.length < 3) errors.push(err?.message ?? String(err)); }
+      if (action === "delete") {
+        if (!(ctx.role === "admin" || ctx.role === "office")) {
+          send(res, 403, { error: `Your role (${ctx.role}) can't delete items.` });
+          return;
         }
-        audit(ctx, 'item.sync', 'item', null, `Synced ${created + updated} item(s) to Monday${failed ? ' (' + failed + ' failed)' : ''}`);
-        send(res, 200, { ok: true, total: allowed.length, created, updated, failed, errors }); return;
+        const n = await bulkDeleteItems(allowed, ctx.tenant_id);
+        audit(ctx, "item.delete", "item", null, `Deleted ${n} item(s)`);
+        send(res, 200, { ok: true, deleted: n });
+        return;
       }
-      send(res, 400, { error: 'Unknown bulk action.' }); return;
-    }
-
-    // Phase A recognition assist: analyse an item's photo with the vision model.
-    if (p.startsWith('/api/recognise/') && req.method === 'POST') {
-      if (!allow('items.edit')) return;
-      const id = p.split('/').pop()!;
-      const it = await getSurveyItem(id);
-      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      try { const recognition = await recogniseItemPhoto(id); send(res, 200, { ok: true, recognition }); }
-      catch (e: any) { send(res, 200, { ok: false, error: e?.message ?? String(e) }); }
+      if (action === "sync") {
+        if (!allow("monday.sync")) return;
+        let created = 0, updated = 0, failed = 0;
+        const errors = [];
+        for (const id of allowed) {
+          try {
+            const r = await promoteItem(id);
+            r.action === "created" ? created++ : updated++;
+          } catch (err) {
+            failed++;
+            if (errors.length < 3) errors.push(err?.message ?? String(err));
+          }
+        }
+        audit(ctx, "item.sync", "item", null, `Synced ${created + updated} item(s) to Monday${failed ? " (" + failed + " failed)" : ""}`);
+        send(res, 200, { ok: true, total: allowed.length, created, updated, failed, errors });
+        return;
+      }
+      send(res, 400, { error: "Unknown bulk action." });
       return;
     }
-
-    // Full item detail + photos (read-only drawer).
-    if (p.startsWith('/api/item/') && p.endsWith('/detail') && req.method === 'GET') {
-      const id = p.split('/')[3];
-      const it: any = await getSurveyItem(id);
-      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/recognise/") && req.method === "POST") {
+      if (!allow("items.edit")) return;
+      const id = p.split("/").pop();
+      const it = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      try {
+        const recognition = await recogniseItemPhoto(id);
+        send(res, 200, { ok: true, recognition });
+      } catch (e) {
+        send(res, 200, { ok: false, error: e?.message ?? String(e) });
+      }
+      return;
+    }
+    if (p.startsWith("/api/item/") && p.endsWith("/detail") && req.method === "GET") {
+      const id = p.split("/")[3];
+      const it = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const [job, team, photos, childSnags, allTeams] = await Promise.all([
-        getJob(it.job_id), getTeam(it.team_id), listItemPhotos(id), listChildSnags(id), listTeams(it.tenant_id),
+        getJob(it.job_id),
+        getTeam(it.team_id),
+        listItemPhotos(id),
+        listChildSnags(id),
+        listTeams(it.tenant_id)
       ]);
       const photoOut = await Promise.all(photos.map(async (ph) => ({
-        kind: PHOTO_KIND_LABEL[ph.kind] ?? ph.kind, url: await signedPhotoUrl(ph.storage_path),
+        kind: PHOTO_KIND_LABEL[ph.kind] ?? ph.kind,
+        url: await signedPhotoUrl(ph.storage_path)
       })));
-      const snagOut = childSnags.map((s) => ({
-        id: s.id, full_code: s.full_code, comment: (s as any).snag_comment ?? s.comments,
-        rate: formatPennies(effectiveRatePennies(s, allTeams)),
-        team: allTeams.find((t) => t.id === s.team_id)?.name ?? null,
-        status: s.install_status, synced: !!s.monday_item_id,
-        monday_url: s.monday_item_id && job.monday_board_id ? mondayItemUrl(job, s.monday_item_id) : null,
+      const snagOut = childSnags.map((s2) => ({
+        id: s2.id,
+        full_code: s2.full_code,
+        comment: s2.snag_comment ?? s2.comments,
+        rate: (0, import_shared6.formatPennies)((0, import_shared6.effectiveRatePennies)(s2, allTeams)),
+        team: allTeams.find((t) => t.id === s2.team_id)?.name ?? null,
+        status: s2.install_status,
+        synced: !!s2.monday_item_id,
+        monday_url: s2.monday_item_id && job.monday_board_id ? mondayItemUrl(job, s2.monday_item_id) : null
       }));
       send(res, 200, {
-        item: it, team: team?.name ?? null, teams: allTeams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
-        effective_rate: formatPennies(effectiveRatePennies(it, team ? [team] : [])),
+        item: it,
+        team: team?.name ?? null,
+        teams: allTeams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
+        effective_rate: (0, import_shared6.formatPennies)((0, import_shared6.effectiveRatePennies)(it, team ? [team] : [])),
         monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
-        photos: photoOut, snags: snagOut, is_snag: (it as any).kind === 'snag',
+        photos: photoOut,
+        snags: snagOut,
+        is_snag: it.kind === "snag"
       });
       return;
     }
-
-    // Raise a snag as its own item (own labour cost + team), optionally with a defect photo.
-    if (p.startsWith('/api/item/') && p.endsWith('/snags') && req.method === 'POST') {
-      if (!allow('snags.raise')) return;
-      const id = p.split('/')[3];
-      const it: any = await getSurveyItem(id);
-      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      if (it.kind === 'snag') { send(res, 400, { error: "You can't raise a snag against a snag." }); return; }
+    if (p.startsWith("/api/item/") && p.endsWith("/snags") && req.method === "POST") {
+      if (!allow("snags.raise")) return;
+      const id = p.split("/")[3];
+      const it = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      if (it.kind === "snag") {
+        send(res, 400, { error: "You can't raise a snag against a snag." });
+        return;
+      }
       const b = await readJson(req);
-      const description = String(b.description ?? '').trim();
-      if (!description) { send(res, 400, { error: 'A snag description is required.' }); return; }
-      const rate_override_pennies = (b.rate_pennies === '' || b.rate_pennies == null) ? null : Math.round(Number(b.rate_pennies));
+      const description = String(b.description ?? "").trim();
+      if (!description) {
+        send(res, 400, { error: "A snag description is required." });
+        return;
+      }
+      const rate_override_pennies = b.rate_pennies === "" || b.rate_pennies == null ? null : Math.round(Number(b.rate_pennies));
       const team_id = b.team_id || null;
       const snag = await createSnagItem(id, { comment: description, rate_override_pennies, team_id });
       if (b.photo) {
         try {
           const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.photo));
           if (m) {
-            const bytes = Buffer.from(m[2], 'base64');
+            const bytes = Buffer.from(m[2], "base64");
             if (bytes.length <= 6 * 1024 * 1024) {
-              const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+              const ext = (m[1].split("/")[1] || "png").replace("jpeg", "jpg");
               const path = `snags/${snag.id}/${Date.now()}.${ext}`;
               await ensurePhotoBucket();
               await uploadPhoto(path, bytes, m[1]);
-              await addItemPhoto(it.tenant_id, snag.id, 'sketch', path); // -> Design Sketch on sync
+              await addItemPhoto(it.tenant_id, snag.id, "sketch", path);
             }
           }
-        } catch { /* photo is best-effort; the snag item is created regardless */ }
+        } catch {
+        }
       }
       send(res, 200, { ok: true, id: snag.id, full_code: snag.full_code });
       return;
     }
-
-    // Attach a photo to an item from the office (mirrors the mobile survey upload: bucket 'photos',
-    // path tenant/item/..., kind 'survey' so it also pushes to Monday's Design Sketch on sync).
-    if (p.startsWith('/api/item/') && p.endsWith('/photo') && req.method === 'POST') {
-      if (!allow('photos.add')) return;
-      const id = p.split('/')[3];
-      const it: any = await getSurveyItem(id);
-      if (!it || it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/item/") && p.endsWith("/photo") && req.method === "POST") {
+      if (!allow("photos.add")) return;
+      const id = p.split("/")[3];
+      const it = await getSurveyItem(id);
+      if (!it || it.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
-      const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.photo ?? ''));
-      if (!m) { send(res, 400, { error: 'A photo is required.' }); return; }
-      const bytes = Buffer.from(m[2], 'base64');
-      if (bytes.length > 6 * 1024 * 1024) { send(res, 400, { error: 'Photo too large (max 6MB).' }); return; }
-      const ext = (m[1].split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.photo ?? ""));
+      if (!m) {
+        send(res, 400, { error: "A photo is required." });
+        return;
+      }
+      const bytes = Buffer.from(m[2], "base64");
+      if (bytes.length > 6 * 1024 * 1024) {
+        send(res, 400, { error: "Photo too large (max 6MB)." });
+        return;
+      }
+      const ext = (m[1].split("/")[1] || "png").replace("jpeg", "jpg");
       const path = `${it.tenant_id}/${it.id}/${Date.now()}.${ext}`;
-      // Route by uploader role: fitters take "after" (install) photos → Picture After;
-      // scanner / surveyor / office / admin take "before" photos → Picture Before.
-      const kind = ctx.role === 'fitter' ? 'after' : 'before';
+      const kind = ctx.role === "fitter" ? "after" : "before";
       try {
         await ensurePhotoBucket();
         await uploadPhoto(path, bytes, m[1]);
         await addItemPhoto(it.tenant_id, it.id, kind, path);
-      } catch (err: any) { send(res, 500, { error: 'Upload failed: ' + (err?.message ?? String(err)) }); return; }
+      } catch (err) {
+        send(res, 500, { error: "Upload failed: " + (err?.message ?? String(err)) });
+        return;
+      }
       send(res, 200, { ok: true, kind });
       return;
     }
-
-    if (p.startsWith('/api/item/') && req.method === 'PUT' && !p.endsWith('/pin') && !p.endsWith('/pricing')) {
-      const id = p.split('/').pop()!;
+    if (p.startsWith("/api/item/") && req.method === "PUT" && !p.endsWith("/pin") && !p.endsWith("/pricing")) {
+      const id = p.split("/").pop();
       const body = await readJson(req);
       const item = await getSurveyItem(id);
-      if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      // Editable specification fields (mirrors the New-item / mobile form).
-      const SPEC_STR = ['material', 'item_type', 'window_type', 'glass', 'safety_glass', 'glazing', 'glazing_bars', 'cill_depth', 'open_in_out', 'add_ons', 'coupled', 'design_code', 'comments'];
-      const SPEC_NUM = ['width_mm', 'height_mm', 'cill_depth_mm', 'transom1_mm', 'transom2_mm', 'transom3_mm', 'mullion1_mm', 'mullion2_mm', 'mullion3_mm'];
-      const SPEC_BOOL = ['transom_equal', 'mullion_equal'];
-      const STAGES = ['scanned', 'in_survey', 'surveyed', 'synced'];
-      // Spec/rate/team/stage edits need items.edit; a status-only change needs items.fit (or edit).
-      const touchesSpec = ('rate_override_pennies' in body) || ('team_id' in body) || ('stage' in body)
-        || SPEC_STR.some((k) => k in body) || SPEC_NUM.some((k) => k in body) || SPEC_BOOL.some((k) => k in body);
-      if (touchesSpec) { if (!allow('items.edit')) return; }
-      else if ('install_status' in body) {
-        if (!(can(ctx.role, 'items.fit') || can(ctx.role, 'items.edit'))) { allow('items.fit'); return; }
+      if (item.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
       }
-      const patch: Record<string, unknown> = {};
-      if ('rate_override_pennies' in body)
-        patch.rate_override_pennies = (body.rate_override_pennies === '' || body.rate_override_pennies == null) ? null : Math.round(Number(body.rate_override_pennies));
-      if ('install_status' in body) patch.install_status = body.install_status || null;
-      if ('team_id' in body) patch.team_id = body.team_id || null;
-      for (const k of SPEC_STR) if (k in body) patch[k] = (String(body[k] ?? '').trim()) || null;
-      for (const k of SPEC_NUM) if (k in body) { const v = body[k]; patch[k] = (v === '' || v == null) ? null : Math.round(Number(v)); }
+      const SPEC_STR = ["material", "item_type", "window_type", "glass", "safety_glass", "glazing", "glazing_bars", "cill_depth", "open_in_out", "add_ons", "coupled", "design_code", "comments"];
+      const SPEC_NUM = ["width_mm", "height_mm", "cill_depth_mm", "transom1_mm", "transom2_mm", "transom3_mm", "mullion1_mm", "mullion2_mm", "mullion3_mm"];
+      const SPEC_BOOL = ["transom_equal", "mullion_equal"];
+      const STAGES = ["scanned", "in_survey", "surveyed", "synced"];
+      const touchesSpec = "rate_override_pennies" in body || "team_id" in body || "stage" in body || SPEC_STR.some((k) => k in body) || SPEC_NUM.some((k) => k in body) || SPEC_BOOL.some((k) => k in body);
+      if (touchesSpec) {
+        if (!allow("items.edit")) return;
+      } else if ("install_status" in body) {
+        if (!((0, import_shared6.can)(ctx.role, "items.fit") || (0, import_shared6.can)(ctx.role, "items.edit"))) {
+          allow("items.fit");
+          return;
+        }
+      }
+      const patch = {};
+      if ("rate_override_pennies" in body)
+        patch.rate_override_pennies = body.rate_override_pennies === "" || body.rate_override_pennies == null ? null : Math.round(Number(body.rate_override_pennies));
+      if ("install_status" in body) patch.install_status = body.install_status || null;
+      if ("team_id" in body) patch.team_id = body.team_id || null;
+      for (const k of SPEC_STR) if (k in body) patch[k] = String(body[k] ?? "").trim() || null;
+      for (const k of SPEC_NUM) if (k in body) {
+        const v = body[k];
+        patch[k] = v === "" || v == null ? null : Math.round(Number(v));
+      }
       for (const k of SPEC_BOOL) if (k in body) patch[k] = !!body[k];
-      if ('stage' in body) { if (!STAGES.includes(String(body.stage))) { send(res, 400, { error: 'Invalid stage.' }); return; } patch.stage = body.stage; }
-      // Editing Flat / Room rebuilds the item code — allowed only until it's synced to Monday.
-      if ('flat' in body || 'room' in body) {
-        if (!allow('items.edit')) return;
-        if (item.monday_item_id) { send(res, 400, { error: 'This item is synced to Monday — its code is locked. Un-sync it first to change Flat/Room.' }); return; }
+      if ("stage" in body) {
+        if (!STAGES.includes(String(body.stage))) {
+          send(res, 400, { error: "Invalid stage." });
+          return;
+        }
+        patch.stage = body.stage;
+      }
+      if ("flat" in body || "room" in body) {
+        if (!allow("items.edit")) return;
+        if (item.monday_item_id) {
+          send(res, 400, { error: "This item is synced to Monday \u2014 its code is locked. Un-sync it first to change Flat/Room." });
+          return;
+        }
         const job = await getJob(item.job_id);
-        const newFlat = 'flat' in body ? (String(body.flat ?? '').trim().replace(/^F(?=[0-9])/i, '').toUpperCase() || null) : (item.flat ?? null);
-        const newRoom = 'room' in body ? (String(body.room ?? '').trim().toUpperCase() || null) : (item.room_code ?? null);
-        // Floor and Flat are independent fields — keep the floor as-is (Flat is just what the code uses as its F-segment).
+        const newFlat = "flat" in body ? String(body.flat ?? "").trim().replace(/^F(?=[0-9])/i, "") || null : item.flat ?? null;
+        const newRoom = "room" in body ? String(body.room ?? "").trim().toUpperCase() || null : item.room_code ?? null;
         const newFloor = item.floor ?? null;
         const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block: item.block, elevation: item.elevation, flat: newFlat, floor: newFloor, room: newRoom, item: item.item_code });
-        if (await codeExists(ctx.tenant_id, full_code, id)) { send(res, 409, { error: `Code ${full_code} already exists — pick a different Flat/Room.` }); return; }
-        patch.flat = newFlat; patch.room_code = newRoom; patch.floor = newFloor; patch.full_code = full_code;
+        if (await codeExists(ctx.tenant_id, full_code, id)) {
+          send(res, 409, { error: `Code ${full_code} already exists \u2014 pick a different Flat/Room.` });
+          return;
+        }
+        patch.flat = newFlat;
+        patch.room_code = newRoom;
+        patch.floor = newFloor;
+        patch.full_code = full_code;
       }
-      // An item flagged 'Unfinished' (from an Excel import) clears itself once all required data is present.
-      if (item.incomplete) {
-        const m: any = { ...item, ...patch };
-        const row = { block: m.block, elevation: m.elevation, flat: m.flat, floor: m.floor, room: m.room_code, item: m.item_code,
-          material: m.material, item_type: m.item_type, glass: m.glass, glazing: m.glazing, width_mm: m.width_mm, height_mm: m.height_mm, open_in_out: m.open_in_out };
-        if (isRowComplete(row)) patch.incomplete = false;
+      const { error } = await db().from("survey_items").update(patch).eq("id", id);
+      if (error) {
+        send(res, 500, { error: error.message });
+        return;
       }
-      const { error } = await db().from('survey_items').update(patch).eq('id', id);
-      if (error) { send(res, 500, { error: error.message }); return; }
       const fieldsChanged = Object.keys(patch);
-      if (fieldsChanged.length) audit(ctx, 'item.update', 'item', id, `${(patch.full_code as string) || item.full_code}: ${fieldsChanged.join(', ')}`);
+      if (fieldsChanged.length) audit(ctx, "item.update", "item", id, `${patch.full_code || item.full_code}: ${fieldsChanged.join(", ")}`);
       send(res, 200, { ok: true });
       return;
     }
-
-    if (p.startsWith('/api/promote/') && req.method === 'POST') {
-      if (!allow('monday.sync')) return;
-      const id = p.split('/').pop()!;
+    if (p.startsWith("/api/promote/") && req.method === "POST") {
+      if (!allow("monday.sync")) return;
+      const id = p.split("/").pop();
       const item = await getSurveyItem(id);
-      if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (item.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const r = await promoteItem(id);
-      audit(ctx, 'item.sync', 'item', id, `Synced ${item.full_code} to Monday (${r.action})`);
+      audit(ctx, "item.sync", "item", id, `Synced ${item.full_code} to Monday (${r.action})`);
       send(res, 200, { ok: true, action: r.action, mondayItemId: r.mondayItemId, photosPushed: r.photosPushed, photoError: r.photoError });
       return;
     }
-
-    // Audit log (admin only).
-    if (p === '/api/leads' && req.method === 'GET') {
-      if (!allow('jobs.manage')) return;
-      send(res, 200, await listDemoLeads(500));
-      return;
-    }
-    if (p === '/api/customers' && req.method === 'GET') {
-      if (!allow('jobs.manage')) return;
-      send(res, 200, await listCustomers(ctx.tenant_id));
-      return;
-    }
-
-    // Usage billing: items created per tenant per month x per-item rate. Any admin sees their own
-    // tenant; the Acemark (vendor) super-admin sees every tenant.
-    if (p === '/api/billing' && req.method === 'GET') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
-      const isSuper = ctx.tenant_id === ACE_TENANT;
-      const mp = url.searchParams.get('month') || '';
-      const month = /^\d{4}-\d{2}$/.test(mp) ? mp : new Date().toISOString().slice(0, 7);
-      const [y, m] = month.split('-').map(Number);
-      const fromISO = new Date(Date.UTC(y, m - 1, 1)).toISOString();
-      const toISO = new Date(Date.UTC(y, m, 1)).toISOString();
-      const tenants = isSuper ? await listTenants() : [await getTenant(ctx.tenant_id)].filter(Boolean);
-      const rows: any[] = []; let ti = 0, ta = 0;
-      for (const t of tenants) {
-        const items = await countItemsCreated(t.id, fromISO, toISO);
-        const rate = (t as any).item_rate_pennies ?? 0;
-        const amount = items * rate;
-        rows.push({ tenant_id: t.id, name: t.name, rate_pennies: rate, items, amount_pennies: amount });
-        ti += items; ta += amount;
+    if (p === "/api/logs" && req.method === "GET") {
+      if (ctx.role !== "admin") {
+        send(res, 403, { error: "Admins only" });
+        return;
       }
-      send(res, 200, { month, superadmin: isSuper, rows, totals: { items: ti, amount_pennies: ta } });
-      return;
-    }
-    // Set a tenant's per-item rate — vendor super-admin only.
-    if (p.startsWith('/api/tenants/') && p.endsWith('/rate') && req.method === 'PUT') {
-      if (!(ctx.role === 'admin' && ctx.tenant_id === ACE_TENANT)) { send(res, 403, { error: 'Super-admin only' }); return; }
-      const id = p.split('/')[3] ?? '';
-      const b = await readJson(req);
-      let pennies = Math.round(Number(b.rate_pennies ?? 0));
-      if (!Number.isFinite(pennies) || pennies < 0) pennies = 0;
-      await setTenantRate(id, pennies);
-      audit(ctx, 'tenant.rate', 'tenant', id, `Set per-item rate to £${(pennies / 100).toFixed(2)}`);
-      send(res, 200, { ok: true });
-      return;
-    }
-    if (p === '/api/logs' && req.method === 'GET') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
       send(res, 200, await listAuditLog(ctx.tenant_id, 300));
       return;
     }
-
-    // Room pick frequency (tenant-wide) — orders the new-item room picker, most-used first.
-    if (p === '/api/room-stats' && req.method === 'GET') {
+    if (p === "/api/room-stats" && req.method === "GET") {
       send(res, 200, await roomCodeCounts(ctx.tenant_id));
       return;
     }
-
-    // ---- teams & rates (office Stage 2) ----
-    if (p === '/api/teams' && req.method === 'GET') {
+    if (p === "/api/teams" && req.method === "GET") {
       const teams = await listTeams(ctx.tenant_id);
       const rows = await Promise.all(teams.map(async (t) => ({
-        id: t.id, name: t.name, default_rate_pennies: t.default_rate_pennies,
-        default_rate: formatPennies(t.default_rate_pennies), in_use: await countItemsUsingTeam(t.id),
-        door_rate_pennies: t.door_rate_pennies, door_rate: formatPennies(t.door_rate_pennies),
-        active: t.active,
+        id: t.id,
+        name: t.name,
+        default_rate_pennies: t.default_rate_pennies,
+        default_rate: (0, import_shared6.formatPennies)(t.default_rate_pennies),
+        in_use: await countItemsUsingTeam(t.id),
+        door_rate_pennies: t.door_rate_pennies,
+        door_rate: (0, import_shared6.formatPennies)(t.door_rate_pennies),
+        active: t.active
       })));
-      send(res, 200, { teams: rows, canManage: can(ctx.role, 'teams.manage'), role: ctx.role });
+      send(res, 200, { teams: rows, canManage: (0, import_shared6.can)(ctx.role, "teams.manage"), role: ctx.role });
       return;
     }
-
-    if (p === '/api/teams' && req.method === 'POST') {
-      if (!allow('teams.manage')) return;
+    if (p === "/api/teams" && req.method === "POST") {
+      if (!allow("teams.manage")) return;
       const { name, rate_pennies } = await readJson(req);
-      if (!name || !String(name).trim()) { send(res, 400, { error: 'Team name is required' }); return; }
+      if (!name || !String(name).trim()) {
+        send(res, 400, { error: "Team name is required" });
+        return;
+      }
       const pennies = Math.round(Number(rate_pennies));
-      if (!Number.isFinite(pennies) || pennies < 0) { send(res, 400, { error: 'Rate must be a positive number' }); return; }
+      if (!Number.isFinite(pennies) || pennies < 0) {
+        send(res, 400, { error: "Rate must be a positive number" });
+        return;
+      }
       const t = await createTeam(ctx.tenant_id, String(name).trim(), pennies);
       send(res, 200, { ok: true, id: t.id });
       return;
     }
-
-    if (p.startsWith('/api/teams/') && (req.method === 'PUT' || req.method === 'DELETE')) {
-      if (!allow('teams.manage')) return;
-      const id = p.split('/').pop()!;
+    if (p.startsWith("/api/teams/") && (req.method === "PUT" || req.method === "DELETE")) {
+      if (!allow("teams.manage")) return;
+      const id = p.split("/").pop();
       const team = await getTeam(id);
-      if (!team || team.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-
-      if (req.method === 'PUT') {
+      if (!team || team.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      if (req.method === "PUT") {
         const body = await readJson(req);
-        const patch: { name?: string; default_rate_pennies?: number; door_rate_pennies?: number } = {};
-        if ('name' in body) { if (!String(body.name).trim()) { send(res, 400, { error: 'Team name is required' }); return; } patch.name = String(body.name).trim(); }
-        if ('rate_pennies' in body) { const v = Math.round(Number(body.rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Rate must be a positive number' }); return; } patch.default_rate_pennies = v; }
-        if ('door_rate_pennies' in body) { const v = Math.round(Number(body.door_rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Doors rate must be a positive number' }); return; } patch.door_rate_pennies = v; }
-        if ('active' in body) patch.active = !!body.active; // retire / reactivate
+        const patch = {};
+        if ("name" in body) {
+          if (!String(body.name).trim()) {
+            send(res, 400, { error: "Team name is required" });
+            return;
+          }
+          patch.name = String(body.name).trim();
+        }
+        if ("rate_pennies" in body) {
+          const v = Math.round(Number(body.rate_pennies));
+          if (!Number.isFinite(v) || v < 0) {
+            send(res, 400, { error: "Rate must be a positive number" });
+            return;
+          }
+          patch.default_rate_pennies = v;
+        }
+        if ("door_rate_pennies" in body) {
+          const v = Math.round(Number(body.door_rate_pennies));
+          if (!Number.isFinite(v) || v < 0) {
+            send(res, 400, { error: "Doors rate must be a positive number" });
+            return;
+          }
+          patch.door_rate_pennies = v;
+        }
+        if ("active" in body) patch.active = !!body.active;
         await updateTeam(id, patch);
         send(res, 200, { ok: true });
         return;
       }
-
-      // DELETE — block if any items still reference this team.
       const inUse = await countItemsUsingTeam(id);
-      if (inUse > 0) { send(res, 409, { error: `Can't delete — ${inUse} item${inUse === 1 ? '' : 's'} still assigned to this team. Reassign them first.` }); return; }
+      if (inUse > 0) {
+        send(res, 409, { error: `Can't delete \u2014 ${inUse} item${inUse === 1 ? "" : "s"} still assigned to this team. Reassign them first.` });
+        return;
+      }
       await deleteTeam(id);
       send(res, 200, { ok: true });
       return;
     }
-
-    // ---- Monday sync tab (office Stage 2) ----
-    if (p === '/api/sync' && req.method === 'GET') {
+    if (p === "/api/sync" && req.method === "GET") {
       const jobs = await listJobs(ctx.tenant_id);
       const rows = await Promise.all(jobs.map(async (j) => {
         const items = await listSurveyItems(j.id);
         const synced = items.filter((it) => it.monday_item_id).length;
         return {
-          code: `${j.client_code}.${j.job_code}`, name: j.name, board: j.monday_board_id ?? null,
+          code: `${j.client_code}.${j.job_code}`,
+          name: j.name,
+          board: j.monday_board_id ?? null,
           slug: j.monday_account_slug ?? null,
-          total: items.length, synced, unsynced: items.length - synced,
+          total: items.length,
+          synced,
+          unsynced: items.length - synced
         };
       }));
-      send(res, 200, { jobs: rows, canManage: can(ctx.role, 'monday.sync') });
+      send(res, 200, { jobs: rows, canManage: (0, import_shared6.can)(ctx.role, "monday.sync") });
       return;
     }
-
-    // Link / unlink a job's Monday board. Accepts a board id or a full board URL.
-    if (p.startsWith('/api/job/') && p.endsWith('/board') && req.method === 'PUT') {
-      if (!allow('monday.sync')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
+    if (p.startsWith("/api/job/") && p.endsWith("/board") && req.method === "PUT") {
+      if (!allow("monday.sync")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
       const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const { board } = await readJson(req);
       const { board: boardId, slug } = parseMondayRef(board);
       await setJobBoard(job.id, boardId, slug);
-      // On link, ensure the board has every required column — create any that are missing.
-      let columnsCreated: string[] = []; let columnsError: string | undefined;
+      let columnsCreated = [];
+      let columnsError;
       if (boardId) {
         try {
           const monday = new Monday();
           const existing = await monday.getColumns(boardId);
-          const have = new Set(existing.map((c) => normColTitle(c.title)));
-          for (const req of REQUIRED_MONDAY_COLUMNS) {
-            if (have.has(normColTitle(req.title))) continue;
-            try { await monday.createColumn(boardId, req.title, req.type); columnsCreated.push(req.title); }
-            catch (e: any) { columnsError = e?.message ?? String(e); }
+          const have = new Set(existing.map((c2) => norm(c2.title)));
+          for (const req2 of REQUIRED_MONDAY_COLUMNS) {
+            if (have.has(norm(req2.title))) continue;
+            try {
+              await monday.createColumn(boardId, req2.title, req2.type);
+              columnsCreated.push(req2.title);
+            } catch (e) {
+              columnsError = e?.message ?? String(e);
+            }
           }
-        } catch (e: any) { columnsError = e?.message ?? String(e); }
+        } catch (e) {
+          columnsError = e?.message ?? String(e);
+        }
       }
-      audit(ctx, 'job.board', 'job', code, boardId ? `Linked board ${boardId} to ${code}${columnsCreated.length ? ' · ' + columnsCreated.length + ' columns created' : ''}` : `Unlinked board from ${code}`);
+      audit(ctx, "job.board", "job", code, boardId ? `Linked board ${boardId} to ${code}${columnsCreated.length ? " \xB7 " + columnsCreated.length + " columns created" : ""}` : `Unlinked board from ${code}`);
       send(res, 200, { ok: true, board: boardId, slug, columnsCreated, columnsError });
       return;
     }
-
-    // Batch-sync every item on a job to its board. Idempotent (create or update per item).
-    if (p.startsWith('/api/job/') && p.endsWith('/sync') && req.method === 'POST') {
-      if (!allow('monday.sync')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
+    if (p.startsWith("/api/job/") && p.endsWith("/sync") && req.method === "POST") {
+      if (!allow("monday.sync")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
       const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      if (!job.monday_board_id) {
+        send(res, 400, { error: "Link a Monday board for this job first." });
+        return;
+      }
       const items = await listSurveyItems(job.id);
-      let created = 0, updated = 0, failed = 0; const errors: string[] = [];
+      let created = 0, updated = 0, failed = 0;
+      const errors = [];
       for (const it of items) {
-        try { const r = await promoteItem(it.id); r.action === 'created' ? created++ : updated++; }
-        catch (err: any) { failed++; if (errors.length < 3) errors.push(`${it.full_code}: ${err?.message ?? err}`); }
+        try {
+          const r = await promoteItem(it.id);
+          r.action === "created" ? created++ : updated++;
+        } catch (err) {
+          failed++;
+          if (errors.length < 3) errors.push(`${it.full_code}: ${err?.message ?? err}`);
+        }
       }
       send(res, 200, { ok: true, total: items.length, created, updated, failed, errors });
       return;
     }
-
-    // Pull the team assignment back FROM Monday (Monday is master for scheduling). Reads the
-    // "Fitters" column for every synced item on the job and sets survey_items.team_id to the
-    // matching team (by name). Doesn't re-flag items for re-sync (we just read this from Monday).
-    if (p.startsWith('/api/job/') && p.endsWith('/pull-fitters') && req.method === 'POST') {
-      if (!allow('monday.sync')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
+    if (p.startsWith("/api/job/") && p.endsWith("/pull-fitters") && req.method === "POST") {
+      if (!allow("monday.sync")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
       const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
-
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
+      if (!job.monday_board_id) {
+        send(res, 400, { error: "Link a Monday board for this job first." });
+        return;
+      }
       const mon = new Monday();
       const cols = await mon.getColumns(job.monday_board_id);
-      const fittersCol = cols.find((col) => normTitle(col.title) === 'fitters');
-      if (!fittersCol) { send(res, 400, { error: 'No "Fitters" column found on this board.' }); return; }
-
+      const fittersCol = cols.find((col) => normTitle(col.title) === "fitters");
+      if (!fittersCol) {
+        send(res, 400, { error: 'No "Fitters" column found on this board.' });
+        return;
+      }
       const teams = await listTeams(ctx.tenant_id);
       const teamByName = new Map(teams.map((t) => [t.name.trim().toLowerCase(), t.id]));
       const rows = await mon.getColumnTextForItems(job.monday_board_id, fittersCol.id);
-      const textByMondayId = new Map(rows.map((r) => [r.id, (r.text ?? '').trim()]));
-
-      // Also pull the planned install date, if the board has a suitable date column.
+      const textByMondayId = new Map(rows.map((r) => [r.id, (r.text ?? "").trim()]));
       const dateCol = pickDateColumn(cols);
-      const dateByMondayId = new Map<string, string | null>();
+      const dateByMondayId = /* @__PURE__ */ new Map();
       if (dateCol) {
         const drows = await mon.getColumnTextForItems(job.monday_board_id, dateCol.id);
         for (const r of drows) dateByMondayId.set(r.id, parseMondayDate(r.text));
       }
-
       const items = await listSurveyItems(job.id);
-      let assigned = 0, cleared = 0, datesSet = 0, datesCleared = 0, unchanged = 0; const unmatched = new Set<string>();
+      let assigned = 0, cleared = 0, datesSet = 0, datesCleared = 0, unchanged = 0;
+      const unmatched = /* @__PURE__ */ new Set();
       for (const it of items) {
-        if (!it.monday_item_id) { unchanged++; continue; }
-        const patch: Record<string, unknown> = {};
-        // team assignment
-        const text = textByMondayId.get(it.monday_item_id) ?? '';
+        if (!it.monday_item_id) {
+          unchanged++;
+          continue;
+        }
+        const patch = {};
+        const text = textByMondayId.get(it.monday_item_id) ?? "";
         if (text) {
           const match = teamByName.get(text.toLowerCase());
-          if (!match) unmatched.add(text);                                   // unknown team name — leave as is
+          if (!match) unmatched.add(text);
           else if ((it.team_id ?? null) !== match) patch.team_id = match;
         } else if (it.team_id != null) {
-          patch.team_id = null;                                             // cleared on Monday
+          patch.team_id = null;
         }
-        // planned install date
         if (dateCol) {
           const nd = dateByMondayId.get(it.monday_item_id) ?? null;
-          if (nd !== ((it as any).planned_install_date ?? null)) patch.planned_install_date = nd;
+          if (nd !== (it.planned_install_date ?? null)) patch.planned_install_date = nd;
         }
-        if (Object.keys(patch).length === 0) { unchanged++; continue; }
+        if (Object.keys(patch).length === 0) {
+          unchanged++;
+          continue;
+        }
         await applyMondayPull(it.id, patch, ctx.tenant_id);
-        if ('team_id' in patch) (patch.team_id ? assigned++ : cleared++);
-        if ('planned_install_date' in patch) (patch.planned_install_date ? datesSet++ : datesCleared++);
+        if ("team_id" in patch) patch.team_id ? assigned++ : cleared++;
+        if ("planned_install_date" in patch) patch.planned_install_date ? datesSet++ : datesCleared++;
       }
       send(res, 200, {
-        ok: true, total: items.length, assigned, cleared, datesSet, datesCleared,
-        dateColumn: dateCol?.title ?? null, unchanged, unmatched: [...unmatched],
+        ok: true,
+        total: items.length,
+        assigned,
+        cleared,
+        datesSet,
+        datesCleared,
+        dateColumn: dateCol?.title ?? null,
+        unchanged,
+        unmatched: [...unmatched]
       });
       return;
     }
-
-    // ---- Plans (plan view with item pins) ----
-    // Per-job PDF: survey sheet or install report. Browser downloads it (authed via bearer).
-    if (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET') {
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.');
-      const qt = url.searchParams.get('type');
-      const type = (qt === 'install' ? 'install' : qt === 'customer_install' ? 'customer_install' : 'survey') as 'survey' | 'install' | 'customer_install';
-      // Customers may ONLY pull the rate-free customer_install, and only for their own client.
-      if (ctx.role === 'customer') {
-        if (type !== 'customer_install' || c !== ctx.client_code) { send(res, 403, { error: 'forbidden' }); return; }
-      } else if (!allow('dashboard.view')) return;
+    if (p.startsWith("/api/job/") && p.endsWith("/report.pdf") && req.method === "GET") {
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const qt = url.searchParams.get("type");
+      const type = qt === "install" ? "install" : qt === "customer_install" ? "customer_install" : "survey";
+      if (ctx.role === "customer") {
+        if (type !== "customer_install" || c !== ctx.client_code) {
+          send(res, 403, { error: "forbidden" });
+          return;
+        }
+      } else if (!allow("dashboard.view")) return;
       try {
         const { buffer } = await buildJobReportPdf(c, j, ctx.tenant_id, type);
         res.writeHead(200, {
-          'content-type': 'application/pdf',
-          'content-disposition': `attachment; filename="${c}.${j}-${type}-report.pdf"`,
-          'cache-control': 'no-store',
+          "content-type": "application/pdf",
+          "content-disposition": `attachment; filename="${c}.${j}-${type}-report.pdf"`,
+          "cache-control": "no-store"
         });
         res.end(buffer);
-      } catch (e: any) {
-        send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) });
+      } catch (e) {
+        send(res, e?.message === "forbidden" ? 403 : 500, { error: e?.message ?? String(e) });
       }
       return;
     }
-    if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'GET') {
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+    if (p.startsWith("/api/job/") && p.endsWith("/plans") && req.method === "GET") {
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const plans = await listJobPlans(job.id);
       const withUrls = await Promise.all(plans.map(async (pl) => ({ id: pl.id, name: pl.name, url: await signedPlanUrl(pl.storage_path) })));
       const items = await listPinnedItems(job.id);
       const multiPlan = await getPinsMultiPlan(ctx.tenant_id);
-      send(res, 200, { plans: withUrls, items, multiPlan, canManage: can(ctx.role, 'plans.manage'), canPin: can(ctx.role, 'plans.pin') });
+      send(res, 200, { plans: withUrls, items, multiPlan, canManage: (0, import_shared6.can)(ctx.role, "jobs.manage"), canPin: (0, import_shared6.can)(ctx.role, "items.edit") });
       return;
     }
-    if (p.startsWith('/api/job/') && p.endsWith('/plans') && req.method === 'POST') {
-      if (!allow('plans.manage')) return;
-      const code = decodeURIComponent(p.split('/')[3] ?? '');
-      const [c, j] = code.split('.'); const job = await getJobByCode(c, j);
-      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
-      const b = await readJson(req);
-      const name = String(b.name ?? '').trim() || 'Plan';
-      let bytes: Buffer; let contentType: string;
-      if (b.job_file_id) {
-        // Reuse a file already attached to this job (must be an image).
-        const jf = await getJobFile(String(b.job_file_id));
-        if (!jf || jf.tenant_id !== ctx.tenant_id || jf.job_id !== job.id) { send(res, 404, { error: 'That file is not on this job.' }); return; }
-        if (!/^image\//.test(jf.content_type || '')) { send(res, 400, { error: 'Only image files can be used as a plan.' }); return; }
-        try { bytes = Buffer.from(await downloadJobFile(jf.storage_path)); }
-        catch { send(res, 500, { error: 'Could not read that file.' }); return; }
-        contentType = jf.content_type || 'image/png';
-      } else {
-        const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.image || ''));
-        if (!m) { send(res, 400, { error: 'A plan image is required.' }); return; }
-        bytes = Buffer.from(m[2], 'base64');
-        contentType = m[1];
+    if (p.startsWith("/api/job/") && p.endsWith("/plans") && req.method === "POST") {
+      if (!allow("jobs.manage")) return;
+      const code = decodeURIComponent(p.split("/")[3] ?? "");
+      const [c, j] = code.split(".");
+      const job = await getJobByCode(c, j);
+      if (job.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
       }
-      if (bytes.length > 15 * 1024 * 1024) { send(res, 400, { error: 'Plan image too large (max 15 MB).' }); return; }
-      const ext = ((contentType.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '')) || 'png';
+      const b = await readJson(req);
+      const name = String(b.name ?? "").trim() || "Plan";
+      const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(String(b.image || ""));
+      if (!m) {
+        send(res, 400, { error: "A plan image is required." });
+        return;
+      }
+      const bytes = Buffer.from(m[2], "base64");
+      if (bytes.length > 15 * 1024 * 1024) {
+        send(res, 400, { error: "Plan image too large (max 15 MB)." });
+        return;
+      }
+      const ext = (m[1].split("/")[1] || "png").replace("jpeg", "jpg");
       const path = `${ctx.tenant_id}/plans/${job.id}/${Date.now()}.${ext}`;
       await ensurePlanBucket();
-      await uploadPlan(path, bytes, contentType);
+      await uploadPlan(path, bytes, m[1]);
       const plan = await createJobPlan(ctx.tenant_id, job.id, name, path);
-      audit(ctx, 'plan.add', 'job', code, `Added plan \"${name}\" to ${code}`);
       send(res, 200, { ok: true, id: plan.id });
       return;
     }
-    if (p.startsWith('/api/plans/') && req.method === 'DELETE') {
-      if (!allow('plans.manage')) return;
-      const id = p.split('/')[3];
-      await deleteJobPlan(id, ctx.tenant_id); // items pinned to it get plan_id NULL via FK
+    if (p.startsWith("/api/plans/") && req.method === "DELETE") {
+      if (!allow("jobs.manage")) return;
+      const id = p.split("/")[3];
+      await deleteJobPlan(id, ctx.tenant_id);
       send(res, 200, { ok: true });
       return;
     }
-    if (p.startsWith('/api/item/') && p.endsWith('/pin') && req.method === 'PUT') {
-      if (!allow('plans.pin')) return;
-      const id = p.split('/')[3];
+    if (p.startsWith("/api/item/") && p.endsWith("/pin") && req.method === "PUT") {
+      if (!allow("items.edit")) return;
+      const id = p.split("/")[3];
       const it = await getSurveyItem(id);
-      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (it.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
       const planId = b.plan_id || null;
-      // One-plan-per-item unless the tenant allows multi-plan. Block re-pinning an item that's
-      // already on a different plan (unpin there first).
-      if (planId && (it as any).plan_id && (it as any).plan_id !== planId) {
-        if (!(await getPinsMultiPlan(ctx.tenant_id))) { send(res, 409, { error: 'This item is already pinned on another plan. Unpin it there first, or enable multi-plan in Plans settings.' }); return; }
+      if (planId && it.plan_id && it.plan_id !== planId) {
+        if (!await getPinsMultiPlan(ctx.tenant_id)) {
+          send(res, 409, { error: "This item is already pinned on another plan. Unpin it there first, or enable multi-plan in Plans settings." });
+          return;
+        }
       }
-      const clamp = (v: any) => (v == null || v === '' ? null : Math.max(0, Math.min(1, Number(v))));
+      const clamp = (v) => v == null || v === "" ? null : Math.max(0, Math.min(1, Number(v)));
       await setItemPin(id, planId, planId ? clamp(b.x) : null, planId ? clamp(b.y) : null, ctx.tenant_id);
       send(res, 200, { ok: true });
       return;
     }
-    if (p === '/api/settings/pins-multi-plan' && req.method === 'PUT') {
-      if (!allow('jobs.manage')) return;
+    if (p === "/api/settings/pins-multi-plan" && req.method === "PUT") {
+      if (!allow("jobs.manage")) return;
       const b = await readJson(req);
       await setPinsMultiPlan(ctx.tenant_id, !!b.value);
       send(res, 200, { ok: true });
       return;
     }
-
-    // ---- user management (office Stage 3, admin only) ----
-    if (p === '/api/users' && req.method === 'GET') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+    if (p === "/api/users" && req.method === "GET") {
+      if (ctx.role !== "admin") {
+        send(res, 403, { error: "Admins only" });
+        return;
+      }
       const users = await listAppUsers(ctx.tenant_id);
       const teams = await listTeams(ctx.tenant_id);
       send(res, 200, {
-        me: ctx.id, roles: ROLES,
+        me: ctx.id,
+        roles: ROLES,
         teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
-        users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, has_login: !!u.auth_user_id, team_id: u.team_id, client_code: u.client_code ?? '' })),
+        users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, has_login: !!u.auth_user_id, team_id: u.team_id, client_code: u.client_code ?? "" }))
       });
       return;
     }
-
-    if (p === '/api/users' && req.method === 'POST') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+    if (p === "/api/users" && req.method === "POST") {
+      if (ctx.role !== "admin") {
+        send(res, 403, { error: "Admins only" });
+        return;
+      }
       const b = await readJson(req);
-      const email = String(b.email ?? '').trim().toLowerCase();
-      const name = String(b.name ?? '').trim();
-      const role = String(b.role ?? '').trim();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { send(res, 400, { error: 'A valid email is required.' }); return; }
-      if (!name) { send(res, 400, { error: 'Name is required.' }); return; }
-      if (!ROLES.includes(role)) { send(res, 400, { error: 'Pick a valid role.' }); return; }
-      const password = String(b.password ?? '').trim() || genPassword();
-      if (password.length < 8) { send(res, 400, { error: 'Password must be at least 8 characters.' }); return; }
+      const email = String(b.email ?? "").trim().toLowerCase();
+      const name = String(b.name ?? "").trim();
+      const role = String(b.role ?? "").trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        send(res, 400, { error: "A valid email is required." });
+        return;
+      }
+      if (!name) {
+        send(res, 400, { error: "Name is required." });
+        return;
+      }
+      if (!ROLES.includes(role)) {
+        send(res, 400, { error: "Pick a valid role." });
+        return;
+      }
+      const password = String(b.password ?? "").trim() || genPassword();
+      if (password.length < 8) {
+        send(res, 400, { error: "Password must be at least 8 characters." });
+        return;
+      }
       try {
         const r = await inviteUser(ctx.tenant_id, email, name, role, password);
         send(res, 200, { ok: true, created: r.created, email, password });
-      } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
+      } catch (err) {
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
       return;
     }
-
-    if (p.startsWith('/api/users/') && p.endsWith('/reset') && req.method === 'POST') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
-      const id = p.split('/')[3];
+    if (p.startsWith("/api/users/") && p.endsWith("/reset") && req.method === "POST") {
+      if (ctx.role !== "admin") {
+        send(res, 403, { error: "Admins only" });
+        return;
+      }
+      const id = p.split("/")[3];
       const u = await getAppUser(id);
-      if (!u || u.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (!u || u.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const password = genPassword();
       await resetUserPassword(u.email, password, u.auth_user_id);
       send(res, 200, { ok: true, email: u.email, password });
       return;
     }
-
-    if (p.startsWith('/api/users/') && req.method === 'PUT') {
-      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
-      const id = p.split('/').pop()!;
+    if (p.startsWith("/api/users/") && req.method === "PUT") {
+      if (ctx.role !== "admin") {
+        send(res, 403, { error: "Admins only" });
+        return;
+      }
+      const id = p.split("/").pop();
       const u = await getAppUser(id);
-      if (!u || u.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (!u || u.tenant_id !== ctx.tenant_id) {
+        send(res, 403, { error: "forbidden" });
+        return;
+      }
       const b = await readJson(req);
-      const patch: Record<string, unknown> = {};
-      if ('name' in b) { if (!String(b.name).trim()) { send(res, 400, { error: 'Name is required.' }); return; } patch.name = String(b.name).trim(); }
-      if ('email' in b) {
+      const patch = {};
+      if ("name" in b) {
+        if (!String(b.name).trim()) {
+          send(res, 400, { error: "Name is required." });
+          return;
+        }
+        patch.name = String(b.name).trim();
+      }
+      if ("email" in b) {
         const email = String(b.email).trim().toLowerCase();
-        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { send(res, 400, { error: 'A valid email is required.' }); return; }
-        if (u.auth_user_id) { try { await updateAuthEmail(u.auth_user_id, email); } catch (err: any) { send(res, 400, { error: 'Login email update failed: ' + (err?.message ?? err) }); return; } }
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+          send(res, 400, { error: "A valid email is required." });
+          return;
+        }
+        if (u.auth_user_id) {
+          try {
+            await updateAuthEmail(u.auth_user_id, email);
+          } catch (err) {
+            send(res, 400, { error: "Login email update failed: " + (err?.message ?? err) });
+            return;
+          }
+        }
         patch.email = email;
       }
-      if ('role' in b) { if (!ROLES.includes(String(b.role))) { send(res, 400, { error: 'Invalid role.' }); return; }
-        if (id === ctx.id && b.role !== 'admin') { send(res, 400, { error: "You can't remove your own admin role." }); return; }
-        patch.role = b.role; }
-      if ('active' in b) { if (id === ctx.id && b.active === false) { send(res, 400, { error: "You can't deactivate yourself." }); return; }
-        patch.active = !!b.active; }
-      if ('team_id' in b) patch.team_id = b.team_id || null; // fitter's team (for the mobile view)
-      if ('client_code' in b) patch.client_code = String(b.client_code ?? '').trim().toUpperCase() || null; // which client a customer login sees
-      await updateAppUser(id, patch as any, ctx.tenant_id);
+      if ("role" in b) {
+        if (!ROLES.includes(String(b.role))) {
+          send(res, 400, { error: "Invalid role." });
+          return;
+        }
+        if (id === ctx.id && b.role !== "admin") {
+          send(res, 400, { error: "You can't remove your own admin role." });
+          return;
+        }
+        patch.role = b.role;
+      }
+      if ("active" in b) {
+        if (id === ctx.id && b.active === false) {
+          send(res, 400, { error: "You can't deactivate yourself." });
+          return;
+        }
+        patch.active = !!b.active;
+      }
+      if ("team_id" in b) patch.team_id = b.team_id || null;
+      if ("client_code" in b) patch.client_code = String(b.client_code ?? "").trim().toUpperCase() || null;
+      await updateAppUser(id, patch, ctx.tenant_id);
       send(res, 200, { ok: true });
       return;
     }
-
-    send(res, 404, { error: 'not found' });
-  } catch (e: any) {
+    send(res, 404, { error: "not found" });
+  } catch (e) {
     send(res, 500, { error: e?.message ?? String(e) });
   }
 });
-
 server.listen(PORT, () => {
-  console.log(`\n  ACE office app  →  http://localhost:${PORT}`);
-  console.log('  log in with the account you made via create-admin · Ctrl+C to stop\n');
+  console.log(`
+  ACE office app  \u2192  http://localhost:${PORT}`);
+  console.log("  log in with the account you made via create-admin \xB7 Ctrl+C to stop\n");
 });
-
-const RATE = 'rate_override_pennies', ISTAT = 'install_status', TEAM = 'team_id';
-const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>ACE — Office</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+var PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ACE \u2014 Office</title>
 <style>
   :root{--purple:#3a2b72;--magenta:#e6187e;--ink:#1f1a3d;--muted:#6b6786;--line:#e4e2ee;--bg:#f4f3f9;
     --green:#16a34a;--green-soft:#e7f6ec;--amber:#d97706;--amber-soft:#fef3e2;--soft:#ecebf6}
@@ -1526,15 +3015,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .tab{background:transparent;border:none;color:#cfc9ea;font-size:13px;font-weight:600;padding:8px 14px;border-radius:9px;cursor:pointer}
   .tab:hover{background:rgba(255,255,255,.1);color:#fff}
   .tab.on{background:rgba(255,255,255,.16);color:#fff}
-  .grp{position:relative}
-  .grpbtn{background:transparent;border:none;color:#cfc9ea;font-size:13px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer}
-  .grpbtn:hover{background:rgba(255,255,255,.1);color:#fff}
-  .grp.on .grpbtn{background:rgba(255,255,255,.16);color:#fff}
-  .grpmenu{position:absolute;top:calc(100% + 6px);left:0;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 14px 34px rgba(0,0,0,.2);padding:6px;min-width:180px;display:none;z-index:40}
-  .grpmenu.open{display:block}
-  .grpmenu .tab{display:block;width:100%;text-align:left;color:var(--ink);font-weight:600;padding:8px 12px;border-radius:7px}
-  .grpmenu .tab:hover{background:#f4f2fa;color:var(--purple)}
-  .grpmenu .tab.on{background:#f4f2fa;color:var(--magenta)}
   .who{margin-left:auto;font-size:12px;color:#cfc9ea}.who button{margin-left:12px;background:rgba(255,255,255,.15);border:none;color:#fff;padding:6px 12px;border-radius:9px;font-size:12px;cursor:pointer}
   #whoName{position:relative;cursor:default}
   #whoName[data-role]:hover::after{content:attr(data-role);position:absolute;top:150%;right:0;background:var(--purple);color:#fff;font-size:11px;font-weight:600;padding:5px 9px;border-radius:7px;white-space:nowrap;z-index:40;box-shadow:0 6px 18px rgba(0,0,0,.28)}
@@ -1601,23 +3081,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .bulk.bclear{background:rgba(255,255,255,.16);color:#fff;margin-left:auto}
   .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
   .snagtag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:var(--magenta);padding:2px 5px;border-radius:5px;vertical-align:middle}
-  .unfintag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:#b45309;padding:2px 5px;border-radius:5px;vertical-align:middle}
-  /* Excel import grid */
-  .imp-wrap{overflow:auto;max-height:60vh;border:1px solid var(--line);border-radius:10px;background:#fff}
-  table.impgrid{border-collapse:collapse;font-size:12px;white-space:nowrap}
-  table.impgrid th,table.impgrid td{border:1px solid var(--line);padding:0}
-  table.impgrid thead th{position:sticky;top:0;z-index:2;background:#f6f5fb;padding:5px 7px;text-align:left;font-size:10.5px;letter-spacing:.02em;color:var(--muted)}
-  table.impgrid thead tr.filters th{top:26px;padding:3px 4px}
-  table.impgrid thead tr.filters input{width:80px;border:1px solid var(--line);border-radius:5px;font-size:11px;padding:2px 4px}
-  table.impgrid td input{border:none;background:transparent;font-size:12px;padding:4px 6px;width:76px;outline:none}
-  table.impgrid td input:focus{background:#eef;box-shadow:inset 0 0 0 1px var(--purple)}
-  table.impgrid td.wide input{width:150px}
-  table.impgrid td.stcell{padding:4px 8px;font-weight:700;font-size:10px}
-  table.impgrid tr.badrow td.stcell{color:#b45309}
-  table.impgrid tr.badrow{background:#fff8f0}
-  table.impgrid td.miss input{background:#fff1e6}
-  .imp-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
-  .imp-summary{font-size:12px;color:var(--muted)}
   a.codelink{font-size:10.5px;color:var(--purple);cursor:pointer;text-decoration:none;border-bottom:1px dashed #cfcde0}
   a.codelink:hover{color:var(--magenta);border-bottom-color:var(--magenta)}
   .overlay{position:fixed;inset:0;background:rgba(31,26,61,.45);display:grid;place-items:center;z-index:20;padding:20px}
@@ -1741,7 +3204,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .toast.show{opacity:1;transform:translateX(-50%)}
 </style></head><body>
 <div id="loginView" class="login"><div class="card">
-  <h1>ACE<b>GROUP</b></h1><p>Office web app — sign in</p>
+  <h1>ACE<b>GROUP</b></h1><p>Office web app \u2014 sign in</p>
   <label>Email</label><input id="email" type="email" value="milosz@acegroup-uk.com">
   <label>Password</label><input id="password" type="password">
   <button onclick="login()">Sign in</button>
@@ -1758,34 +3221,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
 <div id="appView" style="display:none">
   <header>
-    <div class="brand">ACE<b>GROUP</b> <span>· Office</span><span class="envbadge" id="envBadge"></span></div>
+    <div class="brand">ACE<b>GROUP</b> <span>\xB7 Office</span><span class="envbadge" id="envBadge"></span></div>
     <button class="verchip" onclick="showChangelog()" title="What's new">v__APP_VERSION__</button>
     <nav class="nav">
-      <div class="grp" id="grp_ops"><button class="grpbtn" onclick="toggleGrp('ops')">Operations \u25be</button><div class="grpmenu" id="menu_ops">
-        <button id="tabDash" class="tab" onclick="showTab('dashboard')">Dashboard</button>
-        <button id="tabItems" class="tab" onclick="showTab('items')">Items</button>
-        <button id="tabMapping" class="tab" style="display:none" onclick="showTab('mapping')">Mapping</button>
-        <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
-        <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
-      </div></div>
-      <div class="grp" id="grp_sales"><button class="grpbtn" onclick="toggleGrp('sales')">Sales \u25be</button><div class="grpmenu" id="menu_sales">
-        <button id="tabLeads" class="tab" style="display:none" onclick="showTab('leads')">Leads</button>
-      </div></div>
-      <div class="grp" id="grp_crm"><button class="grpbtn" onclick="toggleGrp('crm')">CRM \u25be</button><div class="grpmenu" id="menu_crm">
-        <button id="tabCustomers" class="tab" style="display:none" onclick="showTab('customers')">Customers</button>
-      </div></div>
-      <div class="grp" id="grp_finance"><button class="grpbtn" onclick="toggleGrp('finance')">Finance \u25be</button><div class="grpmenu" id="menu_finance">
-        <button id="tabBudget" class="tab" style="display:none" onclick="showTab('budget')">Budget</button>
-      </div></div>
-      <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
-        <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
-        <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
-        <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
-        <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
-        <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
-        <button id="tabLogs" class="tab" style="display:none" onclick="showTab('logs')">Logs</button>
-        <button id="tabBilling" class="tab" style="display:none" onclick="showTab('billing')">Billing</button>
-      </div></div>
+      <button id="tabDash" class="tab on" onclick="showTab('dashboard')">Dashboard</button>
+      <button id="tabItems" class="tab" onclick="showTab('items')">Items</button>
+      <button id="tabMapping" class="tab" style="display:none" onclick="showTab('mapping')">Mapping</button>
+      <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
+      <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
+      <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
+      <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
+      <button id="tabBudget" class="tab" style="display:none" onclick="showTab('budget')">Budget</button>
+      <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
+      <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
+      <button id="tabRoles" class="tab" style="display:none" onclick="showTab('roles')">Roles</button>
+      <button id="tabLogs" class="tab" style="display:none" onclick="showTab('logs')">Logs</button>
     </nav>
     <div class="who"><span id="whoName"></span><button onclick="logout()">Sign out</button></div>
   </header>
@@ -1793,7 +3243,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="dashView" style="display:none">
     <main style="max-width:1000px">
       <h2>Dashboard</h2>
-      <div class="sub">Live status across all jobs — straight from the store.</div>
+      <div class="sub">Live status across all jobs \u2014 straight from the store.</div>
       <div id="dashCards" class="statgrid"></div>
       <div id="dashBreakdown"></div>
       <div class="groupt" style="padding:16px 0 0">BY JOB</div>
@@ -1811,12 +3261,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main>
       <div class="titlerow">
         <div style="display:flex;gap:10px;align-items:center">
-          <button class="jobstoggle" onclick="toggleJobs()" title="Show/hide the Jobs panel">☰ Jobs</button>
-          <div><h2 id="title">—</h2><div class="sub" id="subtitle"></div></div>
+          <button class="jobstoggle" onclick="toggleJobs()" title="Show/hide the Jobs panel">\u2630 Jobs</button>
+          <div><h2 id="title">\u2014</h2><div class="sub" id="subtitle"></div></div>
         </div>
         <div style="display:flex;gap:10px;align-items:center">
           <button id="filesBtn" class="jobstoggle" style="display:none" onclick="openJobFiles(current)">Files</button>
-          <button id="editJobBtn" class="jobstoggle" style="display:none" onclick="openEditJob(current)">Edit job</button>
           <button id="delJobBtn" class="del" style="display:none" onclick="delJob()">Delete job</button>
           <button id="newBtn" class="newbtn" onclick="openCreate()">+ New item</button>
         </div>
@@ -1829,7 +3278,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="chip" data-f="dirty" onclick="setFilter('dirty')">Needs re-sync</button>
         <button class="chip" data-f="snags" onclick="setFilter('snags')">Snags</button>
         <button class="chip" data-f="open_snags" onclick="setFilter('open_snags')">Open snags</button>
-        <button class="chip" data-f="unfinished" onclick="setFilter('unfinished')">Unfinished</button>
         <span id="itemCount" class="itemcount"></span>
       </div>
       <div id="bulkbar" class="bulkbar" style="display:none">
@@ -1860,7 +3308,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <th>ROOM<br><select id="roomFilter" class="colfilter" onchange="setRoomFilter(this.value)"></select></th>
         <th>ITEM<br><select id="itemColFilter" class="colfilter" onchange="setItemColFilter(this.value)"></select></th>
         <th>STAGE<br><select id="stageFilter" class="colfilter" onchange="setStageFilter(this.value)"></select></th>
-        <th>RATE (£)</th>
+        <th>RATE (\xA3)</th>
         <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
         <th>TEAM<br><select id="teamFilter" class="colfilter" onchange="setTeamFilter(this.value)"></select></th><th>MONDAY</th>
       </tr></thead><tbody id="rows"></tbody></table></div>
@@ -1870,15 +3318,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="teamsView" style="display:none">
     <main style="max-width:760px">
       <h2>Fitter teams &amp; rates</h2>
-      <div class="sub">Each team has a <b>Windows</b> rate and a <b>Doors</b> rate. Items inherit their team's rate for their category (doors are detected from the item type/code) unless a per-item override is set. The rate flows to Monday's <b>Labour Cost</b> column when an item is synced. A team with items assigned can't be deleted — <b>Retire</b> it instead: it stays on existing items and reports but disappears from new assignment lists, and can be reactivated anytime.</div>
+      <div class="sub">Each team has a <b>Windows</b> rate and a <b>Doors</b> rate. Items inherit their team's rate for their category (doors are detected from the item type/code) unless a per-item override is set. The rate flows to Monday's <b>Labour Cost</b> column when an item is synced. A team with items assigned can't be deleted \u2014 <b>Retire</b> it instead: it stays on existing items and reports but disappears from new assignment lists, and can be reactivated anytime.</div>
       <div id="addTeam" class="addrow" style="display:none">
         <input id="newTeamName" class="tinput" placeholder="Team name (e.g. Team P03)">
-        <div class="pfx" title="Windows rate"><span>W £</span><input id="newTeamRate" class="tinput rate2" type="number" min="0" step="1" placeholder="80"></div>
+        <div class="pfx" title="Windows rate"><span>W \xA3</span><input id="newTeamRate" class="tinput rate2" type="number" min="0" step="1" placeholder="80"></div>
         <button class="add" onclick="addTeam()">Add team</button>
       </div>
       <div id="teamsNote" class="sub" style="display:none">You're signed in as <b id="roleName"></b>. Only admins can add or edit teams.</div>
       <div class="card2" style="margin-top:14px"><table><thead><tr>
-        <th>TEAM</th><th>WINDOWS RATE (£)</th><th>DOORS RATE (£)</th><th>ITEMS USING</th><th></th>
+        <th>TEAM</th><th>WINDOWS RATE (\xA3)</th><th>DOORS RATE (\xA3)</th><th>ITEMS USING</th><th></th>
       </tr></thead><tbody id="teamRows"></tbody></table></div>
     </main>
   </div>
@@ -1886,7 +3334,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="syncView" style="display:none">
     <main style="max-width:900px">
       <h2>Monday sync</h2>
-      <div class="sub">Link each job to its Monday board, then push its items across. Matching is by item name (the full code), so re-syncing updates in place — it never duplicates. Board id is the number in the board's URL: monday.com/boards/<b>18424137545</b>.</div>
+      <div class="sub">Link each job to its Monday board, then push its items across. Matching is by item name (the full code), so re-syncing updates in place \u2014 it never duplicates. Board id is the number in the board's URL: monday.com/boards/<b>18424137545</b>.</div>
       <div class="card2" style="margin-top:14px"><table><thead><tr>
         <th>JOB</th><th>MONDAY BOARD</th><th>ITEMS</th><th>SYNCED</th><th>TO SYNC</th><th></th>
       </tr></thead><tbody id="syncRows"></tbody></table></div>
@@ -1895,17 +3343,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="plansView" style="display:none">
     <main style="max-width:1200px">
       <h2>Plans</h2>
-      <div class="sub">Upload a floor plan or elevation per job (image or PDF — a multi-page PDF becomes one plan per page), then pin each item to its spot. Field staff see the pins on the phone. Click an item on the right, then click its location on the plan.</div>
+      <div class="sub">Upload a floor plan or elevation per job, then pin each item to its spot. Field staff see the pins on the phone. Click an item on the right, then click its location on the plan.</div>
       <div class="planbar">
         <select id="planJob" class="tinput" onchange="loadPlans()"></select>
         <select id="planSel" class="tinput" onchange="renderPlan()"></select>
-        <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload from disk</button>
-        <input type="file" id="planFile" accept="image/*,application/pdf,.pdf" style="display:none" onchange="uploadPlan(this)">
-        <button class="add" id="planFromJobBtn" onclick="addPlanFromJob()">From job files</button>
+        <button class="add" id="planUploadBtn" onclick="document.getElementById('planFile').click()">Upload plan</button>
+        <input type="file" id="planFile" accept="image/*" style="display:none" onchange="uploadPlan(this)">
         <button class="del" id="planDelBtn" onclick="deletePlan()">Delete plan</button>
         <button class="add" id="rptSurveyBtn" onclick="downloadReport('survey')" title="Download a survey sheet PDF for this job">Survey PDF</button>
         <button class="add" id="rptInstallBtn" onclick="downloadReport('install')" title="Internal install report (includes teams and rates)">Internal install PDF</button>
-        <button class="add" id="rptCustInstallBtn" onclick="downloadReport('customer_install')" title="Customer install report (no rates — safe to send the customer)">Customer install PDF</button>
+        <button class="add" id="rptCustInstallBtn" onclick="downloadReport('customer_install')" title="Customer install report (no rates \u2014 safe to send the customer)">Customer install PDF</button>
         <span id="planMsg" style="font-size:12px;color:var(--muted)"></span>
         <label id="multiPlanWrap" style="display:none;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin-left:auto;cursor:pointer">
           <input type="checkbox" id="multiPlanChk" onchange="setMultiPlan(this.checked)" style="width:15px;height:15px;accent-color:var(--magenta)"> Item can be on multiple plans
@@ -1934,17 +3381,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="calView" style="display:none">
     <main style="max-width:1100px">
       <h2>Install calendar</h2>
-      <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday (Sync tab → Pull fitters + dates). Filter by team, page months, click a day to see what's on.</div>
+      <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday (Sync tab \u2192 Pull fitters + dates). Filter by team, page months, click a day to see what's on.</div>
       <div class="calbar">
-        <div style="display:flex;gap:6px;margin-right:10px">
-          <button id="calModeMonth" onclick="calSetMode('month')" style="border:1px solid var(--line);background:var(--magenta);color:#fff;border-radius:9px;height:34px;padding:0 16px;font-size:13px;font-weight:600;cursor:pointer">Month</button>
-          <button id="calModeGantt" onclick="calSetMode('gantt')" style="border:1px solid var(--line);background:#fff;color:var(--purple);border-radius:9px;height:34px;padding:0 16px;font-size:13px;font-weight:600;cursor:pointer">Gantt</button>
-        </div>
-        <button id="calNavPrev" class="calnav" onclick="calShift(-1)">‹</button>
-        <div class="calmonth" id="calMonth">—</div>
-        <button id="calNavNext" class="calnav" onclick="calShift(1)">›</button>
+        <button class="calnav" onclick="calShift(-1)">\u2039</button>
+        <div class="calmonth" id="calMonth">\u2014</div>
+        <button class="calnav" onclick="calShift(1)">\u203A</button>
         <select id="calTeam" class="tinput" onchange="renderCalendar()" style="margin-left:auto"></select>
-        <select id="ganttTeam" class="tinput" onchange="renderGantt()" style="display:none;margin-left:auto"></select>
         <span id="calMsg" class="itemcount"></span>
       </div>
       <div class="calgridwrap">
@@ -1953,18 +3395,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div>
       <div class="calsel-h" id="calSelHead"></div>
       <div id="calSel"></div>
-      <div id="ganttWrap" style="display:none"></div>
     </main>
   </div>
 
   <div id="budgetView" style="display:none">
     <main style="max-width:1000px">
       <div class="titlerow">
-        <div><h2>Budget &amp; pricing</h2><div class="sub">Customer pricing rules. Assign a rule to a job, and items are priced by it. Visible to admins and invoice managers only — no one else can see costs or prices.</div></div>
+        <div><h2>Budget &amp; pricing</h2><div class="sub">Customer pricing rules. Assign a rule to a job, and items are priced by it. Visible to admins and invoice managers only \u2014 no one else can see costs or prices.</div></div>
         <button class="newbtn" onclick="openRule()">+ New rule</button>
       </div>
       <div class="card2" style="margin-top:14px"><table><thead><tr>
-        <th>RULE</th><th>CUSTOMER</th><th>MODEL</th><th>RATE / FLAT</th><th>RATE / DOOR</th><th>RATE / m²</th><th></th>
+        <th>RULE</th><th>CUSTOMER</th><th>MODEL</th><th>RATE / FLAT</th><th>RATE / DOOR</th><th>RATE / m\xB2</th><th></th>
       </tr></thead><tbody id="ruleRows"></tbody></table></div>
 
       <h3 style="margin-top:28px;color:var(--purple)">Job pricing</h3>
@@ -1984,11 +3425,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="testsView" style="display:none">
     <main style="max-width:1000px">
       <div class="titlerow">
-        <div><h2>QA test run</h2><div class="sub" id="testProg">—</div></div>
+        <div><h2>QA test run</h2><div class="sub" id="testProg">\u2014</div></div>
         <button class="add" onclick="exportTests()" style="align-self:center">Export CSV</button>
       </div>
       <div class="chips" style="align-items:center">
-        <select id="testVer" class="tinput" onchange="changeTestVer()" title="Test results are recorded per app version"></select>
         <select id="testArea" class="tinput" onchange="renderTests()"></select>
         <select id="testStatus" class="tinput" onchange="renderTests()">
           <option value="">All results</option><option value="ok">OK</option><option value="nok">NOK</option><option value="untested">Untested</option>
@@ -2001,7 +3441,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="usersView" style="display:none">
     <main style="max-width:1080px">
       <h2>Users</h2>
-      <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>, and <b>invoice manager</b> (budget/pricing only — no operational data).</div>
+      <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>, and <b>invoice manager</b> (budget/pricing only \u2014 no operational data).</div>
       <div class="addrow" style="flex-wrap:wrap">
         <input id="nuName" class="tinput" placeholder="Full name">
         <input id="nuEmail" class="tinput" type="email" placeholder="email@company.com" style="width:210px">
@@ -2013,7 +3453,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="min-width:1000px"><thead><tr>
         <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>CLIENT</th><th>TEAM</th><th>LOGIN</th><th>STATUS</th><th></th>
       </tr></thead><tbody id="userRows"></tbody></table></div>
-      <div class="sub" style="margin-top:8px">A <b>fitter's</b> team decides which items they see in the phone app. Set it here; item→team assignment itself comes from Monday (Sync tab → Pull fitters). A <b>customer</b> only signs in to a read-only portal — set their <b>CLIENT</b> code (e.g. AXS) to control which jobs they can see and download the rate-free install report for.</div>
+      <div class="sub" style="margin-top:8px">A <b>fitter's</b> team decides which items they see in the phone app. Set it here; item\u2192team assignment itself comes from Monday (Sync tab \u2192 Pull fitters). A <b>customer</b> only signs in to a read-only portal \u2014 set their <b>CLIENT</b> code (e.g. AXS) to control which jobs they can see and download the rate-free install report for.</div>
     </main>
   </div>
   <div id="rolesView" style="display:none">
@@ -2029,7 +3469,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:1000px">
       <h2>Activity log</h2>
       <div class="sub">Recent high-value actions across the tenant (most recent first). Search filters the list.</div>
-      <div class="addrow" style="margin:4px 0 12px"><input id="logSearch" class="tinput" placeholder="Filter by user, action, entity or details…" style="width:340px" oninput="renderLogs()"></div>
+      <div class="addrow" style="margin:4px 0 12px"><input id="logSearch" class="tinput" placeholder="Filter by user, action, entity or details\u2026" style="width:340px" oninput="renderLogs()"></div>
       <div class="card2" style="overflow:auto"><table style="min-width:760px"><thead><tr>
         <th>WHEN</th><th>USER</th><th>ROLE</th><th>ACTION</th><th>DETAILS</th>
       </tr></thead><tbody id="logRows"></tbody></table></div>
@@ -2037,30 +3477,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
 
   <div id="mappingView" style="display:none">
-    <main style="max-width:1200px">
+    <main style="max-width:1000px">
       <h2>Mapping</h2>
-      <div class="sub" id="mapSub">Import a survey sheet, or pre-load a job's items floor by floor.</div>
-
-      <div class="card2" id="importCard" style="margin:14px 0;padding:16px 18px">
-        <div style="font-weight:800;font-size:14px;margin-bottom:3px">Import from Excel</div>
-        <div class="sub" style="margin:0 0 12px">Upload a survey sheet (the <b>Main</b> tab). Rows load into an editable, filterable grid below and are saved as a draft for this job. When you're ready, <b>Upload to Items</b> — any row missing required data is created as <b>Unfinished</b> so you can complete it later.</div>
-        <div class="imp-toolbar">
-          <input type="file" id="impFile" accept=".xlsx,.xls" onchange="onImpFile(this)" style="font-size:12px">
-          <span id="impFileName" class="imp-summary"></span>
-        </div>
-        <div id="impArea" style="display:none">
-          <div class="imp-toolbar">
-            <button class="add" onclick="saveImportDraft(true)">Save draft</button>
-            <button class="newbtn" onclick="commitImport()">Upload to Items</button>
-            <button class="bulk bclear" onclick="clearImportDraft()">Clear draft</button>
-            <select id="impStatusSel" class="colfilter" onchange="setImpStatus(this.value)" style="width:auto"><option value="">All rows</option><option value="unfinished">Unfinished only</option><option value="complete">Complete only</option></select>
-            <span id="impSummary" class="imp-summary"></span>
-          </div>
-          <div class="imp-wrap"><table class="impgrid" id="impGrid"></table></div>
-        </div>
-        <div id="impEmpty" class="empty" style="margin-top:6px">No import yet — pick a job on the left, then choose an .xlsx file.</div>
-      </div>
-
+      <div class="sub" id="mapSub">Pre-load a job's items floor by floor.</div>
       <div id="mapBody" style="margin-top:14px"></div>
     </main>
   </div>
@@ -2073,62 +3492,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 </div>
-  <div id="leadsView" style="display:none">
-    <main style="max-width:1000px">
-      <h2>Leads</h2>
-      <div class="sub">People who tried the mobile demo or requested a quote. Read-only.</div>
-      <div class="card2" style="margin:12px 0;padding:14px 16px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:3px">Quote request destination</div>
-        <div class="sub" style="margin:0 0 10px">Email the mobile app's &ldquo;Request a quote&rdquo; opens a message to.</div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <input id="demoLeadsEmail" class="tinput" type="email" placeholder="sales@acegroup-uk.com" style="width:280px">
-          <button class="add" onclick="saveDemoLeadsEmail()">Save</button>
-          <span id="demoLeadsMsg" style="font-size:12px;color:var(--muted)"></span>
-        </div>
-      </div>
-      <div class="card2" style="overflow-x:auto"><table style="min-width:840px"><thead><tr>
-        <th>WHEN</th><th>TYPE</th><th>EMAIL</th><th>NAME</th><th>COMPANY</th><th>PHONE</th><th>MESSAGE</th><th>APP</th>
-      </tr></thead><tbody id="leadsRows"></tbody></table></div>
-    </main>
-  </div>
-
-  <div id="customersView" style="display:none">
-    <main style="max-width:900px">
-      <h2>Customers</h2>
-      <div class="sub">Customer portal accounts. Create/manage logins under Admin &rarr; Users (role: customer).</div>
-      <div class="card2" style="margin-top:12px;overflow-x:auto"><table style="min-width:600px"><thead><tr>
-        <th>NAME</th><th>EMAIL</th><th>CLIENT</th><th>STATUS</th>
-      </tr></thead><tbody id="customersRows"></tbody></table></div>
-    </main>
-  </div>
-
-  <div id="billingView" style="display:none">
-    <main style="max-width:900px">
-      <h2>Billing &amp; usage</h2>
-      <div class="sub" id="billingSub">Items created per tenant per month, at each tenant's per-item rate.</div>
-      <div class="chips" style="align-items:center;margin:12px 0;gap:10px">
-        <label style="font-size:12px;color:var(--muted)">Month</label>
-        <input id="billMonth" type="month" class="tinput" onchange="loadBilling()">
-        <span id="billMsg" style="font-size:12px;color:var(--muted)"></span>
-      </div>
-      <div class="card2" style="overflow-x:auto"><table style="min-width:640px"><thead><tr>
-        <th>TENANT</th><th>RATE (£/item)</th><th>ITEMS</th><th>AMOUNT</th>
-      </tr></thead><tbody id="billRows"></tbody></table></div>
-    </main>
-  </div>
-
 <div id="modal" class="overlay" style="display:none">
   <div class="sheet">
-    <div class="sheethead"><h3 id="modalTitle">—</h3><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="sheethead"><h3 id="modalTitle">\u2014</h3><button class="x" onclick="closeModal()">\u2715</button></div>
     <div id="modalBody"></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
   var STAGE={scanned:'Scanned',in_survey:'In survey',surveyed:'Surveyed',synced:'Synced'};
-  var ISTATUS=[['','—'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
+  var ISTATUS=[['','\u2014'],['scheduled','Scheduled'],['installed_no_snag','Installed no snag'],['installed_snag','Installed + snag'],['snag','Snag'],['misfit','MisFit'],['delayed','Delayed']];
   var ISTATUS_LABEL={};ISTATUS.forEach(function(s){ISTATUS_LABEL[s[0]]=s[1];});
-  function teamName(id){for(var i=0;i<teams.length;i++){if(teams[i].id===id)return teams[i].name;}return '—';}
+  function teamName(id){for(var i=0;i<teams.length;i++){if(teams[i].id===id)return teams[i].name;}return '\u2014';}
   // Canonical room codes (kept in step with the phone app). The picker orders these by how
   // often each code has been used across all jobs (ROOM_STATS), most-used first.
   var ROOMS=[
@@ -2142,7 +3517,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     {name:'Common Way',code:'CW'},{name:'Lounge',code:'LG'},{name:'WC',code:'WC'}
   ];
   var ROOM_STATS={};
-  function roomLabel(code){ if(!code)return '—'; for(var i=0;i<ROOMS.length;i++){if(ROOMS[i].code===code)return ROOMS[i].name+' ('+code+')';} return code; }
+  function roomLabel(code){ if(!code)return '\u2014'; for(var i=0;i<ROOMS.length;i++){if(ROOMS[i].code===code)return ROOMS[i].name+' ('+code+')';} return code; }
   // Spec dropdown options (office item edit screen).
   var MATERIALS=['uPVC','Aluminium','Timber','Composite'];
   var WINDOW_TYPES=['Casement','Fixed','Tilt & Turn','Sash'];
@@ -2157,7 +3532,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     // include any historical codes not in the canonical list, so nothing is lost
     Object.keys(counts).forEach(function(c){ if(!list.some(function(r){return r.code===c;})) list.push({name:c,code:c}); });
     list.sort(function(a,b){var ca=counts[a.code]||0,cb=counts[b.code]||0; return (cb-ca)||a.name.localeCompare(b.name);});
-    var out='<option value="">— pick room —</option>';
+    var out='<option value="">\u2014 pick room \u2014</option>';
     list.forEach(function(r){ out+='<option value="'+r.code+'"'+(r.code===selected?' selected':'')+'>'+esc(r.name)+' ('+r.code+')</option>'; });
     return out;
   }
@@ -2181,7 +3556,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
   }
-  var myRole=sessionStorage.getItem('ace_role')||''; var myTeam=sessionStorage.getItem('ace_team')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
+  var myRole=sessionStorage.getItem('ace_role')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
   var myClientCode=sessionStorage.getItem('ace_client')||'';
   var CHANGELOG=__CHANGELOG_JSON__;
   var SSO_ENABLED=__SSO_ENABLED__; var SUPA_URL='__SUPABASE_URL__'; var SUPA_ANON='__SUPABASE_ANON_KEY__';
@@ -2201,8 +3576,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function bootstrapSession(){
     var r=await fetch('/api/me',{headers:{Authorization:'Bearer '+token}});
-    if(r.ok){var me=await r.json();myRole=me.role||'';myClientCode=me.client_code||'';myTeam=me.team_id||'';sessionStorage.setItem('ace_token',token);sessionStorage.setItem('ace_role',myRole);sessionStorage.setItem('ace_client',myClientCode);sessionStorage.setItem('ace_team',myTeam);document.getElementById('whoName').textContent=me.name||'';showApp();}
-    else{logout();document.getElementById('loginErr').textContent='No ACE account for this email — ask an admin to add you first.';}
+    if(r.ok){var me=await r.json();myRole=me.role||'';myClientCode=me.client_code||'';sessionStorage.setItem('ace_token',token);sessionStorage.setItem('ace_role',myRole);sessionStorage.setItem('ace_client',myClientCode);document.getElementById('whoName').textContent=me.name||'';showApp();}
+    else{logout();document.getElementById('loginErr').textContent='No ACE account for this email \u2014 ask an admin to add you first.';}
   }
   function showChangelog(){
     var html='<div style="padding:16px 22px 20px">'+CHANGELOG.map(function(e){
@@ -2218,11 +3593,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
     var d=await r.json();
     if(!r.ok){document.getElementById('loginErr').textContent=d.error||'Login failed';return;}
-    token=d.token; myRole=d.role||''; myClientCode=d.client_code||''; myTeam=d.team_id||''; sessionStorage.setItem('ace_token',token); sessionStorage.setItem('ace_role',myRole); sessionStorage.setItem('ace_client',myClientCode); sessionStorage.setItem('ace_team',myTeam);
+    token=d.token; myRole=d.role||''; myClientCode=d.client_code||''; sessionStorage.setItem('ace_token',token); sessionStorage.setItem('ace_role',myRole); sessionStorage.setItem('ace_client',myClientCode);
     document.getElementById('whoName').textContent=d.name;
     showApp();
   }
-  function logout(){token='';myRole='';myClientCode='';myTeam='';sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');sessionStorage.removeItem('ace_client');sessionStorage.removeItem('ace_team');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
+  function logout(){token='';myRole='';myClientCode='';sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');sessionStorage.removeItem('ace_client');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
@@ -2232,7 +3607,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadCustomer(){
     ['dashboard','items','teams','sync','plans','cal','budget','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
-    var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
+    var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading\u2026</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
     if(!jobs.length){box.innerHTML='<div class="card2" style="padding:18px">No jobs are shared with you yet.</div>';return;}
     box.innerHTML=jobs.map(function(j){
@@ -2253,7 +3628,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var box=document.getElementById('mapBody');
     if(!current||current==='ALL'){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
     var status=JOB_STATUS[current]||'';
-    document.getElementById('mapSub').innerHTML='Job <b>'+esc(current)+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
+    document.getElementById('mapSub').innerHTML='Job <b>'+esc(current)+'</b> \xB7 status: <b>'+esc(status.replace('_',' '))+'</b>';
     if(status!=='pending_mapping'){
       if(canCap('jobs.manage')){
         box.innerHTML='<div class="card2" style="padding:16px;max-width:480px">'
@@ -2261,202 +3636,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           +'<div class="sub" style="margin-bottom:10px">Assign a mapping start date to make this job visible to scanners.</div>'
           +'<div style="display:flex;gap:10px;align-items:center"><input type="date" id="mapDate" value="'+esc(JOB_MAPDATE[current]||'')+'"><button class="save" id="mapDateBtn">Assign date</button></div></div>';
         document.getElementById('mapDateBtn').addEventListener('click',assignMapDate);
-      } else box.innerHTML='<div class="empty">This job isn\\'t ready for mapping yet — an admin needs to assign a mapping start date.</div>';
+      } else box.innerHTML='<div class="empty">This job isn\\'t ready for mapping yet \u2014 an admin needs to assign a mapping start date.</div>';
       return;
     }
     renderMapBuilder(box);
   }
-
-  // ---- Excel import (Operations ▸ Mapping ▸ Import from Excel) ----
-  var impRows=[], impFilters={}, impStatusFilter='', impFileName='', impSaveTimer=null;
-  // Grid columns, in order. * = required (missing ⇒ Unfinished). Mirrors @ace/shared IMPORT_FIELDS.
-  var IMP_COLS=[
-    {k:'block',l:'Block'},{k:'elevation',l:'Elev'},{k:'flat',l:'Flat'},{k:'floor',l:'Floor'},
-    {k:'room',l:'Room'},{k:'item',l:'Item'},
-    {k:'material',l:'Material'},{k:'item_type',l:'Item type'},{k:'window_type',l:'Window type'},
-    {k:'glass',l:'Glass'},{k:'safety_glass',l:'Safety'},{k:'glazing',l:'Glazing'},{k:'glazing_bars',l:'Glazing bars'},
-    {k:'width_mm',l:'Width'},{k:'height_mm',l:'Height'},{k:'cill_depth',l:'Cill'},
-    {k:'transom1_mm',l:'Trans1'},{k:'transom2_mm',l:'Trans2'},{k:'transom3_mm',l:'Trans3'},
-    {k:'mullion1_mm',l:'Mull1'},{k:'mullion2_mm',l:'Mull2'},{k:'mullion3_mm',l:'Mull3'},
-    {k:'open_in_out',l:'Open'},{k:'add_ons',l:'Add-ons',wide:1},{k:'coupled',l:'Coupled'},
-    {k:'design_code',l:'Design'},{k:'comments',l:'Comments',wide:1}
-  ];
-  var IMP_REQ={block:1,elevation:1,item:1,room:1,material:1,item_type:1,glass:1,glazing:1,width_mm:1,height_mm:1,open_in_out:1};
-  // Excel header (normalized: lowercased, non-alphanumerics stripped) → canonical key. '' = ignore.
-  var IMP_HDR={
-    areacouncil:'',area:'',council:'',site:'',designsketch:'',sketch:'',
-    block:'block',elevation:'elevation',elev:'elevation',item:'item',floor:'floor',
-    flatplotno:'flat',flatplot:'flat',flat:'flat',flatno:'flat',plotno:'flat',plot:'flat',
-    material:'material',itemtype:'item_type',type:'item_type',
-    glass:'glass',safetyglass:'safety_glass',safety:'safety_glass',
-    glazing:'glazing',glazingbars:'glazing_bars',
-    width:'width_mm',heightinccill:'height_mm',height:'height_mm',
-    addonrequiredincassizeshown:'add_ons',addonrequired:'add_ons',addons:'add_ons',addon:'add_ons',
-    cilldepth:'cill_depth',cill:'cill_depth',coupled:'coupled',designcode:'design_code',
-    transom1fromtop:'transom1_mm',transom1:'transom1_mm',transom2fromtop:'transom2_mm',transom2:'transom2_mm',
-    transom3fromtop:'transom3_mm',transom3:'transom3_mm',
-    mullion1fromleft:'mullion1_mm',mullion1:'mullion1_mm',mullion2fromleft:'mullion2_mm',mullion2:'mullion2_mm',
-    mullion3fromleft:'mullion3_mm',mullion3:'mullion3_mm',
-    openinopenout:'open_in_out',openinout:'open_in_out',open:'open_in_out',
-    room:'room',comments:'comments'
-  };
-  var IMP_ROOM2CODE=null;
-  function impRoomMap(){
-    if(IMP_ROOM2CODE)return IMP_ROOM2CODE;
-    IMP_ROOM2CODE={};
-    ROOMS.forEach(function(r){ IMP_ROOM2CODE[r.name.toLowerCase().replace(/[^a-z0-9]/g,'')]=r.code; IMP_ROOM2CODE[r.code.toLowerCase()]=r.code; });
-    return IMP_ROOM2CODE;
-  }
-  function normHdr(h){ return String(h==null?'':h).toLowerCase().replace(/[^a-z0-9]/g,''); }
-  function impVal(v){ return v==null?'':String(v).trim(); }
-  function roomToCode(v){ if(v==null||v==='')return ''; var t=String(v).replace(/\\u00a0/g,' ').trim(); var n=t.toLowerCase().replace(/[^a-z0-9]/g,''); return impRoomMap()[n]||t.toUpperCase(); }
-  function normSafety(v){ if(v===false||v==null)return ''; if(v===true)return 'Yes'; var t=String(v).trim(); if(!t||/^n\\/?a$/i.test(t))return ''; if(/^y/i.test(t))return 'Yes'; return t; }
-  // Which required fields a row is missing (flat OR floor satisfies the level requirement).
-  function impMissing(r){
-    var miss=[]; for(var k in IMP_REQ){ if(!impVal(r[k]))miss.push(k); }
-    if(!impVal(r.flat)&&!impVal(r.floor))miss.push('flat/floor');
-    return miss;
-  }
-  function rowComplete(r){ return impMissing(r).length===0; }
-
-  function onImpFile(input){
-    if(!current||current==='ALL'){ tShow('Pick a job on the left first'); input.value=''; return; }
-    var f=input.files&&input.files[0]; if(!f)return;
-    if(typeof XLSX==='undefined'){ tShow('Spreadsheet library still loading — try again in a moment'); return; }
-    impFileName=f.name;
-    var reader=new FileReader();
-    reader.onload=function(e){
-      try{
-        var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
-        var sheet=wb.Sheets['Main']||wb.Sheets[wb.SheetNames[0]];
-        var aoa=XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:null});
-        parseImpAoa(aoa);
-      }catch(err){ tShow('Could not read that file: '+(err&&err.message?err.message:err)); }
-    };
-    reader.readAsArrayBuffer(f);
-  }
-  function parseImpAoa(aoa){
-    var hi=-1;
-    for(var i=0;i<aoa.length&&i<15;i++){ var norm=(aoa[i]||[]).map(normHdr); if(norm.indexOf('block')>=0&&norm.indexOf('item')>=0){ hi=i; break; } }
-    if(hi<0){ tShow('Could not find the header row — need the Main tab with Block & Item columns'); return; }
-    var hdr=(aoa[hi]||[]).map(normHdr);
-    var colKey=hdr.map(function(nh){ var k=IMP_HDR[nh]; return k?k:null; });
-    var clientCol=-1,siteCol=-1;
-    for(var c=0;c<hdr.length;c++){ if(hdr[c]==='areacouncil'||hdr[c]==='area'||hdr[c]==='council')clientCol=c; if(hdr[c]==='site')siteCol=c; }
-    var start=hi+1;
-    var exRow=aoa[start]||[];
-    var looksExample=exRow.some(function(cv){ return cv!=null&&/e\\.g\\.|yes \\/ n\\/a|count from/i.test(String(cv)); });
-    if(looksExample)start++;
-    var jobClient=(current.split('.')[0]||'').toUpperCase(), jobCode=(current.split('.')[1]||'').toUpperCase();
-    var rows=[], mismatch=0;
-    for(var r=start;r<aoa.length;r++){
-      var arr=aoa[r]||[]; var obj={};
-      for(var cc=0;cc<arr.length;cc++){
-        var key=colKey[cc]; if(!key)continue; var val=arr[cc]; if(val==null)continue;
-        if(key==='room')val=roomToCode(val);
-        else if(key==='safety_glass')val=normSafety(val);
-        else val=String(val).replace(/\\u00a0/g,' ').trim();
-        if(obj[key]==null||obj[key]==='')obj[key]=val;
-      }
-      if(!impVal(obj.item))continue;
-      if(clientCol>=0&&arr[clientCol]!=null&&String(arr[clientCol]).trim().toUpperCase()!==jobClient)mismatch++;
-      else if(siteCol>=0&&arr[siteCol]!=null&&String(arr[siteCol]).trim().toUpperCase()!==jobCode)mismatch++;
-      rows.push(obj);
-    }
-    if(!rows.length){ tShow('No item rows found in the sheet'); return; }
-    if(mismatch>0&&!confirm(mismatch+' of '+rows.length+' rows have a different Area/Site than the selected job ('+current+'). Import into '+current+' anyway?')) return;
-    impRows=rows; impFilters={}; impStatusFilter='';
-    var ss=document.getElementById('impStatusSel'); if(ss)ss.value='';
-    renderImportGrid();
-    saveImportDraft(false);
-    tShow('Loaded '+rows.length+' rows — review, then Upload to Items');
-  }
-
-  function renderImportGrid(){
-    var area=document.getElementById('impArea'), empty=document.getElementById('impEmpty');
-    if(!impRows.length){ area.style.display='none'; empty.style.display=''; return; }
-    area.style.display=''; empty.style.display='none';
-    var g=document.getElementById('impGrid');
-    var head='<thead><tr><th>#</th>';
-    IMP_COLS.forEach(function(c){ head+='<th>'+esc(c.l)+(IMP_REQ[c.k]?' *':'')+'</th>'; });
-    head+='<th>Status</th></tr><tr class="filters"><th></th>';
-    IMP_COLS.forEach(function(c){ head+='<th><input value="'+av(impFilters[c.k]||'')+'" oninput="setImpFilter(\\''+c.k+'\\',this.value)"></th>'; });
-    head+='<th></th></tr></thead><tbody id="impBody"></tbody>';
-    g.innerHTML=head;
-    renderImportBody();
-  }
-  function impRowMatches(r){
-    for(var k in impFilters){ var f=(impFilters[k]||'').trim().toLowerCase(); if(!f)continue; var v=String(r[k]==null?'':r[k]).toLowerCase(); if(v.indexOf(f)<0)return false; }
-    if(impStatusFilter==='unfinished'&&rowComplete(r))return false;
-    if(impStatusFilter==='complete'&&!rowComplete(r))return false;
-    return true;
-  }
-  function renderImportBody(){
-    var tb=document.getElementById('impBody'); if(!tb)return;
-    var html='', shown=0, unfin=0;
-    impRows.forEach(function(r,idx){
-      if(!impRowMatches(r))return; shown++;
-      var miss=impMissing(r); var bad=miss.length>0; if(bad)unfin++;
-      var missSet={}; miss.forEach(function(m){missSet[m]=1;});
-      var tds='<td class="stcell">'+(idx+1)+'</td>';
-      IMP_COLS.forEach(function(c){
-        var isLevel=(c.k==='flat'||c.k==='floor')&&missSet['flat/floor'];
-        var mc=(missSet[c.k]||isLevel)?' miss':'';
-        tds+='<td class="'+(c.wide?'wide':'')+mc+'"><input value="'+av(r[c.k]==null?'':r[c.k])+'" onchange="impEdit('+idx+',\\''+c.k+'\\',this.value)"></td>';
-      });
-      tds+='<td class="stcell" title="'+(bad?('Missing: '+av(miss.join(', '))):'')+'">'+(bad?'Unfinished':'Complete')+'</td>';
-      html+='<tr class="'+(bad?'badrow':'')+'">'+tds+'</tr>';
-    });
-    tb.innerHTML=html;
-    var totUnfin=impRows.filter(function(r){return !rowComplete(r);}).length;
-    document.getElementById('impSummary').textContent=shown+' of '+impRows.length+' rows shown · '+totUnfin+' unfinished'+(impFileName?(' · '+impFileName):'');
-  }
-  function setImpFilter(k,v){ impFilters[k]=v; renderImportBody(); }
-  function setImpStatus(v){ impStatusFilter=v; renderImportBody(); }
-  function impEdit(idx,key,val){ if(!impRows[idx])return; impRows[idx][key]=val; renderImportBody(); if(impSaveTimer)clearTimeout(impSaveTimer); impSaveTimer=setTimeout(function(){saveImportDraft(false);},900); }
-
-  async function loadImport(){
-    var card=document.getElementById('importCard'); if(!card)return;
-    var empty=document.getElementById('impEmpty'), area=document.getElementById('impArea');
-    if(!canCap('items.create')){ card.style.display='none'; return; }
-    card.style.display='';
-    impRows=[]; impFilters={}; impStatusFilter=''; impFileName='';
-    var ss=document.getElementById('impStatusSel'); if(ss)ss.value='';
-    if(!current||current==='ALL'){ area.style.display='none'; empty.style.display=''; empty.textContent='Pick a job on the left, then choose an .xlsx file.'; return; }
-    try{
-      var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-draft')).json();
-      impRows=d.rows||[]; impFileName=d.filename||'';
-      if(impRows.length){ renderImportGrid(); }
-      else { area.style.display='none'; empty.style.display=''; empty.textContent='No import draft for this job yet — choose an .xlsx file to begin.'; }
-    }catch(e){ area.style.display='none'; empty.style.display=''; empty.textContent='Could not load the draft.'; }
-  }
-  async function saveImportDraft(showToast){
-    if(!current||current==='ALL')return;
-    try{
-      var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-draft',{method:'PUT',body:JSON.stringify({rows:impRows,filename:impFileName})})).json();
-      if(showToast)tShow(d.ok?('Draft saved · '+impRows.length+' rows'):(d.error||'Save failed'));
-    }catch(e){ if(showToast)tShow('Save failed'); }
-  }
-  async function commitImport(){
-    if(!impRows.length){ tShow('Nothing to upload — import a sheet first'); return; }
-    await saveImportDraft(false);
-    var unfin=impRows.filter(function(r){return !rowComplete(r);}).length;
-    if(!confirm('Upload '+impRows.length+' item'+(impRows.length===1?'':'s')+' to the Items table for '+current+'?'+(unfin?('\\n\\n'+unfin+' row'+(unfin===1?' is':'s are')+' missing required data and will be marked Unfinished.'):''))) return;
-    tShow('Uploading…');
-    try{
-      var d=await (await api('/api/job/'+encodeURIComponent(current)+'/import-commit',{method:'POST',body:JSON.stringify({rows:impRows})})).json();
-      if(d.ok){ tShow('Imported '+d.inserted+' item'+(d.inserted===1?'':'s')+(d.unfinished?(' · '+d.unfinished+' unfinished'):'')+(d.skipped?(' · '+d.skipped+' skipped'):'')); }
-      else tShow(d.error||'Upload failed');
-    }catch(e){ tShow('Upload failed'); }
-  }
-  async function clearImportDraft(){
-    if(!current||current==='ALL')return;
-    if(!confirm('Clear the import draft for '+current+'? Items already uploaded to the table are not affected.')) return;
-    try{ await api('/api/job/'+encodeURIComponent(current)+'/import-draft',{method:'DELETE'}); }catch(e){}
-    impRows=[]; impFileName=''; var fi=document.getElementById('impFile'); if(fi)fi.value='';
-    loadImport(); tShow('Draft cleared');
-  }
-
   async function assignMapDate(){
     var date=document.getElementById('mapDate').value;
     if(!date){tShow('Pick a date');return;}
@@ -2512,7 +3696,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var d=parseInt(div.querySelector('.fr-door').value,10)||0;
       if(f!==''&&(w>0||d>0)){ nf++; tw+=w; td+=d; }
     });
-    el.textContent='Total: '+nf+' floor'+(nf===1?'':'s')+' · '+tw+' windows · '+td+' doors · '+(tw+td)+' items';
+    el.textContent='Total: '+nf+' floor'+(nf===1?'':'s')+' \xB7 '+tw+' windows \xB7 '+td+' doors \xB7 '+(tw+td)+' items';
   }
   function maybeRevealFloors(){
     var bEl=document.getElementById('map_block'), eEl=document.getElementById('map_elev'); if(!bEl||!eEl)return;
@@ -2550,7 +3734,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function mapPreload(){
     var floors=[];
     document.querySelectorAll('#floorRows .frow').forEach(function(div){
-      var f=div.querySelector('.fr-floor').value.trim(); // keep the F (F1, GF) — server normalises
+      var f=div.querySelector('.fr-floor').value.trim(); // keep the F (F1, GF) \u2014 server normalises
       var w=parseInt(div.querySelector('.fr-win').value,10)||0;
       var d=parseInt(div.querySelector('.fr-door').value,10)||0;
       if(f!==''&&(w>0||d>0)) floors.push({floor:f,windows:w,doors:d});
@@ -2582,7 +3766,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tr.innerHTML=''
       +'<td class="mono mapcode" style="font-size:11px;white-space:nowrap">'+esc(mapCode(be.block.trim(),be.elev.trim(),r.floor,r.flat,r.item))+'</td>'
       +'<td><input class="mr-floor" value="'+esc(r.floor||'')+'" style="width:58px" title="Floor"></td>'
-      +'<td><input class="mr-flat" value="'+esc(r.flat||'')+'" style="width:58px" title="Flat / plot (optional — replaces floor in the code)"></td>'
+      +'<td><input class="mr-flat" value="'+esc(r.flat||'')+'" style="width:58px" title="Flat / plot (optional \u2014 replaces floor in the code)"></td>'
       +'<td><input class="mr-item" value="'+esc(r.item||'')+'" style="width:90px"></td>'
       +'<td><select class="mr-type"><option'+(r.type==='Window'?' selected':'')+'>Window</option><option'+(r.type==='Door'?' selected':'')+'>Door</option></select></td>'
       +'<td style="text-align:center"><input type="checkbox" class="mr-couple"></td>'
@@ -2630,7 +3814,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       else out.push({floor:floor,flat:flat,item:item,item_type:type});
     });
     if(!out.length){tShow('Nothing to save');return;}
-    tShow('Saving '+out.length+' item(s)…');
+    tShow('Saving '+out.length+' item(s)\u2026');
     var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:elev,rows:out})})).json();
     if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); }
     else tShow(d.error||'Save failed');
@@ -2640,157 +3824,66 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
     JOB_STATUS={}; JOB_MAPDATE={};
     jobs.forEach(function(j){ JOB_STATUS[j.code]=j.status||'pending_mapping'; JOB_MAPDATE[j.code]=j.mapping_start_date||''; });
-    function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.title=code;d.setAttribute('data-code',code);
-      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMapping();loadImport();}else loadItems();};
-      if(code!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(code);};d.appendChild(b);}
+    function mk(code,label){var d=document.createElement('div');d.className='job'+(code===current?' on':'');d.textContent=label;d.setAttribute('data-code',code);
+      d.onclick=function(){current=code;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping')loadMapping();else loadItems();};
+      if(code!=='ALL'){var b=document.createElement('span');b.textContent='\u22EF';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(code);};d.appendChild(b);}
       el.appendChild(d);}
-    if(myRole!=='scanner')mk('ALL','▦ All jobs');
-    jobs.forEach(function(j){mk(j.code,(j.site_code||j.code));});
+    if(myRole!=='scanner')mk('ALL','\u25A6 All jobs');
+    jobs.forEach(function(j){mk(j.code,j.code);});
     // Scanner (or an empty current) lands on the first available job.
     if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].code; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
   }
   function opt(v,l,sel){return '<option value="'+v+'"'+(v===sel?' selected':'')+'>'+l+'</option>';}
-  var JOB_DATE_PHASES=[
-    {key:'programme',label:'Programme (overall)',color:'#64748b'},
-    {key:'mapping',label:'Mapping',color:'#8b5cf6'},
-    {key:'survey',label:'Survey',color:'#0ea5e9'},
-    {key:'scaffold_erect',label:'Scaffold erect',color:'#f59e0b'},
-    {key:'scaffold_dismantle',label:'Scaffold dismantle',color:'#ef4444'},
-    {key:'fitting',label:'Fitting',color:'#10b981'}
-  ];
-  function jobTabBar(p){
-    var bs='padding:7px 13px;border:none;background:none;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;color:var(--ink)';
-    return '<div style="display:flex;gap:4px;padding:12px 22px 0;border-bottom:1px solid var(--line)">'
-      +'<button type="button" id="'+p+'TabBtnD" onclick="jobTab(\\''+p+'\\',\\'d\\')" style="'+bs+';font-weight:700;border-bottom-color:var(--magenta)">Details</button>'
-      +'<button type="button" id="'+p+'TabBtnT" onclick="jobTab(\\''+p+'\\',\\'t\\')" style="'+bs+'">Dates</button>'
-      +'</div>';
-  }
-  function jobTab(p,which){
-    var det=document.getElementById(p+'Details'), dat=document.getElementById(p+'Dates');
-    if(det)det.style.display=(which==='d')?'':'none';
-    if(dat)dat.style.display=(which==='t')?'':'none';
-    var bd=document.getElementById(p+'TabBtnD'), bt=document.getElementById(p+'TabBtnT');
-    if(bd){bd.style.fontWeight=(which==='d')?'700':'400';bd.style.borderBottomColor=(which==='d')?'var(--magenta)':'transparent';}
-    if(bt){bt.style.fontWeight=(which==='t')?'700':'400';bt.style.borderBottomColor=(which==='t')?'var(--magenta)':'transparent';}
-  }
-  function jobDatesFieldsHtml(p,d){
-    d=d||{}; var q=function(v){return (v==null?'':String(v)).slice(0,10);};
-    return '<div style="padding:14px 22px 6px"><div class="sub" style="margin:0 0 12px">All optional. Used for planning and the Gantt view on the Calendar tab.</div>'
-      +JOB_DATE_PHASES.map(function(ph){
-        return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 9px">'
-          +'<span style="display:inline-block;width:12px;height:12px;border-radius:3px;flex:0 0 auto;background:'+ph.color+'"></span>'
-          +'<label style="flex:0 0 148px;font-size:12.5px;font-weight:600">'+ph.label+'</label>'
-          +'<input type="date" id="'+p+'_'+ph.key+'_start" value="'+q(d[ph.key+'_start'])+'" style="flex:1;min-width:0">'
-          +'<span style="color:var(--muted);font-size:12px">to</span>'
-          +'<input type="date" id="'+p+'_'+ph.key+'_end" value="'+q(d[ph.key+'_end'])+'" style="flex:1;min-width:0">'
-          +'</div>';
-      }).join('')+'</div>';
-  }
-  function collectJobDates(p){
-    var o={};
-    JOB_DATE_PHASES.forEach(function(ph){
-      o[ph.key+'_start']=(document.getElementById(p+'_'+ph.key+'_start')||{}).value||'';
-      o[ph.key+'_end']=(document.getElementById(p+'_'+ph.key+'_end')||{}).value||'';
-    });
-    return o;
-  }
-  function validateJobDates(dts){
-    for(var i=0;i<JOB_DATE_PHASES.length;i++){var ph=JOB_DATE_PHASES[i];var a=dts[ph.key+'_start'],b=dts[ph.key+'_end'];
-      if(a&&b&&b<a)return ph.label+': end date is before start date.';}
-    return '';
-  }
   async function openNewJob(){
     var ruleField='';
     if(canCap('finance.manage')){
       var rules=[]; try{rules=await (await api('/api/pricing-rules')).json();}catch(e){}
-      ruleField='<div class="field full"><label>Pricing rule (optional)</label><select id="nj_rule"><option value="">— none —</option>'
-        +rules.map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+(r.customer?(' · '+esc(r.customer)):'')+'</option>';}).join('')+'</select></div>';
+      ruleField='<div class="field full"><label>Pricing rule (optional)</label><select id="nj_rule"><option value="">\u2014 none \u2014</option>'
+        +rules.map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+(r.customer?(' \xB7 '+esc(r.customer)):'')+'</option>';}).join('')+'</select></div>';
     }
-    var detail='<div class="fgrid">'
+    var html='<div class="fgrid">'
       +'<div class="codeprev" id="njPrev">CLIENT.JOB</div>'
       +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
       +'<div class="field full"><label>Site address</label><input id="nj_addr" placeholder="Full site address (optional)"></div>'
-      +'<div class="field full"><label>Postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
-      +'<div class="field full"><label>Site code</label><input id="nj_sitecode" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
-      +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
+      +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip \xB7 up to 25MB each</div></div>'
       +ruleField
-      +'</div>';
-    var html=jobTabBar('nj')
-      +'<div id="njDetails">'+detail+'</div>'
-      +'<div id="njDates" style="display:none">'+jobDatesFieldsHtml('nj',{})+'</div>'
-      +'<div class="ferr" id="njErr" style="padding:0 22px"></div>'
+      +'<div class="ferr" id="njErr"></div></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveJob()">Create job</button></div>';
     openModal('New job',html);
     ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
     njCode();
-    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode','nj_sitecode'].concat(jobDateInputIds('nj')));
   }
   function njCode(){var c=(document.getElementById('nj_client').value||'').trim().toUpperCase();var j=(document.getElementById('nj_job').value||'').trim().toUpperCase();document.getElementById('njPrev').textContent=(c||'CLIENT')+'.'+(j||'JOB');}
   async function saveJob(){
     var client=(document.getElementById('nj_client').value||'').trim();
     var job=(document.getElementById('nj_job').value||'').trim();
     var name=(document.getElementById('nj_name').value||'').trim();
-    var postcode=(document.getElementById('nj_postcode').value||'').trim();
     if(!client||!job){document.getElementById('njErr').textContent='Client code and job code are required.';return;}
     if(!name){document.getElementById('njErr').textContent='Job name is required.';return;}
-    if(!postcode){document.getElementById('njErr').textContent='Postcode is required.';return;}
-    var dts=collectJobDates('nj');
-    var dErr=validateJobDates(dts); if(dErr){document.getElementById('njErr').textContent=dErr;jobTab('nj','t');return;}
-    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim(),postcode:postcode,site_code:(document.getElementById('nj_sitecode').value||'').trim()},dts))});
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify({client_code:client,job_code:job,name:name,site_address:(document.getElementById('nj_addr').value||'').trim()})});
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
       if(rsel&&rsel.value){ try{await api('/api/job/'+encodeURIComponent(d.code)+'/pricing',{method:'PUT',body:JSON.stringify({rule_id:rsel.value})});}catch(e){} }
       var fl=document.getElementById('nj_files'); var picked=fl&&fl.files?fl.files.length:0;
-      if(picked){ document.getElementById('njErr').textContent=''; tShow('Uploading '+picked+' file(s)…'); try{ await uploadJobFiles(d.code, fl.files); }catch(e){ tShow('Job created, but a file upload failed'); } }
-      closeModal(true);tShow('Created '+d.code);loadJobs();
+      if(picked){ document.getElementById('njErr').textContent=''; tShow('Uploading '+picked+' file(s)\u2026'); try{ await uploadJobFiles(d.code, fl.files); }catch(e){ tShow('Job created, but a file upload failed'); } }
+      closeModal();tShow('Created '+d.code);loadJobs();
     }
     else document.getElementById('njErr').textContent=d.error||'Could not create job';
   }
   // ---- job file attachments ----
   async function uploadJobFiles(code,fileList){
     var arr=[];
-    for(var i=0;i<fileList.length;i++){ var f=fileList[i]; if(f.size>25*1024*1024){tShow('"'+f.name+'" is over 25MB — skipped');continue;} arr.push({name:f.name,dataUrl:await fileToDataUrl(f)}); }
+    for(var i=0;i<fileList.length;i++){ var f=fileList[i]; if(f.size>25*1024*1024){tShow('"'+f.name+'" is over 25MB \u2014 skipped');continue;} arr.push({name:f.name,dataUrl:await fileToDataUrl(f)}); }
     if(!arr.length)return;
     var d=await (await api('/api/job/'+encodeURIComponent(code)+'/files',{method:'POST',body:JSON.stringify({files:arr})})).json();
     if(!d.ok)throw new Error(d.error||'upload failed');
   }
   function fmtSize(n){ if(!n)return''; if(n<1024)return n+' B'; if(n<1048576)return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
-  async function openEditJob(code){
-    if(!code||code==='ALL')return;
-    var d={}; try{d=await (await api('/api/job/'+encodeURIComponent(code))).json();}catch(e){}
-    if(d.error){tShow(d.error);return;}
-    var q=function(v){return (v==null?'':String(v)).replace(/"/g,'&quot;');};
-    var detail='<div class="fgrid">'
-      +'<div class="field full"><label>Job</label><div class="codeprev">'+esc(code)+'</div></div>'
-      +'<div class="field full"><label>Job name *</label><input id="ej_name" value="'+q(d.name)+'"></div>'
-      +'<div class="field full"><label>Site address</label><input id="ej_addr" value="'+q(d.site_address)+'" placeholder="Full site address (optional)"></div>'
-      +'<div class="field full"><label>Postcode *</label><input id="ej_postcode" value="'+q(d.postcode)+'" placeholder="e.g. PO7 7EW"></div>'
-      +'<div class="field full"><label>Site code</label><input id="ej_sitecode" value="'+q(d.site_code)+'" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
-      +'</div>';
-    var html=jobTabBar('ej')
-      +'<div id="ejDetails">'+detail+'</div>'
-      +'<div id="ejDates" style="display:none">'+jobDatesFieldsHtml('ej',d)+'</div>'
-      +'<div class="ferr" id="ejErr" style="padding:0 22px"></div>'
-      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
-    openModal('Edit job '+code,html);
-    watchModalDirty(['ej_name','ej_addr','ej_postcode','ej_sitecode'].concat(jobDateInputIds('ej')));
-  }
-  async function saveEditJob(code){
-    var name=(document.getElementById('ej_name').value||'').trim();
-    var postcode=(document.getElementById('ej_postcode').value||'').trim();
-    if(!name){document.getElementById('ejErr').textContent='Job name is required.';return;}
-    if(!postcode){document.getElementById('ejErr').textContent='Postcode is required.';return;}
-    var dts=collectJobDates('ej');
-    var dErr=validateJobDates(dts); if(dErr){document.getElementById('ejErr').textContent=dErr;jobTab('ej','t');return;}
-    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:(document.getElementById('ej_addr').value||'').trim(),postcode:postcode,site_code:(document.getElementById('ej_sitecode').value||'').trim()},dts))});
-    var d=await r.json();
-    if(r.ok&&d.ok){closeModal(true);tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
-  }
   async function openJobFiles(code){
     if(!code||code==='ALL'){tShow('Pick a job first');return;}
-    openModal('Files · '+esc(code),'<div class="empty" style="padding:22px">Loading…</div>');
+    openModal('Files \xB7 '+esc(code),'<div class="empty" style="padding:22px">Loading\u2026</div>');
     var files; try{files=await (await api('/api/job/'+encodeURIComponent(code)+'/files')).json();}catch(e){document.getElementById('modalBody').innerHTML='<div class="empty" style="padding:22px">Could not load files.</div>';return;}
     var isImg=function(ct){return /^image\\//.test(ct||'');}; var isPdf=function(ct){return /pdf/i.test(ct||'');};
     var canMng=canCap('jobs.manage');
@@ -2812,7 +3905,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function addJobFiles(code){
     var fl=document.getElementById('jf_add'); if(!fl||!fl.files.length){tShow('Choose files first');return;}
-    tShow('Uploading '+fl.files.length+' file(s)…');
+    tShow('Uploading '+fl.files.length+' file(s)\u2026');
     try{ await uploadJobFiles(code,fl.files); tShow('Uploaded'); openJobFiles(code); }catch(e){ tShow('Upload failed'); }
   }
   async function delJobFile(code,id){
@@ -2823,20 +3916,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadItems(){
     var data=await (await api('/api/items?job='+encodeURIComponent(current))).json(); teams=data.teams; itemsData=data; applyJobsHidden();
     bulkFieldPick(); // render the bulk value control for the selected field
-    var pc=data.job.postcode?(' <span style="color:var(--muted);font-weight:500">· '+esc(data.job.postcode)+'</span>'):'';
-    document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+esc(data.job.name)+pc;
-    document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
+    document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> \u2014 '+data.job.name;
+    document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs \xB7 ':'Monday board: '+(data.job.board||'(not linked)')+' \xB7 ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
     document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
     document.getElementById('filesBtn').style.display=(current!=='ALL')?'':'none';
-    var ejb=document.getElementById('editJobBtn'); if(ejb)ejb.style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
     // header column filters: distinct flats (this job) + all statuses
     var flats=[]; (itemsData.items||[]).forEach(function(it){var f=it.flat||''; if(f&&flats.indexOf(f)<0)flats.push(f);});
     flats.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});
     if(flatFilter&&flats.indexOf(flatFilter)<0)flatFilter='';
     document.getElementById('flatFilter').innerHTML='<option value="">All flats</option>'+flats.map(function(f){return '<option value="'+av(f)+'">'+esc(f)+'</option>';}).join('');
     document.getElementById('flatFilter').value=flatFilter;
-    document.getElementById('statusFilter').innerHTML='<option value="">All statuses</option><option value="__none">— no status —</option>'+ISTATUS.filter(function(s){return s[0];}).map(function(s){return '<option value="'+s[0]+'">'+esc(s[1])+'</option>';}).join('');
+    document.getElementById('statusFilter').innerHTML='<option value="">All statuses</option><option value="__none">\u2014 no status \u2014</option>'+ISTATUS.filter(function(s){return s[0];}).map(function(s){return '<option value="'+s[0]+'">'+esc(s[1])+'</option>';}).join('');
     document.getElementById('statusFilter').value=statusFilter;
     // team filter: distinct teams present on this job's items (plus "no team")
     var tids=[], hasNoTeam=false;
@@ -2845,7 +3936,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(teamFilter&&teamFilter!=='__none'&&tids.indexOf(teamFilter)<0)teamFilter='';
     if(teamFilter==='__none'&&!hasNoTeam)teamFilter='';
     document.getElementById('teamFilter').innerHTML='<option value="">All teams</option>'
-      +(hasNoTeam?'<option value="__none">— no team —</option>':'')
+      +(hasNoTeam?'<option value="__none">\u2014 no team \u2014</option>':'')
       +tids.map(function(id){return '<option value="'+av(id)+'">'+esc(teamName(id))+'</option>';}).join('');
     document.getElementById('teamFilter').value=teamFilter;
     // block / elevation / floor filters: distinct values on this job's items (+ "none")
@@ -2877,7 +3968,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(cur&&cur!=='__none'&&vals.indexOf(cur)<0){ setFn(''); cur=''; }
     if(cur==='__none'&&!hasNone){ setFn(''); cur=''; }
     var sel=document.getElementById(selId); if(!sel)return;
-    sel.innerHTML='<option value="">'+allLabel+'</option>'+(hasNone?'<option value="__none">— none —</option>':'')
+    sel.innerHTML='<option value="">'+allLabel+'</option>'+(hasNone?'<option value="__none">\u2014 none \u2014</option>':'')
       +vals.map(function(v){return '<option value="'+av(v)+'">'+esc(v)+'</option>';}).join('');
     sel.value=cur;
   }
@@ -2890,7 +3981,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       case 'dirty':return !!r.dirty;
       case 'open_snags':return r.kind==='snag' && !INSTALLED_SET[r.install_status];
       case 'snags':return r.kind==='snag';
-      case 'unfinished':return !!r.incomplete;
       default:return true;
     }
   }
@@ -2921,34 +4011,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var unsyncedN=all.filter(function(x){return !x.synced;}).length;
     document.getElementById('itemCount').textContent=
       rows.length+(itemFilter==='all'?'':' of '+all.length)+' item'+(rows.length===1?'':'s')
-      +(dirtyN?('  ·  '+dirtyN+' changed'):'')+(unsyncedN?('  ·  '+unsyncedN+' not synced'):'');
+      +(dirtyN?('  \xB7  '+dirtyN+' changed'):'')+(unsyncedN?('  \xB7  '+unsyncedN+' not synced'):'');
     document.getElementById('bulkDelBtn').style.display=canCap('jobs.manage')?'':'none';
     var tb=document.getElementById('rows');tb.innerHTML='';
     rows.forEach(function(r){
       var tr=document.createElement('tr');
-      var curStatus=r.install_status?(ISTATUS_LABEL[r.install_status]||r.install_status):'—';
+      var curStatus=r.install_status?(ISTATUS_LABEL[r.install_status]||r.install_status):'\u2014';
       var statusSel=(canFit||canEdit)
         ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'install_status\\',this.value)">'+ISTATUS.map(function(s){return opt(s[0],s[1],r.install_status||'')}).join('')+'</select>'
         :'<span class="ro">'+curStatus+'</span>';
       var teamSel=canEdit
-        ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','—',r.team_id||'')+teamOptionList(r.team_id||'')+'</select>'
+        ?'<select class="sel" onchange="save(\\''+r.id+'\\',\\'team_id\\',this.value)">'+opt('','\u2014',r.team_id||'')+teamOptionList(r.team_id||'')+'</select>'
         :'<span class="ro">'+teamName(r.team_id)+'</span>';
       var rateVal=r.rate_override_pennies!=null?(r.rate_override_pennies/100):'';
       var rateInput=canEdit
-        ?'<input class="rate" type="number" placeholder="'+r.effective_rate.replace('£','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">'
+        ?'<input class="rate" type="number" placeholder="'+r.effective_rate.replace('\xA3','')+'" value="'+rateVal+'" onchange="saveRate(\\''+r.id+'\\',this.value)">'
         :'<span class="ro">'+r.effective_rate+'</span>';
       var monday=r.synced
-        ?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open ↗</a>'+(canSync?' <button class="resync'+(r.dirty?' dirty':'')+'" onclick="syncItem(\\''+r.id+'\\')">Re-sync</button>'+(r.dirty?' <span class="chgtag">changed</span>':''):'')
+        ?'<a class="mlink" target="_blank" href="'+r.monday_url+'">open \u2197</a>'+(canSync?' <button class="resync'+(r.dirty?' dirty':'')+'" onclick="syncItem(\\''+r.id+'\\')">Re-sync</button>'+(r.dirty?' <span class="chgtag">changed</span>':''):'')
         :(canSync?'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>':'<span class="ro">not synced</span>');
       var snagTag=r.kind==='snag'?'<span class="snagtag">SNAG</span> ':'';
-      var unfinTag=r.incomplete?'<span class="unfintag" title="Imported with required data missing — open to complete it">UNFINISHED</span> ':'';
       // Flat & Room are editable until the item is synced to Monday (editing rebuilds the code).
       var editable=canEdit&&!r.synced;
-      var flatCell=editable?'<input class="cedit" value="'+(r.flat||'')+'" placeholder="—" onchange="saveCode(\\''+r.id+'\\',\\'flat\\',this.value)">':(r.flat||'—');
+      var flatCell=editable?'<input class="cedit" value="'+(r.flat||'')+'" placeholder="\u2014" onchange="saveCode(\\''+r.id+'\\',\\'flat\\',this.value)">':(r.flat||'\u2014');
       var roomCell=editable?'<select class="sel" style="min-width:150px" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">'+roomOptions(r.room||'')+'</select>':roomLabel(r.room);
       tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
-        '<td>'+snagTag+unfinTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td>'+
-        '<td>'+(r.block||'—')+'</td><td>'+(r.elevation||'—')+'</td><td>'+flatCell+'</td><td>'+(r.floor||'—')+'</td><td>'+roomCell+'</td><td>'+(r.item||'—')+'</td>'+
+        '<td>'+snagTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td>'+
+        '<td>'+(r.block||'\u2014')+'</td><td>'+(r.elevation||'\u2014')+'</td><td>'+flatCell+'</td><td>'+(r.floor||'\u2014')+'</td><td>'+roomCell+'</td><td>'+(r.item||'\u2014')+'</td>'+
         '<td><span class="pill '+r.stage+'">'+(STAGE[r.stage]||r.stage)+'</span></td>'+
         '<td>'+rateInput+'</td><td>'+statusSel+'</td><td>'+teamSel+'</td><td>'+monday+'</td>';
       tb.appendChild(tr);
@@ -2977,7 +4066,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(d.ok)tShow('Code updated'); else tShow(d.error||'Update failed');
     loadItems(); // refresh full code + Floor column
   }
-  async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' · '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'');tShow(d.photoError?('Synced · photo issue: '+d.photoError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
+  async function syncItem(id){tShow('Syncing\u2026');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' \xB7 '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'');tShow(d.photoError?('Synced \xB7 photo issue: '+d.photoError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
 
   // ---- bulk selection / multi-line processing ----
   function selectedIds(){return Object.keys(sel);}
@@ -2993,7 +4082,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function clearSel(){sel={};document.querySelectorAll('.rowcb').forEach(function(x){x.checked=false;});document.getElementById('selAll').checked=false;renderBar();}
   async function bulkSync(){
     var ids=selectedIds();if(!ids.length)return;
-    tShow('Syncing '+ids.length+' item(s)…');
+    tShow('Syncing '+ids.length+' item(s)\u2026');
     try{var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:'sync'})})).json();
       if(d.ok)tShow(d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));else tShow(d.error||'Bulk sync failed');
     }catch(e){tShow('Bulk sync failed');}
@@ -3002,8 +4091,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function bulkFieldPick(){
     var sel=document.getElementById('bulkField'); if(!sel)return;
     var f=sel.value; var w=document.getElementById('bulkValWrap');
-    if(f==='team') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— team —</option>'+teamOptionList('')+'</select>';
-    else if(f==='status') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— status —</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('')+'</select>';
+    if(f==='team') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">\u2014 team \u2014</option>'+teamOptionList('')+'</select>';
+    else if(f==='status') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">\u2014 status \u2014</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('')+'</select>';
     else w.innerHTML='<input id="bulkVal" class="bulk" placeholder="'+(f.charAt(0).toUpperCase()+f.slice(1))+' value" style="width:130px;text-transform:uppercase">';
   }
   async function bulkEditApply(){
@@ -3012,12 +4101,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var ids=selectedIds(); if(!ids.length){tShow('Select some items first');return;}
     var action=(f==='status')?'status':f;
     var btn=document.getElementById('bulkApplyBtn'); var label=btn?btn.textContent:'';
-    if(btn){btn.disabled=true;btn.textContent='Applying…';}
-    tShow('Applying to '+ids.length+' item(s)…');
+    if(btn){btn.disabled=true;btn.textContent='Applying\u2026';}
+    tShow('Applying to '+ids.length+' item(s)\u2026');
     try{
       var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
       if(vEl&&vEl.tagName==='INPUT')vEl.value='';
-      if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
+      if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' \xB7 '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
     }catch(e){tShow('Update failed');}
     finally{ if(btn){btn.disabled=false;btn.textContent=label||'Apply';} }
   }
@@ -3053,9 +4142,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
     document.getElementById('logsView').style.display=name==='logs'?'block':'none';
-    document.getElementById('leadsView').style.display=name==='leads'?'block':'none';
-    document.getElementById('customersView').style.display=name==='customers'?'block':'none';
-    document.getElementById('billingView').style.display=name==='billing'?'block':'none';
     document.getElementById('tabDash').classList.toggle('on',name==='dashboard');
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
@@ -3068,12 +4154,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
     document.getElementById('tabLogs').classList.toggle('on',name==='logs');
-    var _tl=document.getElementById('tabLeads'); if(_tl)_tl.classList.toggle('on',name==='leads');
-    var _tc=document.getElementById('tabCustomers'); if(_tc)_tc.classList.toggle('on',name==='customers');
-    var _tbl=document.getElementById('tabBilling'); if(_tbl)_tbl.classList.toggle('on',name==='billing');
     if(name==='items')loadItems(); // always refresh (e.g. after saving in Mapping)
     if(name==='dashboard')loadDashboard();
-    if(name==='mapping'){loadMapping();loadImport();}
+    if(name==='mapping')loadMapping();
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
     if(name==='plans')loadPlansTab();
@@ -3083,63 +4166,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
     if(name==='logs')loadLogs();
-    if(name==='leads')loadLeads();
-    if(name==='customers')loadCustomers();
-    if(name==='billing')loadBilling();
-    setActiveGroup(name); closeGrps();
-  }
-  // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
-  function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
-  function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
-  function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
-  function setActiveGroup(tab){var gid=TAB2GROUP[tab];Object.keys(NAV_GROUPS).forEach(function(g){var b=document.getElementById('grp_'+g);if(b)b.classList.toggle('on',g===gid);});}
-  function rebuildNav(){Object.keys(NAV_GROUPS).forEach(function(gid){var b=document.getElementById('grp_'+gid);if(b)b.style.display=grpVisible(gid)?'':'none';});setActiveGroup(sessionStorage.getItem('ace_tab')||'dashboard');}
-  document.addEventListener('click',function(e){var t=e.target;var inGrp=t&&t.closest?t.closest('.grp'):null;if(!inGrp)closeGrps();});
-  async function loadLeads(){
-    loadDemoLeadsEmail();
-    var tb=document.getElementById('leadsRows'); tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
-    var rows; try{rows=await (await api('/api/leads')).json();}catch(e){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">Could not load leads.</td></tr>';return;}
-    if(!rows||!rows.length){tb.innerHTML='<tr><td colspan="8" style="padding:16px;color:var(--muted)">No leads yet.</td></tr>';return;}
-    tb.innerHTML=rows.map(function(r){return '<tr><td style="white-space:nowrap">'+esc(new Date(r.created_at).toLocaleString('en-GB'))+'</td><td>'+esc(r.kind||'')+'</td><td>'+esc(r.email||'')+'</td><td>'+esc(r.name||'')+'</td><td>'+esc(r.company||'')+'</td><td>'+esc(r.phone||'')+'</td><td>'+esc(r.message||'')+'</td><td>'+esc(r.app_version||'')+'</td></tr>';}).join('');
-  }
-  async function loadBilling(){
-    var mo=document.getElementById('billMonth');
-    if(mo&&!mo.value){var d=new Date();mo.value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
-    var month=mo?mo.value:'';
-    var tb=document.getElementById('billRows'); tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
-    var d; try{d=await (await api('/api/billing?month='+encodeURIComponent(month))).json();}catch(e){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Could not load.</td></tr>';return;}
-    if(d.error){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">'+esc(d.error)+'</td></tr>';return;}
-    var sup=!!d.superadmin;
-    document.getElementById('billingSub').textContent=sup?'All tenants — items created in the month × each tenant\\'s per-item rate. Edit a rate inline.':'Your tenant — items created in the month × your per-item rate.';
-    var rows=(d.rows||[]).map(function(r){
-      var rateCell=sup?('<input class="rate" type="number" min="0" step="0.01" value="'+(r.rate_pennies/100)+'" onchange="saveTenantRate(\\''+r.tenant_id+'\\',this.value)">'):('£'+(r.rate_pennies/100).toFixed(2));
-      return '<tr><td>'+esc(r.name||'')+'</td><td>'+rateCell+'</td><td>'+r.items+'</td><td><b>'+gbp(r.amount_pennies)+'</b></td></tr>';
-    }).join('');
-    var tot=d.totals||{items:0,amount_pennies:0};
-    rows+='<tr style="border-top:2px solid var(--line)"><td><b>Total</b></td><td></td><td><b>'+tot.items+'</b></td><td><b>'+gbp(tot.amount_pennies)+'</b></td></tr>';
-    tb.innerHTML=rows;
-  }
-  async function saveTenantRate(id,val){
-    var pennies=Math.round(parseFloat(val)*100); if(isNaN(pennies)||pennies<0)pennies=0;
-    var msg=document.getElementById('billMsg'); if(msg)msg.textContent='Saving…';
-    var r=await api('/api/tenants/'+id+'/rate',{method:'PUT',body:JSON.stringify({rate_pennies:pennies})});
-    var d=await r.json();
-    if(r.ok&&d.ok){ if(msg){msg.textContent='Saved';setTimeout(function(){msg.textContent='';},1200);} loadBilling(); }
-    else if(msg)msg.textContent=(d.error||'Save failed');
-  }
-  async function loadCustomers(){
-    var tb=document.getElementById('customersRows'); tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
-    var rows; try{rows=await (await api('/api/customers')).json();}catch(e){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">Could not load customers.</td></tr>';return;}
-    if(!rows||!rows.length){tb.innerHTML='<tr><td colspan="4" style="padding:16px;color:var(--muted)">No customer accounts yet — add one under Admin → Users (role: customer).</td></tr>';return;}
-    tb.innerHTML=rows.map(function(r){return '<tr><td>'+esc(r.name||'')+'</td><td>'+esc(r.email||'')+'</td><td>'+esc(r.client_code||'—')+'</td><td>'+(r.active?'Active':'Inactive')+'</td></tr>';}).join('');
   }
   var ROLE_MATRIX=__ROLE_MATRIX_JSON__;
   function canCap(cap){if(myRole==='admin')return true;return (ROLE_MATRIX.matrix[myRole]||[]).indexOf(cap)>=0;}
   var LOGS=[];
   async function loadLogs(){
-    var tb=document.getElementById('logRows'); tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">Loading…</td></tr>';
+    var tb=document.getElementById('logRows'); tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">Loading\u2026</td></tr>';
     try{ LOGS=await (await api('/api/logs')).json(); }catch(e){ tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">Could not load logs.</td></tr>'; return; }
     renderLogs();
   }
@@ -3154,7 +4186,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!rows.length){ tb.innerHTML='<tr><td colspan="5" style="padding:16px;color:var(--muted)">No activity'+(q?' matches your search':' yet')+'.</td></tr>'; return; }
     tb.innerHTML=rows.map(function(l){
       return '<tr><td style="white-space:nowrap;color:var(--muted)">'+esc(fmtWhen(l.created_at))+'</td>'
-        +'<td>'+esc(l.actor_name||'—')+'</td>'
+        +'<td>'+esc(l.actor_name||'\u2014')+'</td>'
         +'<td><span class="count">'+esc(l.actor_role||'')+'</span></td>'
         +'<td><span class="mono" style="font-size:11px">'+esc(l.action||'')+'</span></td>'
         +'<td>'+esc(l.summary||'')+'</td></tr>';
@@ -3167,7 +4199,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var body=m.caps.map(function(c){
       var cells=m.roles.map(function(r){
         var ok=(r==='admin')||(m.matrix[r]||[]).indexOf(c.key)>=0;
-        return '<td style="text-align:center;font-size:15px">'+(ok?'<span style="color:var(--green,#16a34a)">✓</span>':'<span style="color:var(--muted);opacity:.4">–</span>')+'</td>';
+        return '<td style="text-align:center;font-size:15px">'+(ok?'<span style="color:var(--green,#16a34a)">\u2713</span>':'<span style="color:var(--muted);opacity:.4">\u2013</span>')+'</td>';
       }).join('');
       return '<tr><td style="text-align:left"><b>'+esc(c.label)+'</b><div style="color:var(--muted);font-size:12px">'+esc(c.desc)+'</div></td>'+cells+'</tr>';
     }).join('');
@@ -3194,9 +4226,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var el=document.createElement('div');el.className='jobcard clickable';
       el.setAttribute('onclick',"openItemsFiltered('"+j.code+"','all')");
       el.innerHTML='<div class="jobtop"><div><b class="mono">'+esc(j.code)+'</b> <span style="color:var(--muted)">'+esc(j.name)+'</span></div>'
-        +'<div class="jobmeta">'+(j.board?'<span class="count green">board linked</span>':'<span class="count amber">no board</span>')+' · '+j.items+' items · '+j.snags+' snags · labour '+esc(j.labour)+'</div></div>'
+        +'<div class="jobmeta">'+(j.board?'<span class="count green">board linked</span>':'<span class="count amber">no board</span>')+' \xB7 '+j.items+' items \xB7 '+j.snags+' snags \xB7 labour '+esc(j.labour)+'</div></div>'
         +bar('Synced',pct(j.synced,j.items),'')+bar('Installed',pct(j.installed,j.items),'green')
-        +(j.openSnags?'<div class="opensnag" onclick="event.stopPropagation();openItemsFiltered(\\''+j.code+'\\',\\'open_snags\\')">⚠ '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+' →</div>':'');
+        +(j.openSnags?'<div class="opensnag" onclick="event.stopPropagation();openItemsFiltered(\\''+j.code+'\\',\\'open_snags\\')">\u26A0 '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+' \u2192</div>':'');
       jc.appendChild(el);
     });
   }
@@ -3215,16 +4247,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabDash',canCap('dashboard.view'));
     show('tabTeams',canCap('teams.manage'));
     show('tabSync',canCap('monday.sync'));
-    show('tabPlans',canCap('plans.view'));
-    show('tabCal',canCap('calendar.view'));
+    show('tabPlans',canCap('dashboard.view'));
+    show('tabCal',canCap('dashboard.view'));
     show('tabBudget',canCap('finance.view'));
     show('tabTests',canCap('dashboard.view'));
-    show('tabLeads',canCap('jobs.manage'));
-    show('tabCustomers',canCap('jobs.manage'));
-    show('tabBilling',myRole==='admin');
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
-    rebuildNav();
   }
   async function loadTeams(){
     var data=await (await api('/api/teams')).json(); canManage=data.canManage;
@@ -3236,7 +4264,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var tr=document.createElement('tr');
       var name=canManage?'<input class="tname" value="'+(t.name||'').replace(/"/g,'&quot;')+'" onchange="saveTeamName(\\''+t.id+'\\',this.value)">':'<b>'+(t.name||'')+'</b>';
       var rate=canManage?'<input class="trate" type="number" min="0" step="1" value="'+(t.default_rate_pennies/100)+'" onchange="saveTeamRate(\\''+t.id+'\\',this.value)">':t.default_rate;
-      var drate=canManage?'<input class="trate" type="number" min="0" step="1" value="'+(((t.door_rate_pennies!=null?t.door_rate_pennies:t.default_rate_pennies))/100)+'" onchange="saveTeamDoorRate(\\''+t.id+'\\',this.value)">':(t.door_rate||'—');
+      var drate=canManage?'<input class="trate" type="number" min="0" step="1" value="'+(((t.door_rate_pennies!=null?t.door_rate_pennies:t.default_rate_pennies))/100)+'" onchange="saveTeamDoorRate(\\''+t.id+'\\',this.value)">':(t.door_rate||'\u2014');
       var retired=(t.active===false);
       var actions='';
       if(canManage){
@@ -3287,7 +4315,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var bhost=(jb.slug?jb.slug+'.monday.com':'monday.com');
       var board=manage
         ? '<input class="board" placeholder="board id or URL" value="'+(jb.board||'')+'" onchange="saveBoard(\\''+jb.code+'\\',this.value)">'
-        : (jb.board?'<a class="mlink" target="_blank" href="https://'+bhost+'/boards/'+jb.board+'">'+jb.board+' ↗</a>':'<span style="color:var(--muted)">not linked</span>');
+        : (jb.board?'<a class="mlink" target="_blank" href="https://'+bhost+'/boards/'+jb.board+'">'+jb.board+' \u2197</a>':'<span style="color:var(--muted)">not linked</span>');
       var toSync=jb.unsynced>0?'<span class="count amber">'+jb.unsynced+'</span>':'<span class="count">0</span>';
       var canSync=jb.board&&jb.total>0;
       var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.code+'\\',this)">Sync all</button>';
@@ -3301,11 +4329,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function saveBoard(code,value){var d=await (await api('/api/job/'+encodeURIComponent(code)+'/board',{method:'PUT',body:JSON.stringify({board:value})})).json();
     if(d.ok){
       var n=(d.columnsCreated||[]).length;
-      tShow(d.board?('Board linked'+(n?(' · '+n+' column'+(n===1?'':'s')+' created'):' · columns OK')):'Board unlinked');
+      tShow(d.board?('Board linked'+(n?(' \xB7 '+n+' column'+(n===1?'':'s')+' created'):' \xB7 columns OK')):'Board unlinked');
       loadSync();
     } else tShow(d.error||'Failed');}
   async function syncJob(code,btn){
-    btn.disabled=true;var old=btn.textContent;btn.textContent='Syncing…';tShow('Syncing '+code+'…');
+    btn.disabled=true;var old=btn.textContent;btn.textContent='Syncing\u2026';tShow('Syncing '+code+'\u2026');
     try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/sync',{method:'POST'})).json();
       if(d.ok){tShow(code+': '+d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));loadSync();}
       else tShow(d.error||'Sync failed');
@@ -3313,12 +4341,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     btn.textContent=old;btn.disabled=false;
   }
   async function pullFitters(code,btn){
-    btn.disabled=true;var old=btn.textContent;btn.textContent='Pulling…';tShow('Reading fitters from Monday…');
+    btn.disabled=true;var old=btn.textContent;btn.textContent='Pulling\u2026';tShow('Reading fitters from Monday\u2026');
     try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pull-fitters',{method:'POST'})).json();
       if(d.ok){var msg=d.assigned+' assigned'+(d.cleared?', '+d.cleared+' cleared':'');
-        if(d.datesSet||d.datesCleared)msg+=' · '+d.datesSet+' date'+(d.datesSet===1?'':'s')+' set'+(d.datesCleared?', '+d.datesCleared+' cleared':'')+(d.dateColumn?' (from "'+d.dateColumn+'")':'');
-        else if(!d.dateColumn)msg+=' · no date column found';
-        if(d.unmatched&&d.unmatched.length)msg+=' · unknown team'+(d.unmatched.length>1?'s':'')+': '+d.unmatched.join(', ');
+        if(d.datesSet||d.datesCleared)msg+=' \xB7 '+d.datesSet+' date'+(d.datesSet===1?'':'s')+' set'+(d.datesCleared?', '+d.datesCleared+' cleared':'')+(d.dateColumn?' (from "'+d.dateColumn+'")':'');
+        else if(!d.dateColumn)msg+=' \xB7 no date column found';
+        if(d.unmatched&&d.unmatched.length)msg+=' \xB7 unknown team'+(d.unmatched.length>1?'s':'')+': '+d.unmatched.join(', ');
         tShow(msg);loadItems();}
       else tShow(d.error||'Pull failed');
     }catch(e){tShow('Pull failed');}
@@ -3331,7 +4359,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadPlansTab(){
     var sel=document.getElementById('planJob');
     var jobs=await (await api('/api/jobs')).json();
-    sel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    sel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' \u2014 '+esc(j.name)+'</option>';}).join('');
     if(current&&jobs.some(function(j){return j.code===current;}))sel.value=current;
     await loadPlans();
   }
@@ -3346,9 +4374,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else if(!d.plans.some(function(pl){return pl.id===curPlanId;}))curPlanId=d.plans[0].id;
     ps.value=curPlanId||'';
     document.getElementById('planUploadBtn').style.display=d.canManage?'':'none';
-    document.getElementById('planFromJobBtn').style.display=d.canManage?'':'none';
-    var seeRpt=canCap('dashboard.view');
-    ['rptSurveyBtn','rptInstallBtn','rptCustInstallBtn'].forEach(function(id){var b=document.getElementById(id);if(b)b.style.display=seeRpt?'':'none';});
     var mw=document.getElementById('multiPlanWrap');mw.style.display=d.canManage?'flex':'none';
     document.getElementById('multiPlanChk').checked=!!d.multiPlan;
     renderPlan(); renderPlanItems();
@@ -3356,7 +4381,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function downloadReport(type){
     var code=document.getElementById('planJob').value; if(!code){tShow('Pick a job first');return;}
     var btnId=type==='install'?'rptInstallBtn':(type==='customer_install'?'rptCustInstallBtn':'rptSurveyBtn');
-    var btn=document.getElementById(btnId); var was=btn.textContent; btn.textContent='Building…'; btn.disabled=true;
+    var btn=document.getElementById(btnId); var was=btn.textContent; btn.textContent='Building\u2026'; btn.disabled=true;
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(code)+'/report.pdf?type='+type,{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'Report failed');return;}
@@ -3406,13 +4431,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     renderPins();renderPlanItems();tShow('Pin placed');
   }
   function armItem(id){
-    if(!planData.canPin){tShow('Your role can’t place pins');return;}
+    if(!planData.canPin){tShow('Your role can\u2019t place pins');return;}
     if(!curPlanId){tShow('Upload a plan first');return;}
     var it=planData.items.find(function(i){return i.id===id;});
-    if(it&&it.plan_id&&it.plan_id!==curPlanId&&!planData.multiPlan){tShow('Already on '+planName(it.plan_id)+' — unpin it there first');return;}
+    if(it&&it.plan_id&&it.plan_id!==curPlanId&&!planData.multiPlan){tShow('Already on '+planName(it.plan_id)+' \u2014 unpin it there first');return;}
     armedItem=(armedItem===id)?null:id;
     var arm=document.getElementById('planArm');
-    if(armedItem){var it=planData.items.find(function(i){return i.id===armedItem;});arm.style.display='block';arm.innerHTML='Click the plan to place <b>'+esc(it.item_code||it.full_code)+'</b>  ·  <a style="color:#fff;text-decoration:underline;cursor:pointer" onclick="armItem(\\''+id+'\\')">cancel</a>';}
+    if(armedItem){var it=planData.items.find(function(i){return i.id===armedItem;});arm.style.display='block';arm.innerHTML='Click the plan to place <b>'+esc(it.item_code||it.full_code)+'</b>  \xB7  <a style="color:#fff;text-decoration:underline;cursor:pointer" onclick="armItem(\\''+id+'\\')">cancel</a>';}
     else arm.style.display='none';
     renderPins();renderPlanItems();
   }
@@ -3433,7 +4458,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var action;
       if(placed) action='<span class="pact punpin" onclick="unpin(\\''+it.id+'\\',event)">unpin</span>';
       else if(elsewhere&&!planData.multiPlan) action='<span class="pact" style="color:var(--muted)">on '+esc(planName(it.plan_id))+'</span>';
-      else action='<span class="pact pplace">place ›</span>';
+      else action='<span class="pact pplace">place \u203A</span>';
       return '<div class="pitem'+(armedItem===it.id?' armed':'')+'" onclick="armItem(\\''+it.id+'\\')">'
         +'<span class="pdot" style="background:'+statusColor(it.install_status)+'"></span>'
         +'<span class="pcode">'+esc(it.full_code||it.item_code||'')+'</span>'
@@ -3441,102 +4466,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'</div>';
     }).join('')||'<div style="padding:14px;color:var(--muted);font-size:12px">No items.</div>';
   }
-  var _pdfjs=null,_jfp=[],_jfpCode='';
-  async function loadPdfjs(){
-    if(_pdfjs)return _pdfjs;
-    document.getElementById('planMsg').textContent='Loading PDF engine…';
-    _pdfjs=await import('/vendor/pdfjs/pdf.min.mjs');
-    try{_pdfjs.GlobalWorkerOptions.workerSrc='/vendor/pdfjs/pdf.worker.min.mjs';}catch(e){}
-    return _pdfjs;
-  }
-  async function pdfToPlanImages(buf){
-    var pdfjs=await loadPdfjs();
-    var doc=await pdfjs.getDocument({data:buf}).promise;
-    var out=[];
-    for(var i=1;i<=doc.numPages;i++){
-      document.getElementById('planMsg').textContent='Rendering page '+i+'/'+doc.numPages+'…';
-      var page=await doc.getPage(i);
-      var b=page.getViewport({scale:1});
-      var scale=Math.min(2.0,2000/Math.max(b.width,b.height)); if(!(scale>0.1))scale=0.1;
-      var v=page.getViewport({scale:scale});
-      var c=document.createElement('canvas'); c.width=Math.ceil(v.width); c.height=Math.ceil(v.height);
-      await page.render({canvasContext:c.getContext('2d'),viewport:v}).promise;
-      out.push(c.toDataURL('image/jpeg',0.85));
-    }
-    try{await doc.destroy();}catch(e){}
-    return out;
-  }
-  async function uploadPagesAsPlans(code,base,images){
-    var n=images.length,lastId=null;
-    for(var i=0;i<n;i++){
-      document.getElementById('planMsg').textContent='Uploading page '+(i+1)+'/'+n+'…';
-      var nm=n>1?(base+' ('+(i+1)+'/'+n+')'):base;
-      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:nm,image:images[i]})})).json();
-      if(!d.ok){document.getElementById('planMsg').textContent='';tShow(d.error||'Upload failed');return null;}
-      lastId=d.id;
-    }
-    document.getElementById('planMsg').textContent='';
-    return lastId;
-  }
-  function isPdfFile(name,type){return (type==='application/pdf')||/\\.pdf$/i.test(name||'');}
   async function uploadPlan(input){
     var f=input.files&&input.files[0]; input.value=''; if(!f)return;
     var code=document.getElementById('planJob').value;
     if(!code){tShow('Pick a job first');return;}
-    var pdf=isPdfFile(f.name,f.type);
-    if(!confirm('Add this plan to job '+code+'?\\n\\n(Plans belong to the job selected above — switch the job first if this is wrong.)'))return;
-    var base=prompt('Plan name (e.g. Ground floor, Elevation E1):', f.name.replace(/\\.[^.]+$/,''))||'Plan';
-    if(pdf){
-      try{
-        var buf=await f.arrayBuffer();
-        var imgs=await pdfToPlanImages(buf);
-        if(!imgs.length){document.getElementById('planMsg').textContent='';tShow('No pages found in that PDF');return;}
-        var id=await uploadPagesAsPlans(code,base,imgs);
-        if(id){curPlanId=id;await loadPlans();tShow(imgs.length>1?(imgs.length+' pages added as plans'):'Plan uploaded');}
-      }catch(e){document.getElementById('planMsg').textContent='';tShow('Could not read that PDF');}
-      return;
-    }
+    if(!confirm('Add this plan to job '+code+'?\\n\\n(Plans belong to the job selected above \u2014 switch the job first if this is wrong.)'))return;
+    var name=prompt('Plan name (e.g. Ground floor, Elevation E1):', f.name.replace(/\\.[^.]+$/,''))||'Plan';
     var reader=new FileReader();
     reader.onload=async function(){
-      document.getElementById('planMsg').textContent='Uploading…';
-      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:base,image:reader.result})})).json();
+      document.getElementById('planMsg').textContent='Uploading\u2026';
+      var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:name,image:reader.result})})).json();
       document.getElementById('planMsg').textContent='';
       if(d.ok){curPlanId=d.id;await loadPlans();tShow('Plan uploaded');}else tShow(d.error||'Upload failed');
     };
     reader.readAsDataURL(f);
-  }
-  async function addPlanFromJob(){
-    var code=document.getElementById('planJob').value;
-    if(!code){tShow('Pick a job first');return;}
-    var files=[]; try{files=await (await api('/api/job/'+encodeURIComponent(code)+'/files')).json();}catch(e){}
-    _jfp=(Array.isArray(files)?files:[]).filter(function(f){return /^image\\//.test(f.content_type||'')||isPdfFile(f.name,f.content_type);});
-    _jfpCode=code;
-    if(!_jfp.length){tShow('No image or PDF files attached to '+code+' — attach one on the job first');return;}
-    var html='<div class="sub" style="margin:0 0 10px">Pick an image or PDF attached to <b>'+esc(code)+'</b> to use as a plan. A multi-page PDF becomes one plan per page.</div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:60vh;overflow:auto">'
-      +_jfp.map(function(f,idx){var pdf=isPdfFile(f.name,f.content_type);var thumb=pdf?'<div style="width:100%;height:80px;display:flex;align-items:center;justify-content:center;background:#f6f5fb;border-radius:6px;font-size:12px;font-weight:700;color:var(--magenta)">PDF</div>':'<img src="'+(f.url||'')+'" style="width:100%;height:80px;object-fit:contain;background:#fff">';return '<div style="border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;text-align:center" onclick="usePlanFromJob('+idx+')">'+thumb+'<div style="font-size:11px;margin-top:4px;word-break:break-all">'+esc(f.name)+'</div></div>';}).join('')
-      +'</div><div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button></div>';
-    openModal('Use a job file as a plan',html);
-  }
-  async function usePlanFromJob(idx){
-    var f=_jfp[idx]; if(!f)return; var code=_jfpCode;
-    var pdf=isPdfFile(f.name,f.content_type);
-    var base=(prompt('Plan name (e.g. Ground floor, Elevation E1):', (f.name||'Plan').replace(/\\.[^.]+$/,''))||'Plan').trim()||'Plan';
-    if(pdf){
-      closeModal();
-      try{
-        document.getElementById('planMsg').textContent='Fetching PDF…';
-        var buf=await (await fetch(f.url)).arrayBuffer();
-        var imgs=await pdfToPlanImages(buf);
-        if(!imgs.length){document.getElementById('planMsg').textContent='';tShow('No pages found in that PDF');return;}
-        var id=await uploadPagesAsPlans(code,base,imgs);
-        if(id){curPlanId=id;await loadPlans();tShow(imgs.length>1?(imgs.length+' pages added as plans'):'Plan added');}
-      }catch(e){document.getElementById('planMsg').textContent='';tShow('Could not read that PDF');}
-      return;
-    }
-    tShow('Adding plan…');
-    var d=await (await api('/api/job/'+encodeURIComponent(code)+'/plans',{method:'POST',body:JSON.stringify({name:base,job_file_id:f.id})})).json();
-    if(d.ok){curPlanId=d.id;closeModal();await loadPlans();tShow('Plan added');}else tShow(d.error||'Failed');
   }
   async function deletePlan(){
     if(!curPlanId||!confirm('Delete this plan? Item pins on it will be cleared.'))return;
@@ -3546,18 +4489,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   // ---- user management (admin only) ----
   var myId='';
-  async function loadDemoLeadsEmail(){
-    try{ var d=await (await api('/api/config/demo-leads-email')).json(); var el=document.getElementById('demoLeadsEmail'); if(el)el.value=d.email||''; }catch(e){}
-  }
-  async function saveDemoLeadsEmail(){
-    var el=document.getElementById('demoLeadsEmail'); var msg=document.getElementById('demoLeadsMsg');
-    var email=(el.value||'').trim();
-    if(msg)msg.textContent='Saving…';
-    var r=await api('/api/config/demo-leads-email',{method:'PUT',body:JSON.stringify({email:email})});
-    var d=await r.json();
-    if(r.ok&&d.ok){ if(msg){msg.textContent='Saved';setTimeout(function(){msg.textContent='';},1500);} }
-    else if(msg)msg.textContent=(d.error||'Save failed');
-  }
   async function loadUsers(){
     var data=await (await api('/api/users')).json();
     var tb=document.getElementById('userRows');
@@ -3574,11 +4505,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var nameInput='<input class="tname" value="'+attr(u.name)+'" onchange="saveUserField(\\''+u.id+'\\',\\'name\\',this.value)">';
       var emailInput='<input class="tname" style="width:205px" value="'+attr(u.email)+'" onchange="saveUserField(\\''+u.id+'\\',\\'email\\',this.value)">';
       var roleSel='<select class="sel" '+(self?'disabled':'')+' onchange="saveUserField(\\''+u.id+'\\',\\'role\\',this.value)">'+USER_ROLES.map(function(r){return opt(r,roleLabel(r),u.role)}).join('')+'</select>';
-      var teamOpts='<option value="">— none —</option>'+allTeams.filter(function(t){return t.active!==false||t.id===u.team_id;}).map(function(t){return '<option value="'+t.id+'"'+(u.team_id===t.id?' selected':'')+'>'+esc(t.name)+(t.active===false?' (retired)':'')+'</option>';}).join('');
+      var teamOpts='<option value="">\u2014 none \u2014</option>'+allTeams.filter(function(t){return t.active!==false||t.id===u.team_id;}).map(function(t){return '<option value="'+t.id+'"'+(u.team_id===t.id?' selected':'')+'>'+esc(t.name)+(t.active===false?' (retired)':'')+'</option>';}).join('');
       var teamSel='<select class="sel" onchange="saveUserField(\\''+u.id+'\\',\\'team_id\\',this.value)">'+teamOpts+'</select>';
       var clientCell=(u.role==='customer')
         ? '<input class="tname" style="width:80px;text-transform:uppercase" placeholder="e.g. AXS" value="'+attr(u.client_code||'')+'" onchange="saveUserField(\\''+u.id+'\\',\\'client_code\\',this.value)">'
-        : '<span style="color:var(--muted)">—</span>';
+        : '<span style="color:var(--muted)">\u2014</span>';
       var login=u.has_login?'<span class="count green">yes</span>':'<span class="count">no</span>';
       var status=u.active?'<span class="count green">active</span>':'<span class="count amber">inactive</span>';
       var actions;
@@ -3607,7 +4538,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function resetPw(id){if(!confirm('Reset this user\\'s password?'))return;var d=await (await api('/api/users/'+id+'/reset',{method:'POST'})).json();if(d.ok)showCreds(d.email,d.password,true);else tShow(d.error||'Failed');}
   function showCreds(email,password,isReset){
     var html='<div style="padding:20px 22px">'
-      +'<p style="font-size:13px;color:var(--muted);margin-bottom:14px">'+(isReset?'Password reset. ':'Login created. ')+'Share these securely — the password is shown only once.</p>'
+      +'<p style="font-size:13px;color:var(--muted);margin-bottom:14px">'+(isReset?'Password reset. ':'Login created. ')+'Share these securely \u2014 the password is shown only once.</p>'
       +'<div class="drow"><dt>Email</dt><dd class="mono">'+esc(email)+'</dd></div>'
       +'<div class="drow"><dt>Password</dt><dd class="mono"><b>'+esc(password)+'</b></dd></div></div>'
       +'<div class="foot"><button class="cancel" onclick="copyCreds(\\''+esc(email)+'\\',\\''+esc(password)+'\\')">Copy</button><button class="save" onclick="closeModal()">Done</button></div>';
@@ -3617,31 +4548,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   // ---- modal, create item, item detail ----
   function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-  var modalDirty=null; // function -> bool, set by modals that need an unsaved-changes guard
-  function openModal(title,html){modalDirty=null;document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
-  function closeModal(force){
-    if(force!==true && typeof modalDirty==='function'){ try{ if(modalDirty() && !confirm('You have unsaved changes on this job. Discard them?'))return; }catch(e){} }
-    modalDirty=null; document.getElementById('modal').style.display='none';
-  }
-  function jobDateInputIds(p){var a=[];JOB_DATE_PHASES.forEach(function(ph){a.push(p+'_'+ph.key+'_start');a.push(p+'_'+ph.key+'_end');});return a;}
-  function watchModalDirty(ids){
-    var snap={}; ids.forEach(function(id){var e=document.getElementById(id); snap[id]=e?(e.value||''):'';});
-    modalDirty=function(){ return ids.some(function(id){var e=document.getElementById(id); return e && (e.value||'')!==snap[id]; }); };
-  }
+  function openModal(title,html){document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
+  function closeModal(){document.getElementById('modal').style.display='none';}
   function field(id,label,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" placeholder="'+(ph||'')+'"></div>';}
   function openCreate(){
-    var topts='<option value="">— no team —</option>'+teamOptionList('');
+    var topts='<option value="">\u2014 no team \u2014</option>'+teamOptionList('');
     var html='<div class="fgrid">'
       +'<div class="codeprev" id="codePrev">'+current+'</div>'
       +'<div class="groupt">LOCATION</div>'
-      +field('f_block','Block','e.g. 1 → B1')+field('f_elev','Elevation','e.g. 1 → E1')
-      +field('f_flat','Flat / plot','e.g. 21 → F21')+field('f_floor','Floor','e.g. 1 → F1')
+      +field('f_block','Block','e.g. 1 \u2192 B1')+field('f_elev','Elevation','e.g. 1 \u2192 E1')
+      +field('f_flat','Flat / plot','e.g. 21 \u2192 F21')+field('f_floor','Floor','e.g. 1 \u2192 F1')
       +'<div class="field"><label>Room *</label><select id="f_room">'+roomOptions('')+'</select></div>'+field('f_item','Item *','e.g. W02')
       +'<div class="groupt">SPECIFICATION</div>'
       +'<div class="field full"><label>Design code (Clearview style)</label>'
         +'<div style="display:flex;gap:8px;align-items:center">'
           +'<input id="f_design" type="text" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
-          +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
+          +'<button type="button" class="add" onclick="openStylePicker()">Choose style\u2026</button>'
           +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">'
         +'</div></div>'
       +field('f_material','Material','uPVC / Alu / Timber')+field('f_type','Item type','Window / Door')
@@ -3705,10 +4627,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var sel=document.getElementById('calTeam');
     sel.innerHTML='<option value="">All teams</option>'+CAL_DATA.teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
     sel.value=calTeamId;
-    if(!calTeamInit){ if(myTeam&&CAL_DATA.teams.some(function(t){return t.id===myTeam;}))calTeamId=myTeam; calTeamInit=true; }
-    sel.value=calTeamId;
     if(!calSel)calSel=calIso(new Date());
-    calSetMode(calMode);
+    renderCalendar();
   }
   function calShift(n){calCursor=new Date(calCursor.getFullYear(),calCursor.getMonth()+n,1);renderCalendar();}
   function calFiltered(){return CAL_DATA.items.filter(function(it){return !calTeamId||it.team_id===calTeamId;});}
@@ -3732,74 +4652,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     renderCalSel();
   }
   function calPick(day){calSel=day;renderCalendar();}
-  // ---- Programme Gantt (Calendar tab: Month / Gantt toggle) ----
-  var calMode='month'; var GANTT_DATA={jobs:[],teams:[]}; var ganttTeamId=''; var ganttTeamInit=false; var calTeamInit=false;
-  function calSetMode(m){
-    calMode=m;
-    var mb=document.getElementById('calModeMonth'), gb=document.getElementById('calModeGantt');
-    if(mb){mb.style.background=(m==='month')?'var(--magenta)':'#fff';mb.style.color=(m==='month')?'#fff':'var(--purple)';}
-    if(gb){gb.style.background=(m==='gantt')?'var(--magenta)':'#fff';gb.style.color=(m==='gantt')?'#fff':'var(--purple)';}
-    var monthEls=[document.querySelector('#calView .calgridwrap'),document.getElementById('calSelHead'),document.getElementById('calSel')];
-    monthEls.forEach(function(e){if(e)e.style.display=(m==='month')?'':'none';});
-    var gw=document.getElementById('ganttWrap'); if(gw)gw.style.display=(m==='gantt')?'block':'none';
-    ['calNavPrev','calNavNext','calMonth','calTeam','calMsg'].forEach(function(id){var e=document.getElementById(id);if(e)e.style.display=(m==='month')?'':'none';});
-    var gt=document.getElementById('ganttTeam'); if(gt)gt.style.display=(m==='gantt')?'':'none';
-    if(m==='gantt')loadGantt(); else renderCalendar();
-  }
-  function ganttParse(s){ if(!s)return null; var p=String(s).slice(0,10).split('-'); if(p.length!==3)return null; var d=new Date(Number(p[0]),Number(p[1])-1,Number(p[2])); return isNaN(d)?null:d; }
-  function fmtGD(d){return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});}
-  async function loadGantt(){
-    var wrap=document.getElementById('ganttWrap'); wrap.innerHTML='<div class="empty" style="padding:24px">Loading…</div>';
-    try{GANTT_DATA=await (await api('/api/gantt')).json();}catch(e){GANTT_DATA={jobs:[],teams:[]};}
-    if(!GANTT_DATA||!GANTT_DATA.jobs){GANTT_DATA={jobs:(Array.isArray(GANTT_DATA)?GANTT_DATA:[]),teams:[]};}
-    var teams=GANTT_DATA.teams||[];
-    if(!ganttTeamInit){ if(myTeam&&teams.some(function(t){return t.id===myTeam;}))ganttTeamId=myTeam; ganttTeamInit=true; }
-    var sel=document.getElementById('ganttTeam');
-    if(sel){ sel.innerHTML='<option value="">All teams</option>'+teams.map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+(t.active===false?' (retired)':'')+'</option>';}).join(''); sel.value=ganttTeamId; }
-    renderGantt();
-  }
-  function renderGantt(){
-    var wrap=document.getElementById('ganttWrap');
-    var sel=document.getElementById('ganttTeam'); if(sel)ganttTeamId=sel.value;
-    var jobs=(GANTT_DATA&&GANTT_DATA.jobs)?GANTT_DATA.jobs:[];
-    var rows=jobs.filter(function(j){ return !ganttTeamId || (Array.isArray(j.team_ids)&&j.team_ids.indexOf(ganttTeamId)>=0); }).map(function(j){
-      var phases=JOB_DATE_PHASES.map(function(ph){return {ph:ph,s:ganttParse(j[ph.key+'_start']),e:ganttParse(j[ph.key+'_end'])};}).filter(function(x){return x.s||x.e;});
-      return {code:j.code,name:j.name,phases:phases};
-    }).filter(function(r){return r.phases.length;});
-    if(!rows.length){wrap.innerHTML='<div class="empty" style="padding:24px">'+(ganttTeamId?'No jobs with programme dates for this team.':'No programme dates yet. Add them on a job (Edit job → Dates) to see the timeline here.')+'</div>';return;}
-    var min=null,max=null;
-    rows.forEach(function(r){r.phases.forEach(function(x){var a=x.s||x.e,b=x.e||x.s; if(!min||a<min)min=a; if(!max||b>max)max=b;});});
-    min=new Date(min.getFullYear(),min.getMonth(),1);
-    max=new Date(max.getFullYear(),max.getMonth()+1,0);
-    var day=86400000; var totalMs=(max-min)+day;
-    function pct(d){return ((d-min)/totalMs)*100;}
-    var months=[]; var cur=new Date(min.getFullYear(),min.getMonth(),1);
-    while(cur<=max){ months.push(new Date(cur)); cur=new Date(cur.getFullYear(),cur.getMonth()+1,1); }
-    var labelW=220;
-    var head='<div style="display:flex;align-items:stretch">'
-      +'<div style="flex:0 0 '+labelW+'px"></div>'
-      +'<div style="position:relative;flex:1;height:20px;border-bottom:1px solid var(--line)">'
-      +months.map(function(m){return '<div style="position:absolute;left:'+pct(m)+'%;top:0;bottom:0;border-left:1px solid var(--line)"><span style="font-size:10px;color:var(--muted);padding:1px 4px;white-space:nowrap">'+m.toLocaleDateString('en-GB',{month:'short',year:'2-digit'})+'</span></div>';}).join('')
-      +'</div></div>';
-    var legend='<div style="display:flex;gap:14px;flex-wrap:wrap;margin:0 0 10px">'+JOB_DATE_PHASES.map(function(ph){return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)"><span style="width:11px;height:11px;border-radius:3px;background:'+ph.color+'"></span>'+ph.label+'</span>';}).join('')+'</div>';
-    var laneH=9, laneGap=3;
-    var body=rows.map(function(r){
-      var rowH=r.phases.length*(laneH+laneGap)+6;
-      var bars=r.phases.map(function(x,idx){
-        var s=x.s||x.e, e=x.e||x.s; var left=pct(s); var right=pct(new Date(e.getTime()+day)); var w=Math.max(0.6,right-left);
-        var top=idx*(laneH+laneGap)+3;
-        var tip=x.ph.label+': '+(x.s?fmtGD(x.s):'?')+' to '+(x.e?fmtGD(x.e):'?');
-        return '<div title="'+tip+'" style="position:absolute;left:'+left+'%;width:'+w+'%;top:'+top+'px;height:'+laneH+'px;border-radius:3px;background:'+x.ph.color+'"></div>';
-      }).join('');
-      return '<div style="display:flex;align-items:stretch;border-bottom:1px solid #f2f0f8">'
-        +'<div style="flex:0 0 '+labelW+'px;padding:6px 10px 6px 0"><span class="mono" style="font-size:11px">'+esc(r.code)+'</span><div style="color:var(--muted);font-size:10.5px;line-height:1.3;overflow-wrap:anywhere;margin-top:1px">'+esc(r.name||'')+'</div></div>'
-        +'<div style="position:relative;flex:1;min-height:'+rowH+'px">'
-          +months.map(function(m){return '<div style="position:absolute;left:'+pct(m)+'%;top:0;bottom:0;border-left:1px solid #f4f2fa"></div>';}).join('')
-          +bars
-        +'</div></div>';
-    }).join('');
-    wrap.innerHTML=legend+'<div class="calgridwrap" style="overflow-x:auto"><div style="min-width:720px">'+head+body+'</div></div>';
-  }
   function renderCalSel(){
     var head=document.getElementById('calSelHead');
     if(!calSel){head.textContent='';document.getElementById('calSel').innerHTML='';return;}
@@ -3810,7 +4662,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var col=statusColor(it.install_status);
       return '<div class="calitem" onclick="openDetail(\\''+it.id+'\\')"><span class="caldot" style="background:'+col+'"></span>'
         +'<div class="cimain"><div class="ccode">'+esc(it.full_code||'')+'</div>'
-        +'<div class="cmeta">'+esc(it.job)+(it.jobName?(' \\u00b7 '+esc(it.jobName)):'')+' \\u00b7 '+esc(it.room_code||'—')+'/'+esc(it.item_code||'—')+(it.team?(' \\u00b7 '+esc(it.team)):'')+'</div></div>'
+        +'<div class="cmeta">'+esc(it.job)+(it.jobName?(' \\u00b7 '+esc(it.jobName)):'')+' \\u00b7 '+esc(it.room_code||'\u2014')+'/'+esc(it.item_code||'\u2014')+(it.team?(' \\u00b7 '+esc(it.team)):'')+'</div></div>'
         +'<span class="cstat" style="color:'+col+';border-color:'+col+'">'+esc(istatLabel(it.install_status))+'</span></div>';
     }).join(''):'<div class="empty" style="padding:8px 0">Nothing scheduled this day.</div>';
   }
@@ -3818,21 +4670,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- Budget & pricing rules (admin / invoice_manager) ----
   var RULES=[];
   var DEFAULT_PARAMS={material:{window_frame_per_m2:13000,window_glass_per_m2:3000,door_frame_per_unit:34000,door_glass_per_unit:3000},labour:{window_per_unit:8000,door_per_unit:12000},sale:{rate_per_flat:315900,rate_per_door:135000,rate_per_m2_extra:32400,windows_included_per_flat:5}};
-  function gbp(pennies){return '£'+((pennies||0)/100).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});}
+  function gbp(pennies){return '\xA3'+((pennies||0)/100).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});}
   function av(s){return esc(s).replace(/"/g,'&quot;');}
   async function loadBudget(){
     try{RULES=await (await api('/api/pricing-rules')).json();}catch(e){RULES=[];}
     var tb=document.getElementById('ruleRows');
     tb.innerHTML=RULES.length?RULES.map(function(r){var s=(r.params&&r.params.sale)||{};
-      return '<tr><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.customer||'—')+'</td><td class="ro">'+esc(r.model)+'</td>'
+      return '<tr><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.customer||'\u2014')+'</td><td class="ro">'+esc(r.model)+'</td>'
         +'<td>'+gbp(s.rate_per_flat)+'</td><td>'+gbp(s.rate_per_door)+'</td><td>'+gbp(s.rate_per_m2_extra)+'</td>'
         +'<td style="text-align:right"><a class="codelink" onclick="openRule(\\''+r.id+'\\')">Edit</a> &nbsp; <a class="codelink" onclick="delRule(\\''+r.id+'\\')">Delete</a></td></tr>';
-    }).join(''):'<tr><td colspan="7" class="ro">No pricing rules yet — create one to price a customer\\'s jobs.</td></tr>';
+    }).join(''):'<tr><td colspan="7" class="ro">No pricing rules yet \u2014 create one to price a customer\\'s jobs.</td></tr>';
     // job pricing selector
     var jsel=document.getElementById('fpJob');
     var jobs=await (await api('/api/jobs')).json();
     var keep=jsel.value;
-    jsel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    jsel.innerHTML=jobs.map(function(j){return '<option value="'+j.code+'">'+esc(j.code)+' \u2014 '+esc(j.name)+'</option>';}).join('');
     if(keep)jsel.value=keep;
     await loadJobPricing();
   }
@@ -3840,7 +4692,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var code=document.getElementById('fpJob').value; if(!code){document.getElementById('fpBreak').innerHTML='';return;}
     var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pricing')).json();
     var rsel=document.getElementById('fpRule');
-    rsel.innerHTML='<option value="">— none —</option>'+(d.rules||[]).map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+'</option>';}).join('');
+    rsel.innerHTML='<option value="">\u2014 none \u2014</option>'+(d.rules||[]).map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+'</option>';}).join('');
     rsel.value=d.rule_id||'';
     renderBreak(d);
   }
@@ -3851,45 +4703,43 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function renderBreak(d){
     var host=document.getElementById('fpBreak');
-    if(!d.rule_id){host.innerHTML='<div class="ro" style="padding:14px 2px">No rule assigned to this job yet — pick one above to price it.</div>';return;}
+    if(!d.rule_id){host.innerHTML='<div class="ro" style="padding:14px 2px">No rule assigned to this job yet \u2014 pick one above to price it.</div>';return;}
     var b=d.breakdown;
     if(!b){host.innerHTML='<div class="ro" style="padding:14px 2px">The assigned rule has no parameters yet. Edit it above.</div>';return;}
     var marginPct=b.saleTotal?Math.round(b.margin/b.saleTotal*100):0;
     var card=function(v,l,s,warn){return '<div class="stat'+(warn?' warn':'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';};
-    // Cost + margin are temporarily zeroed — the cost model is under review (see backlog).
     var cards='<div class="statgrid" style="margin:14px 0">'
       +card(gbp(b.saleTotal),'Customer price','')
-      +card(gbp(0),'Our cost (budget)','under review')
-      +card(gbp(0),'Margin','under review',false)+'</div>';
+      +card(gbp(b.costTotal),'Our cost (budget)','')
+      +card(gbp(b.margin),'Margin',marginPct+'%',b.margin<0)+'</div>';
     var rows=b.flats.map(function(f){
       return '<tr><td><b>'+esc(f.flat)+'</b></td><td>'+f.windows+'</td><td>'+gbp(f.base)+'</td>'
-        +'<td>'+(f.extraWindows?(f.extraWindows+' · '+f.extraM2+' m²'):'—')+'</td>'
-        +'<td>'+(f.extraAmount?gbp(f.extraAmount):'—')+'</td><td><b>'+gbp(f.total)+'</b></td></tr>';
+        +'<td>'+(f.extraWindows?(f.extraWindows+' \xB7 '+f.extraM2+' m\xB2'):'\u2014')+'</td>'
+        +'<td>'+(f.extraAmount?gbp(f.extraAmount):'\u2014')+'</td><td><b>'+gbp(f.total)+'</b></td></tr>';
     }).join('');
     var extra='';
-    if(b.doors.count)extra+='<tr><td colspan="5">Doors × '+b.doors.count+'</td><td><b>'+gbp(b.doors.amount)+'</b></td></tr>';
-    if(b.communal.windows)extra+='<tr><td colspan="5">Communal / COM windows × '+b.communal.windows+' ('+b.communal.m2+' m²)</td><td><b>'+gbp(b.communal.amount)+'</b></td></tr>';
-    if(b.variationsTotal)extra+='<tr><td colspan="5">Variations × '+b.variations.length+'</td><td><b>'+gbp(b.variationsTotal)+'</b></td></tr>';
-    var table='<div class="card2"><table><thead><tr><th>FLAT</th><th>WINDOWS</th><th>BASE</th><th>EXTRA (biggest)</th><th>EXTRA £</th><th>FLAT TOTAL</th></tr></thead><tbody>'
+    if(b.doors.count)extra+='<tr><td colspan="5">Doors \xD7 '+b.doors.count+'</td><td><b>'+gbp(b.doors.amount)+'</b></td></tr>';
+    if(b.communal.windows)extra+='<tr><td colspan="5">Communal windows \xD7 '+b.communal.windows+' ('+b.communal.m2+' m\xB2)</td><td><b>'+gbp(b.communal.amount)+'</b></td></tr>';
+    if(b.variationsTotal)extra+='<tr><td colspan="5">Variations \xD7 '+b.variations.length+'</td><td><b>'+gbp(b.variationsTotal)+'</b></td></tr>';
+    var table='<div class="card2"><table><thead><tr><th>FLAT</th><th>WINDOWS</th><th>BASE</th><th>EXTRA (biggest)</th><th>EXTRA \xA3</th><th>FLAT TOTAL</th></tr></thead><tbody>'
       +rows+extra
       +'<tr style="border-top:2px solid var(--line)"><td colspan="5" style="text-align:right"><b>Customer price</b></td><td><b>'+gbp(b.saleTotal)+'</b></td></tr></tbody></table></div>';
     var itemsHtml='';
     if(d.items&&d.items.length){
       itemsHtml='<h4 style="margin:22px 0 6px;color:var(--purple)">Variations</h4>'
         +'<div class="sub" style="margin-bottom:8px">Tick an item to price it as a variation (a manually-agreed amount). Variations are billed separately and leave the flat\\'s fixed scope.</div>'
-        +'<div class="card2"><table><thead><tr><th>ITEM</th><th>TYPE</th><th>FLAT</th><th>VARIATION</th><th>AMOUNT (£)</th></tr></thead><tbody>'
+        +'<div class="card2"><table><thead><tr><th>ITEM</th><th>TYPE</th><th>FLAT</th><th>VARIATION</th><th>AMOUNT (\xA3)</th></tr></thead><tbody>'
         +d.items.map(function(it){
-          return '<tr><td class="mono">'+esc(it.full_code||'')+'</td><td class="ro">'+esc(it.category)+'</td><td>'+esc(it.flat||'—')+'</td>'
+          return '<tr><td class="mono">'+esc(it.full_code||'')+'</td><td class="ro">'+esc(it.category)+'</td><td>'+esc(it.flat||'\u2014')+'</td>'
             +'<td><input type="checkbox" id="var_'+it.id+'" '+(it.is_variation?'checked':'')+' onchange="saveItemVar(\\''+it.id+'\\')" style="width:15px;height:15px;accent-color:var(--magenta)"></td>'
             +'<td><input id="vamt_'+it.id+'" type="number" min="0" step="0.01" value="'+(it.is_variation&&it.variation_amount?(it.variation_amount/100):'')+'" '+(it.is_variation?'':'disabled')+' onchange="saveItemVar(\\''+it.id+'\\')" style="width:92px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px"></td></tr>';
         }).join('')+'</tbody></table></div>';
     }
-    var warn=d.missingDims?'<div style="background:#fff4ce;border:1px solid #f0d97a;border-radius:10px;padding:10px 14px;margin:0 0 12px;font-size:13px;color:#7a5b00">⚠ '+d.missingDims+' window'+(d.missingDims===1?' has':'s have')+' no Width/Height — their m² charges (extra windows above the included count, and COM units) are £0 until you add dimensions.</div>':'';
-    host.innerHTML=cards+warn+table+itemsHtml;
+    host.innerHTML=cards+table+itemsHtml;
   }
   async function downloadPricePdf(){
     var code=document.getElementById('fpJob').value; if(!code){tShow('Pick a job first');return;}
-    var btn=document.getElementById('fpPdfBtn'); var was=btn.textContent; btn.textContent='Building…'; btn.disabled=true;
+    var btn=document.getElementById('fpPdfBtn'); var was=btn.textContent; btn.textContent='Building\u2026'; btn.disabled=true;
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(code)+'/price.pdf',{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'Export failed');return;}
@@ -3907,23 +4757,23 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d=await r.json();
     if(r.ok&&d.ok){tShow('Saved');loadJobPricing();}else tShow(d.error||'Failed');
   }
-  function rMoney(id,label,pennies){return '<div class="field"><label>'+label+' (£)</label><input id="'+id+'" type="number" min="0" step="0.01" value="'+((pennies||0)/100)+'"></div>';}
+  function rMoney(id,label,pennies){return '<div class="field"><label>'+label+' (\xA3)</label><input id="'+id+'" type="number" min="0" step="0.01" value="'+((pennies||0)/100)+'"></div>';}
   function rNum(id,label,val){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="number" min="0" step="1" value="'+(val==null?'':val)+'"></div>';}
   function openRule(id){
     var r=id?RULES.find(function(x){return x.id===id;}):null;
     var p=(r&&r.params&&r.params.sale)?r.params:JSON.parse(JSON.stringify(DEFAULT_PARAMS));
     var m=p.material||{},l=p.labour||{},sa=p.sale||{};
     var html='<div class="fgrid">'
-      +'<div class="field full"><label>Rule name *</label><input id="r_name" value="'+av(r?r.name:'')+'" placeholder="e.g. Axis — standard"></div>'
+      +'<div class="field full"><label>Rule name *</label><input id="r_name" value="'+av(r?r.name:'')+'" placeholder="e.g. Axis \u2014 standard"></div>'
       +'<div class="field full"><label>Customer</label><input id="r_customer" value="'+av(r?(r.customer||''):'')+'" placeholder="Customer / client name"></div>'
       +'<div class="groupt">MATERIAL COST (our purchase)</div>'
-      +rMoney('r_wfm','Windows — frame / m²',m.window_frame_per_m2)+rMoney('r_wgm','Windows — glass / m²',m.window_glass_per_m2)
-      +rMoney('r_dfu','Single door — frame / unit',m.door_frame_per_unit)+rMoney('r_dgu','Single door — glass / unit',m.door_glass_per_unit)
-      +'<div class="groupt">LABOUR COST — rip-out (budget, not fitter pay)</div>'
+      +rMoney('r_wfm','Windows \u2014 frame / m\xB2',m.window_frame_per_m2)+rMoney('r_wgm','Windows \u2014 glass / m\xB2',m.window_glass_per_m2)
+      +rMoney('r_dfu','Single door \u2014 frame / unit',m.door_frame_per_unit)+rMoney('r_dgu','Single door \u2014 glass / unit',m.door_glass_per_unit)
+      +'<div class="groupt">LABOUR COST \u2014 rip-out (budget, not fitter pay)</div>'
       +rMoney('r_wl','Window / unit',l.window_per_unit)+rMoney('r_dl','Single door / unit',l.door_per_unit)
       +'<div class="groupt">SALE RATES (customer price)</div>'
       +rMoney('r_rf','Rate per flat',sa.rate_per_flat)+rMoney('r_rd','Rate per door',sa.rate_per_door)
-      +rMoney('r_rm','Rate per m² (COM / communal / extra windows)',sa.rate_per_m2_extra)+rNum('r_wi','Windows included per flat',sa.windows_included_per_flat)
+      +rMoney('r_rm','Rate per m\xB2 (communal / extra windows)',sa.rate_per_m2_extra)+rNum('r_wi','Windows included per flat',sa.windows_included_per_flat)
       +'<div class="ferr" id="ruleErr"></div></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveRule(\\''+(id||'')+'\\')">Save rule</button></div>';
     openModal(id?'Edit pricing rule':'New pricing rule',html);
@@ -3949,30 +4799,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
 
   // ---- In-app QA test run ----
-  var TESTS={scenarios:[],results:{},version:'',current:'',versions:[]}; var TEST_VER='';
+  var TESTS={scenarios:[],results:{},version:''};
   async function loadTests(){
-    var q=TEST_VER?('?version='+encodeURIComponent(TEST_VER)):'';
-    try{TESTS=await (await api('/api/tests'+q)).json();}catch(e){TESTS={scenarios:[],results:{},version:'',current:'',versions:[]};}
-    if(!TEST_VER)TEST_VER=TESTS.version;
-    var vsel=document.getElementById('testVer');
-    if(vsel){
-      var vers=TESTS.versions||[];
-      vsel.innerHTML=vers.map(function(v){return '<option value="'+av(v.version)+'">v'+esc(v.version)+(v.version===TESTS.current?' (current)':'')+' \u00b7 '+v.count+' tested'+(v.last?(' \u00b7 '+new Date(v.last).toLocaleDateString('en-GB')):'')+'</option>';}).join('');
-      vsel.value=TESTS.version;
-    }
+    try{TESTS=await (await api('/api/tests')).json();}catch(e){TESTS={scenarios:[],results:{},version:''};}
     var areas=[]; TESTS.scenarios.forEach(function(s){if(areas.indexOf(s.area)<0)areas.push(s.area);});
     var av0=document.getElementById('testArea').value;
     document.getElementById('testArea').innerHTML='<option value="">All areas</option>'+areas.map(function(a){return '<option value="'+av(a)+'">'+esc(a)+'</option>';}).join('');
     document.getElementById('testArea').value=av0;
     renderTests();
   }
-  function changeTestVer(){ TEST_VER=document.getElementById('testVer').value; loadTests(); }
   function testCounts(){var ok=0,nok=0,un=0;TESTS.scenarios.forEach(function(x){var g=TESTS.results[x.code];if(!g)un++;else if(g.status==='ok')ok++;else nok++;});return {total:TESTS.scenarios.length,ok:ok,nok:nok,un:un};}
   function renderTests(){
     var area=document.getElementById('testArea').value, st=document.getElementById('testStatus').value;
     var c=testCounts();
-    var readonly=!!(TESTS.current&&TESTS.version!==TESTS.current);
-    document.getElementById('testProg').innerHTML='v'+esc(TESTS.version)+' &middot; '+(c.ok+c.nok)+'/'+c.total+' tested &middot; <b style="color:#16a34a">'+c.ok+' OK</b> &middot; <b style="color:var(--magenta)">'+c.nok+' NOK</b> &middot; '+c.un+' untested'+(readonly?' &middot; <b style="color:#b45309">read-only (historical)</b>':'');
+    document.getElementById('testProg').innerHTML='v'+esc(TESTS.version)+' &middot; '+(c.ok+c.nok)+'/'+c.total+' tested &middot; <b style="color:#16a34a">'+c.ok+' OK</b> &middot; <b style="color:var(--magenta)">'+c.nok+' NOK</b> &middot; '+c.un+' untested';
     var list=TESTS.scenarios.filter(function(s){
       if(area&&s.area!==area)return false;
       var g=TESTS.results[s.code];
@@ -3991,16 +4831,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<div class="tinfo"><div class="tcode">'+esc(s.code)+' &middot; '+esc(s.feature)+' '+badge+'</div>'
         +'<div class="tsteps"><b>Do:</b> '+esc(s.steps)+'</div>'
         +'<div class="texp"><b>Expect:</b> '+esc(s.expected)+' <span class="trole">['+esc(s.role)+']</span></div>'+who+'</div>'
-        +(readonly
-          ? '<div class="tact"><span class="tmeta">read-only</span></div>'
-          : ('<div class="tact"><input id="tc_'+s.code+'" class="tcomment" placeholder="Comment (optional)" value="'+av(g&&g.comment?g.comment:'')+'">'
-            +'<div class="tbtns"><button class="tbtn tokbtn" onclick="submitTest(\\''+s.code+'\\',\\'ok\\')">OK</button>'
-            +'<button class="tbtn tnokbtn" onclick="submitTest(\\''+s.code+'\\',\\'nok\\')">NOK</button></div></div>'))
-        +'</div>';
+        +'<div class="tact"><input id="tc_'+s.code+'" class="tcomment" placeholder="Comment (optional)" value="'+av(g&&g.comment?g.comment:'')+'">'
+        +'<div class="tbtns"><button class="tbtn tokbtn" onclick="submitTest(\\''+s.code+'\\',\\'ok\\')">OK</button>'
+        +'<button class="tbtn tnokbtn" onclick="submitTest(\\''+s.code+'\\',\\'nok\\')">NOK</button></div></div></div>';
     }).join('')||'<div class="empty" style="padding:20px">No scenarios match this filter.</div>';
   }
   async function exportTests(){
-    try{var r=await fetch('/api/tests/export.csv'+(TEST_VER?('?version='+encodeURIComponent(TEST_VER)):''),{headers:{Authorization:'Bearer '+token}});
+    try{var r=await fetch('/api/tests/export.csv',{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){tShow('Export failed');return;}
       var blob=await r.blob(); var u=URL.createObjectURL(blob);
       var a=document.createElement('a'); a.href=u; a.download='test-results-v'+(TESTS.version||'')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
@@ -4080,35 +4917,35 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var wrap=document.getElementById('spOverlay');
     if(!wrap){wrap=document.createElement('div');wrap.id='spOverlay';wrap.className='spover';wrap.onclick=function(e){if(e.target===wrap)closeStylePicker();};document.body.appendChild(wrap);}
     wrap.style.display='flex';
-    wrap.innerHTML='<div class="spbox"><div class="sphead"><b>Choose a Clearview style</b><span class="spclose" onclick="closeStylePicker()">✕</span></div>'
-      +'<div class="spfilters"><input id="spQ" placeholder="Search code…" oninput="spSetQ(this.value)"><span id="spTypes"></span><span id="spWide"></span><span id="spHigh"></span></div>'
+    wrap.innerHTML='<div class="spbox"><div class="sphead"><b>Choose a Clearview style</b><span class="spclose" onclick="closeStylePicker()">\u2715</span></div>'
+      +'<div class="spfilters"><input id="spQ" placeholder="Search code\u2026" oninput="spSetQ(this.value)"><span id="spTypes"></span><span id="spWide"></span><span id="spHigh"></span></div>'
       +'<div class="spgrid" id="spGrid"></div></div>';
     await loadStyles(); spRenderChips(); renderStyleGrid();
   }
-  function istatLabel(v){var m=ISTATUS.filter(function(s){return s[0]===(v||'')});return (m[0]||['','—'])[1];}
+  function istatLabel(v){var m=ISTATUS.filter(function(s){return s[0]===(v||'')});return (m[0]||['','\u2014'])[1];}
   async function openDetail(id){
-    openModal('Loading…','<div class="empty">Loading…</div>');
+    openModal('Loading\u2026','<div class="empty">Loading\u2026</div>');
     var d=await (await api('/api/item/'+id+'/detail')).json(); var it=d.item;
     function row(k,v){return (v==null||v==='')?'':'<div class="drow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
     function attr(v){return (v==null?'':esc(String(v))).replace(/"/g,'&quot;');}
     function fieldV(id,label,val,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+attr(val)+'" placeholder="'+(ph||'')+'"></div>';}
-    function selField(id,label,val,opts){var o='<option value="">—</option>'+opts.map(function(x){return '<option'+(String(val==null?'':val)===x?' selected':'')+'>'+esc(x)+'</option>';}).join('');return '<div class="field"><label>'+label+'</label><select id="'+id+'">'+o+'</select></div>';}
+    function selField(id,label,val,opts){var o='<option value="">\u2014</option>'+opts.map(function(x){return '<option'+(String(val==null?'':val)===x?' selected':'')+'>'+esc(x)+'</option>';}).join('');return '<div class="field"><label>'+label+'</label><select id="'+id+'">'+o+'</select></div>';}
     function chkField(id,label,checked){return '<div class="field"><label>'+label+'</label><label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:400;color:var(--ink)"><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'> equally spaced</label></div>';}
     var html='<dl class="dl">'
       +row('Full code','<span class="mono">'+esc(it.full_code)+'</span>')
       +row('Stage',esc(STAGE[it.stage]||it.stage))
-      +row('Location',[it.block,it.elevation,(it.flat?('Flat '+it.flat):''),(it.floor?('Floor '+it.floor):''),it.room_code,it.item_code].filter(function(x){return x;}).map(esc).join(' · '))
-      +row('Team',esc(d.team||'—'))+row('Fitting rate',esc(d.effective_rate))
+      +row('Location',[it.block,it.elevation,(it.flat?('Flat '+it.flat):''),(it.floor?('Floor '+it.floor):''),it.room_code,it.item_code].filter(function(x){return x;}).map(esc).join(' \xB7 '))
+      +row('Team',esc(d.team||'\u2014'))+row('Fitting rate',esc(d.effective_rate))
       +row('Install status',esc(istatLabel(it.install_status)))
       +row('Install date',esc(it.actual_install_date))
-      +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open ↗</a>':'not synced')
+      +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open \u2197</a>':'not synced')
       +'</dl>';
     var specEditable=!d.is_snag&&canCap('items.edit');
     if(specEditable){
       html+='<div class="groupt" style="padding:12px 22px 0">SPECIFICATION</div><div class="fgrid" style="padding:6px 22px 12px">'
         +'<div class="field full"><label>Design code (Clearview style)</label><div style="display:flex;gap:8px;align-items:center">'
           +'<input id="f_design" type="text" value="'+attr(it.design_code)+'" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
-          +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
+          +'<button type="button" class="add" onclick="openStylePicker()">Choose style\u2026</button>'
           +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff"></div></div>'
         +selField('f_material','Material',it.material,MATERIALS)+fieldV('f_type','Item type',it.item_type,'Window / Door')
         +selField('f_wtype','Window type',it.window_type,WINDOW_TYPES)
@@ -4134,39 +4971,39 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }
     if(d.photos&&d.photos.length){
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
-    } else { html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="empty">No photos yet — add one below, or they arrive from the mobile survey / install flow.</div>'; }
+    } else { html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="empty">No photos yet \u2014 add one below, or they arrive from the mobile survey / install flow.</div>'; }
     if(canCap('photos.add')){
       var pcol=(myRole==='fitter')?'Picture After':'Picture Before';
       html+='<div style="padding:2px 22px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
         +'<input type="file" id="itemPhoto" accept="image/*" style="font-size:12px">'
         +'<button class="save" onclick="uploadItemPhoto(\\''+it.id+'\\')">Add photo</button>'
-        +'<span style="font-size:11px;color:var(--muted)">→ syncs to Monday <b>'+pcol+'</b></span></div>';
+        +'<span style="font-size:11px;color:var(--muted)">\u2192 syncs to Monday <b>'+pcol+'</b></span></div>';
     }
     if(d.is_snag){
-      html+='<div class="empty">This is a snag item — set its team and labour cost above, then sync and fit it like any item.</div>';
+      html+='<div class="empty">This is a snag item \u2014 set its team and labour cost above, then sync and fit it like any item.</div>';
     } else if(myRole!=='surveyor'&&myRole!=='scanner'){
       html+='<div class="groupt" style="padding:10px 22px 0">SNAGS (remedial items)</div>';
       if(d.snags&&d.snags.length){
         html+='<div style="padding:2px 22px 0">'+d.snags.map(function(s){
           var st=s.synced?'<span class="count green">synced</span>':'<span class="count amber">not synced</span>';
-          var link=s.monday_url?' · <a class="mlink" target="_blank" href="'+s.monday_url+'">Monday ↗</a>':'';
+          var link=s.monday_url?' \xB7 <a class="mlink" target="_blank" href="'+s.monday_url+'">Monday \u2197</a>':'';
           return '<div style="padding:10px 0;border-top:1px solid #f2f0f8">'
             +'<a class="codelink mono" style="font-size:11px;word-break:break-all" onclick="openDetail(\\''+s.id+'\\')">'+esc(s.full_code)+'</a>'
             +'<div style="font-size:13px;margin-top:4px">'+esc(s.comment||'')+'</div>'
-            +'<div style="font-size:11px;color:var(--muted);margin-top:4px">'+st+' · rate '+esc(s.rate)+' · '+esc(s.team||'no team')+link+'</div>'
+            +'<div style="font-size:11px;color:var(--muted);margin-top:4px">'+st+' \xB7 rate '+esc(s.rate)+' \xB7 '+esc(s.team||'no team')+link+'</div>'
             +'</div>';
         }).join('')+'</div>';
       } else { html+='<div class="empty">No snags yet.</div>'; }
-      var topts='<option value="">— team to fit (optional) —</option>'+(d.teams||[]).map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
+      var topts='<option value="">\u2014 team to fit (optional) \u2014</option>'+(d.teams||[]).map(function(t){return '<option value="'+t.id+'">'+esc(t.name)+'</option>';}).join('');
       html+='<div style="padding:2px 22px 22px">'
-        +'<textarea id="snagDesc" rows="2" placeholder="Describe the snag…" style="width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;font-family:inherit"></textarea>'
+        +'<textarea id="snagDesc" rows="2" placeholder="Describe the snag\u2026" style="width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;font-family:inherit"></textarea>'
         +'<div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">'
-        +'<span style="font-size:12px;color:var(--muted)">£</span><input id="snagRate" type="number" min="0" step="1" placeholder="labour (optional)" style="width:150px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px">'
+        +'<span style="font-size:12px;color:var(--muted)">\xA3</span><input id="snagRate" type="number" min="0" step="1" placeholder="labour (optional)" style="width:150px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px">'
         +'<select id="snagTeam" class="sel">'+topts+'</select>'
         +'<input type="file" id="snagPhoto" accept="image/*" style="font-size:12px">'
         +'<button class="save" onclick="logSnag(\\''+it.id+'\\')">Raise snag</button>'
         +'</div>'
-        +'<div style="font-size:11px;color:var(--muted);margin-top:6px">Creates a separate item ('+esc(it.full_code)+'-S…) you can cost, assign a team, sync and fit like any other.</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:6px">Creates a separate item ('+esc(it.full_code)+'-S\u2026) you can cost, assign a team, sync and fit like any other.</div>'
         +'</div>';
     }
     if(specEditable){ // sticky Save pinned to the bottom of the drawer, always visible while scrolling
@@ -4195,7 +5032,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function markSurveyed(id){
     var body=collectDetail(); body.stage='surveyed';
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
-    if(d.ok){tShow('Saved · marked Surveyed');loadItems();closeModal();}else tShow(d.error||'Save failed');
+    if(d.ok){tShow('Saved \xB7 marked Surveyed');loadItems();closeModal();}else tShow(d.error||'Save failed');
   }
   function fileToDataUrl(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result)};r.onerror=rej;r.readAsDataURL(file);});}
   async function logSnag(id){
@@ -4203,7 +5040,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var rate=document.getElementById('snagRate').value, team=document.getElementById('snagTeam').value;
     var f=document.getElementById('snagPhoto').files[0]; var photo=null;
     if(f){ if(f.size>4*1024*1024){tShow('Photo too large (max 4MB)');return;} photo=await fileToDataUrl(f); }
-    tShow('Raising snag…');
+    tShow('Raising snag\u2026');
     var body={description:desc,rate_pennies:(rate===''?null:Math.round(Number(rate)*100)),team_id:team,photo:photo};
     var d=await (await api('/api/item/'+id+'/snags',{method:'POST',body:JSON.stringify(body)})).json();
     if(d.ok){tShow('Snag created: '+d.full_code);openDetail(id);loadItems();}
@@ -4213,7 +5050,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var f=document.getElementById('itemPhoto').files[0];
     if(!f){tShow('Choose a photo first');return;}
     if(f.size>6*1024*1024){tShow('Photo too large (max 6MB)');return;}
-    tShow('Uploading photo…');
+    tShow('Uploading photo\u2026');
     var photo=await fileToDataUrl(f);
     var d=await (await api('/api/item/'+id+'/photo',{method:'POST',body:JSON.stringify({photo:photo})})).json();
     if(d.ok){tShow('Photo added');openDetail(id);}
@@ -4229,10 +5066,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(at){token=at;bootstrapSession();}
   } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab(restoreTab());}).catch(logout);}
 </script></body></html>`;
-
-// ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----
-const LIVE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>ACE — Live</title>
+var LIVE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ACE \u2014 Live</title>
 <style>
   :root{--bg:#1b1533;--card:#251c47;--line:#3a2f63;--ink:#f4f3f9;--muted:#a9a4c4;--magenta:#e6187e;--green:#22c55e;--amber:#f59e0b}
   *{box-sizing:border-box;margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
@@ -4271,9 +5106,9 @@ const LIVE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body>
 <div class="wrap">
   <header>
-    <div class="brand">ACE<b>GROUP</b> <span>· Live</span></div>
+    <div class="brand">ACE<b>GROUP</b> <span>\xB7 Live</span></div>
     <div class="live"><span class="dot"></span>LIVE</div>
-    <div class="upd" id="upd">—</div>
+    <div class="upd" id="upd">\u2014</div>
   </header>
   <div id="content"></div>
 </div>
@@ -4293,9 +5128,9 @@ const LIVE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +stat(t.labour,'Labour')+'</div>';
     var jobs='<div class="panel"><h3>BY JOB</h3>'+(d.jobs.length?d.jobs.map(function(j){
       return '<div class="jrow"><div class="jtop"><div><span class="jcode">'+esc(j.code)+'</span> <span class="jname">'+esc(j.name)+'</span></div>'
-        +'<div class="jmeta">'+j.items+' items · '+j.snags+' snags · '+esc(j.labour)+'</div></div>'
+        +'<div class="jmeta">'+j.items+' items \xB7 '+j.snags+' snags \xB7 '+esc(j.labour)+'</div></div>'
         +bar('Synced',pct(j.synced,j.items),'')+bar('Installed',pct(j.installed,j.items),'green')
-        +(j.openSnags?'<div class="warnpill">⚠ '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+'</div>':'')+'</div>';
+        +(j.openSnags?'<div class="warnpill">\u26A0 '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+'</div>':'')+'</div>';
     }).join(''):'<div style="color:var(--muted);padding:8px 0">No jobs yet.</div>')+'</div>';
     var bd=d.breakdown||[];
     var brk='<div class="panel"><h3>INSTALL STATUS</h3>'+(bd.length?bd.map(function(s){
@@ -4310,7 +5145,7 @@ const LIVE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var r=await fetch('/api/live?key='+encodeURIComponent(KEY));
       if(!r.ok){var e=await r.json().catch(function(){return{};});showMsg(esc(e.error||('Error '+r.status)));return;}
       render(await r.json());
-      var n=new Date();document.getElementById('upd').textContent='updated '+n.toLocaleTimeString()+' · refreshes every 30s';
+      var n=new Date();document.getElementById('upd').textContent='updated '+n.toLocaleTimeString()+' \xB7 refreshes every 30s';
     }catch(err){showMsg('Can\\'t reach the office server. Is it running?');}
   }
   load(); setInterval(load, 30000);
