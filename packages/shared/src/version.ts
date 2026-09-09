@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.78.1';
+export const APP_VERSION = '0.78.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.78.2', date: '2026-09-09', changes: [
+    'Fix: the “Clear screen & delete draft” button on the Excel import panel was invisible — it used a white-on-purple style meant for the selection bar, so it rendered white-on-white on the light toolbar. Both it and the red “Delete items imported” button now have proper import-toolbar styling and are clearly visible.',
+  ] },
   { version: '0.78.1', date: '2026-09-09', changes: [
     'Import from Excel: clearer wording for the two clear/delete buttons. “Clear screen & delete draft” (in the grid toolbar) empties the on-screen grid and resets the file picker so you can re-import an adjusted version of the same sheet — it only clears the draft, not the Items board. A short hint and a tooltip now spell this out, distinct from “Delete items imported to this job”, which removes rows already uploaded to the Items board.',
   ] },

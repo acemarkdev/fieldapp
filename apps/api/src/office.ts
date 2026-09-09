@@ -1654,6 +1654,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   table.impgrid tr.duprow td.stcell{color:#b91c1c;font-weight:800}
   .imp-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
   .imp-summary{font-size:12px;color:var(--muted)}
+  /* Clear/delete buttons on the light import toolbar (the .bulk styles are for the dark bar) */
+  .impclear{font-size:12px;font-weight:700;border-radius:8px;padding:7px 12px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  .impclear:hover{background:#f3f1f9;border-color:var(--purple)}
+  .impdel{font-size:12px;font-weight:700;border-radius:8px;padding:7px 12px;border:none;background:#dc2626;color:#fff;cursor:pointer}
   a.codelink{font-size:10.5px;color:var(--purple);cursor:pointer;text-decoration:none;border-bottom:1px dashed #cfcde0}
   a.codelink:hover{color:var(--magenta);border-bottom-color:var(--magenta)}
   .overlay{position:fixed;inset:0;background:rgba(31,26,61,.45);display:grid;place-items:center;z-index:20;padding:20px}
@@ -2088,7 +2092,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div class="imp-toolbar">
             <button class="add" onclick="saveImportDraft(true)">Save draft</button>
             <button class="newbtn" onclick="commitImport()">Upload to Items</button>
-            <button class="bulk bclear" onclick="clearImportDraft()" title="Empties this grid and the saved draft so you can import a fresh, adjusted file. Does NOT touch items already on the Items board.">Clear screen &amp; delete draft</button>
+            <button class="impclear" onclick="clearImportDraft()" title="Empties this grid and the saved draft so you can import a fresh, adjusted file. Does NOT touch items already on the Items board.">Clear screen &amp; delete draft</button>
             <select id="impStatusSel" class="colfilter" onchange="setImpStatus(this.value)" style="width:auto"><option value="">All rows</option><option value="unfinished">Unfinished only</option><option value="complete">Complete only</option><option value="dupe">Duplicates only</option></select>
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink)"><input type="checkbox" id="impDupChk" checked onchange="setImpDup(this.checked)"> Check duplicates</label>
             <span id="impSummary" class="imp-summary"></span>
@@ -2098,7 +2102,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         </div>
         <div id="impEmpty" class="empty" style="margin-top:6px">No import yet — pick a job on the left, then choose an .xlsx file.</div>
         <div id="impDelWrap" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
-          <button class="bulk bdel" onclick="deleteImportedItems()">Delete items imported to this job</button>
+          <button class="impdel" onclick="deleteImportedItems()">Delete items imported to this job</button>
           <span class="imp-summary" style="margin-left:8px">Removes items previously uploaded from Excel for this job. Items already synced to Monday are kept.</span>
         </div>
       </div>
