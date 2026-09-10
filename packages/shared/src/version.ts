@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.82.0';
+export const APP_VERSION = '0.83.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.83.0', date: '2026-09-10', changes: [
+    'Per-item activity log. Open any item and the drawer now shows an Activity timeline (newest first) — who created it and how (loaded via mapping / import, or added manually), and every change since with the person, their role, the timestamp, and the exact field change (e.g. Width: 640 → 660). Edits now record field-level before→after; item creation records who and via what. Shows the latest 20 with a “show all” link. Requires migration 0040.',
+  ] },
   { version: '0.82.0', date: '2026-09-10', changes: [
     'Items header toolbar redesigned. The mixed buttons are now grouped: job actions (Files, Edit, Delete) sit in one quiet segmented control with Delete as a red trash icon; PO (phase picker + PDF) is a second bound control; and “New item” is the single accent button, pushed to the right. Consistent styling and small icons throughout.',
   ] },

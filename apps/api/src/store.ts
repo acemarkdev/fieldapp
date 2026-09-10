@@ -202,7 +202,7 @@ export async function listJobs(tenantId: string): Promise<Job[]> {
 // ---- audit log (who did what) ----
 export interface AuditEntry {
   tenant_id: string; actor_user_id?: string | null; actor_name?: string | null; actor_role?: string | null;
-  action: string; entity?: string | null; entity_id?: string | null; summary?: string | null;
+  action: string; entity?: string | null; entity_id?: string | null; summary?: string | null; details?: any;
 }
 export async function insertAuditLog(e: AuditEntry): Promise<void> {
   const { error } = await db().from('audit_log').insert(e);
@@ -213,6 +213,25 @@ export async function listAuditLog(tenantId: string, limit = 300): Promise<any[]
     .select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(limit);
   if (error) throw error;
   return data ?? [];
+}
+// All audit rows for a single item (its change timeline).
+export async function listItemActivity(tenantId: string, itemId: string, limit = 200): Promise<any[]> {
+  const { data, error } = await db().from('audit_log')
+    .select('actor_name,actor_role,action,summary,details,created_at')
+    .eq('tenant_id', tenantId).eq('entity', 'item').eq('entity_id', itemId)
+    .order('created_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+// Resolve a set of app_user ids to display names (for the "created by" line).
+export async function userNames(ids: string[]): Promise<Record<string, string>> {
+  const uniq = Array.from(new Set(ids.filter(Boolean)));
+  if (!uniq.length) return {};
+  const { data, error } = await db().from('app_users').select('id,name').in('id', uniq);
+  if (error) throw error;
+  const m: Record<string, string> = {};
+  for (const r of data ?? []) m[(r as any).id] = (r as any).name;
+  return m;
 }
 
 // Does another item in this tenant already use this full_code? (excludes exceptId — the item being edited.)

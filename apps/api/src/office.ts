@@ -19,7 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, toMm } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, listItemActivity, userNames, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -235,8 +235,8 @@ async function context(req: any): Promise<{ id: string; tenant_id: string; role:
 }
 
 // Fire-and-forget audit entry (never blocks or breaks the main request).
-function audit(ctx: any, action: string, entity: string | null, entityId: string | null, summary: string | null): void {
-  insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action, entity, entity_id: entityId, summary })
+function audit(ctx: any, action: string, entity: string | null, entityId: string | null, summary: string | null, details?: any): void {
+  insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action, entity, entity_id: entityId, summary, details: details ?? null })
     .catch((e) => console.warn('[audit]', e?.message ?? e));
 }
 
@@ -631,6 +631,7 @@ const server = createServer(async (req, res) => {
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned',
           block: rBlock, elevation: rElev, floor: floor || null, flat: flat || null, item_code: item,
           item_type: String(r.item_type ?? '').trim() || null, full_code,
+          created_by: ctx.id, created_via: 'mapping', scanned_by: ctx.id,
         });
       }
       try {
@@ -731,6 +732,7 @@ const server = createServer(async (req, res) => {
         results[i] = 'loaded'; loaded++;
         fields.push({
           tenant_id: ctx.tenant_id, job_id: job.id, stage: 'scanned', incomplete, from_import: true,
+          created_by: ctx.id, created_via: 'import',
           block, elevation, floor: floor || null, flat: flat || null, room_code: room || null, item_code: item,
           material: str(r.material), item_type: str(r.item_type), window_type: str(r.window_type),
           glass: str(r.glass), safety_glass: str(r.safety_glass), glazing: str(r.glazing), glazing_bars: str(r.glazing_bars),
@@ -923,6 +925,7 @@ const server = createServer(async (req, res) => {
         open_in_out: str(b.open_in_out), add_ons: str(b.add_ons), coupled: str(b.coupled),
         design_code: str(b.design_code),
         comments: str(b.comments), team_id: b.team_id || null,
+        created_by: ctx.id, created_via: 'manual', surveyed_by: ctx.id,
       };
       try {
         const created = await insertSurveyItem(fields);
@@ -1050,6 +1053,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Per-item activity timeline: creation (who/when/via) + every recorded change, newest first.
+    if (p.startsWith('/api/item/') && p.endsWith('/activity') && req.method === 'GET') {
+      const id = p.split('/')[3];
+      const it: any = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      // Change rows (exclude item.create — the creation event is synthesised from the item row below,
+      // so it's shown once with the created_via origin).
+      const rows = (await listItemActivity(ctx.tenant_id, id)).filter((r: any) => r.action !== 'item.create');
+      const names = await userNames([it.created_by, it.scanned_by, it.surveyed_by].filter(Boolean));
+      const events = rows.map((r: any) => ({
+        at: r.created_at, actor: r.actor_name ?? '—', role: r.actor_role ?? null,
+        action: r.action, summary: r.summary ?? '', changes: Array.isArray(r.details) ? r.details : [],
+      }));
+      const created = {
+        at: it.created_at, actor: (it.created_by && names[it.created_by]) || null,
+        via: it.created_via || null,
+      };
+      send(res, 200, { created, events });
+      return;
+    }
+
     // Raise a snag as its own item (own labour cost + team), optionally with a defect photo.
     if (p.startsWith('/api/item/') && p.endsWith('/snags') && req.method === 'POST') {
       if (!allow('snags.raise')) return;
@@ -1170,8 +1194,15 @@ const server = createServer(async (req, res) => {
       }
       const { error } = await db().from('survey_items').update(patch).eq('id', id);
       if (error) { send(res, 500, { error: error.message }); return; }
-      const fieldsChanged = Object.keys(patch);
-      if (fieldsChanged.length) audit(ctx, 'item.update', 'item', id, `${(patch.full_code as string) || item.full_code}: ${fieldsChanged.join(', ')}`);
+      // Field-level before→after for the item's activity timeline (skip internal-only fields).
+      const HIDE = new Set(['full_code', 'incomplete']);
+      const before: any = item;
+      const changes = Object.keys(patch).filter((k) => !HIDE.has(k)).map((k) => ({
+        field: k, from: before[k] ?? null, to: (patch as any)[k] ?? null,
+      })).filter((c) => String(c.from ?? '') !== String(c.to ?? ''));
+      if (changes.length) {
+        audit(ctx, 'item.update', 'item', id, `${(patch.full_code as string) || item.full_code}: ${changes.map((c) => c.field).join(', ')}`, changes);
+      }
       send(res, 200, { ok: true });
       return;
     }
@@ -1738,6 +1769,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .field.needfill input,.field.needfill select,.field.needfill textarea{background:#fff1e6;box-shadow:inset 0 0 0 1px #e8a570}
   .field.needfill>label::after{content:' • required';font-size:10px;font-weight:700;color:#b45309;letter-spacing:.02em}
   .needfill-note{margin:2px 22px 0;padding:9px 12px;background:#fff1e6;border:1px solid #e8a570;border-radius:8px;color:#8a4406;font-size:12.5px}
+  /* Per-item activity timeline (item drawer) */
+  .actrow{padding:8px 0;border-top:1px solid #f2f0f8}
+  .actrow:first-child{border-top:none}
+  .actmeta{font-size:12.5px;color:var(--ink)}
+  .actwhen{color:var(--muted);font-size:11px;margin-left:8px}
+  .actchg{font-size:12px;color:var(--muted);margin-top:3px}
+  .actfrom{text-decoration:line-through;opacity:.7}
+  .actmore{font-size:12px;color:var(--purple);cursor:pointer;margin-top:8px;display:inline-block}
   /* Excel import grid */
   .imp-wrap{overflow:auto;max-height:60vh;border:1px solid var(--line);border-radius:10px;background:#fff}
   table.impgrid{border-collapse:collapse;font-size:12px;white-space:nowrap}
@@ -4532,9 +4571,52 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<span class="sub" style="margin:0">Save keeps this open; changes mark the item to re-sync to Monday.</span></div>';
     }
     document.getElementById('modalTitle').innerHTML=(d.is_snag?'Snag ':'Item ')+'<span class="mono">'+esc(it.full_code)+'</span>';
+    html+='<div class="groupt" style="padding:12px 22px 0">ACTIVITY</div>'
+      +'<div id="itemActivity" style="padding:2px 22px 20px"><div class="sub">Loading…</div></div>';
     document.getElementById('modalBody').innerHTML=html;
     if(document.getElementById('f_design'))stylePreview(); // show the design sketch if a code is set
     if(specEditable)highlightNeedFill(it); // flag the required fields still to complete
+    loadItemActivity(it.id);
+  }
+  var ACT_LABELS={material:'Material',item_type:'Item type',window_type:'Window type',glass:'Glass',safety_glass:'Safety glass',glazing:'Glazing',glazing_bars:'Glazing bars',cill_depth:'Cill depth',open_in_out:'Open in/out',add_ons:'Add-ons',coupled:'Coupled',design_code:'Design code',comments:'Comments',width_mm:'Width',height_mm:'Height',cill_depth_mm:'Cill depth',transom1_mm:'Transom 1',transom2_mm:'Transom 2',transom3_mm:'Transom 3',mullion1_mm:'Mullion 1',mullion2_mm:'Mullion 2',mullion3_mm:'Mullion 3',transom_equal:'Transoms equal',mullion_equal:'Mullions equal',install_status:'Install status',team_id:'Team',stage:'Stage',po_phase:'PO phase',rate_override_pennies:'Rate override',flat:'Flat',room_code:'Room',floor:'Floor'};
+  function actLabel(f){return ACT_LABELS[f]||f;}
+  function actVal(f,v){
+    if(v==null||v==='')return '—';
+    if(f==='install_status')return ISTATUS_LABEL[v]||v;
+    if(f==='team_id')return teamName(v)||v;
+    if(f==='stage')return (STAGE[v]||v);
+    if(f==='room_code')return roomLabel(v);
+    if(f==='rate_override_pennies')return '£'+(Number(v)/100);
+    return String(v);
+  }
+  function actWhen(iso){ try{ return new Date(iso).toLocaleString('en-GB'); }catch(e){ return ''; } }
+  function actRowHtml(ev){
+    var verb=ev.action==='item.sync'?'synced to Monday':(ev.action==='item.update'?'edited':(ev.action==='import.commit'?'imported':ev.action));
+    var chips='';
+    (ev.changes||[]).forEach(function(c){ chips+='<div class="actchg">'+esc(actLabel(c.field))+': <span class="actfrom">'+esc(actVal(c.field,c.from))+'</span> &rarr; <b>'+esc(actVal(c.field,c.to))+'</b></div>'; });
+    if(!chips&&ev.summary)chips='<div class="actchg">'+esc(ev.summary)+'</div>';
+    return '<div class="actrow"><div class="actmeta"><b>'+esc(ev.actor||'—')+'</b>'+(ev.role?(' <span style="color:var(--muted)">('+esc(ev.role)+')</span>'):'')+' '+esc(verb)+'<span class="actwhen">'+esc(actWhen(ev.at))+'</span></div>'+chips+'</div>';
+  }
+  var _actAll=[], _actShown=0;
+  async function loadItemActivity(id){
+    var box=document.getElementById('itemActivity'); if(!box)return;
+    var d; try{ d=await (await api('/api/item/'+encodeURIComponent(id)+'/activity')).json(); }catch(e){ box.innerHTML='<div class="sub">Could not load activity.</div>'; return; }
+    _actAll=(d.events||[]);
+    _actCreated=d.created;
+    _actShown=Math.min(20,_actAll.length);
+    renderItemActivity();
+  }
+  var _actCreated=null;
+  function renderItemActivity(){
+    var box=document.getElementById('itemActivity'); if(!box)return;
+    var html='';
+    for(var i=0;i<_actShown;i++){ html+=actRowHtml(_actAll[i]); }
+    if(_actShown<_actAll.length){ html+='<span class="actmore" onclick="_actShown=_actAll.length;renderItemActivity()">Show all '+_actAll.length+' changes</span>'; }
+    if(_actCreated&&_actCreated.at){
+      html+='<div class="actrow"><div class="actmeta"><b>'+esc(_actCreated.actor||'—')+'</b> created this item'+(_actCreated.via?(' via '+esc(_actCreated.via)):'')+'<span class="actwhen">'+esc(actWhen(_actCreated.at))+'</span></div></div>';
+    }
+    if(!html)html='<div class="sub">No recorded activity yet.</div>';
+    box.innerHTML=html;
   }
   // Highlight (in the Unfinished colour) the required fields that are still empty, so the user
   // knows exactly what to fill in to mark the item finished.
