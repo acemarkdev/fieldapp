@@ -530,6 +530,7 @@ const server = createServer(async (req, res) => {
       send(res, 200, jobs.map((j) => ({
         id: j.id, code: `${j.client_code}.${j.job_code}`, name: j.name, site_code: (j as any).site_code ?? null,
         status: (j as any).status ?? 'new', mapping_start_date: (j as any).mapping_start_date ?? null,
+        programme_end: (j as any).programme_end ?? null,
       })));
       return;
     }
@@ -1779,6 +1780,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .slabel{font-size:10px;font-weight:700;color:#9a97ad;letter-spacing:.05em;padding:8px 22px}
   .job{padding:9px 22px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--muted);cursor:pointer;border-left:4px solid transparent}
   .job.on{color:var(--purple);font-weight:700;background:var(--soft);border-left-color:var(--magenta)}
+  .jobgrp{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:11px 14px 4px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+  .jobgrp:hover{color:var(--purple)}
+  .jobgrp-ar{width:10px;display:inline-block;font-size:10px}
+  .jobgrp-n{margin-left:auto;background:var(--soft);border-radius:999px;padding:1px 8px;font-size:10px;color:var(--muted)}
   main{flex:1;padding:22px 26px;overflow:auto}
   h2{font-size:19px;color:var(--purple)}h2 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
   .sub{font-size:12px;color:var(--muted);margin:4px 0 16px}
@@ -2180,7 +2185,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <label style="font-size:12.5px;color:var(--muted)">Build a plan for job
           <select id="mapJobPick" onchange="mapPickJob(this.value)" style="min-width:340px;margin-left:8px"></select>
         </label>
-        <span id="mapPickNote" class="sub" style="margin:0"></span>
       </div>
 
       <div class="card2" id="importCard" style="margin:14px 0;padding:16px 18px">
@@ -2395,19 +2399,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(!r.ok){tShow('Could not generate the report.');return null;}return r.blob();
     }).then(function(b){ if(!b)return; var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=code+'-install.pdf';document.body.appendChild(a);a.click();a.remove(); });
   }
-  var JOB_STATUS={}, JOB_MAPDATE={}, JOBS_BY_ID={};
+  var JOB_STATUS={}, JOB_MAPDATE={}, JOBS_BY_ID={}, mapJob='';
   // ---- Mapping (scanner pre-load) ----
+  function mapJobId(){ return mapJob||''; }
+  function mapJobCode(){ var j=JOBS_BY_ID[mapJob]; return j?j.code:''; }
   function loadMapping(){
     var box=document.getElementById('mapBody');
-    if(!current||current==='ALL'){ document.getElementById('mapSub').textContent='Pick a job from the left to start mapping.'; box.innerHTML='<div class="empty">Pick a job from the left.</div>'; return; }
-    var status=JOB_STATUS[current]||'';
-    document.getElementById('mapSub').innerHTML='Job <b>'+esc((JOBS_BY_ID[current]||{}).site_code||curCode())+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
+    if(!mapJob){ document.getElementById('mapSub').textContent='Pick a job above to build its plan.'; box.innerHTML='<div class="empty">Choose a job from the “Build a plan for job” list above to start.</div>'; return; }
+    var status=JOB_STATUS[mapJob]||'';
+    document.getElementById('mapSub').innerHTML='Job <b>'+esc((JOBS_BY_ID[mapJob]||{}).site_code||mapJobCode())+'</b> · status: <b>'+esc(status.replace('_',' '))+'</b>';
     if(status!=='pending_mapping'){
       if(canCap('jobs.manage')){
         box.innerHTML='<div class="card2" style="padding:16px;max-width:480px">'
           +'<div style="font-weight:800;margin-bottom:4px">Release this job for mapping</div>'
           +'<div class="sub" style="margin-bottom:10px">Assign a mapping start date to make this job visible to scanners.</div>'
-          +'<div style="display:flex;gap:10px;align-items:center"><input type="date" id="mapDate" value="'+esc(JOB_MAPDATE[current]||'')+'"><button class="save" id="mapDateBtn">Assign date</button></div></div>';
+          +'<div style="display:flex;gap:10px;align-items:center"><input type="date" id="mapDate" value="'+esc(JOB_MAPDATE[mapJob]||'')+'"><button class="save" id="mapDateBtn">Assign date</button></div></div>';
         document.getElementById('mapDateBtn').addEventListener('click',assignMapDate);
       } else box.innerHTML='<div class="empty">This job isn\\'t ready for mapping yet — an admin needs to assign a mapping start date.</div>';
       return;
@@ -2417,19 +2423,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // Job picker at the top of Mapping: only jobs with no items yet, grouped by programme status.
   async function loadMappingJobs(){
     var sel=document.getElementById('mapJobPick'); if(!sel)return;
-    var note=document.getElementById('mapPickNote');
-    var d; try{ d=await (await api('/api/mapping-jobs')).json(); }catch(e){ if(note)note.textContent='Could not load jobs.'; return; }
+    var d; try{ d=await (await api('/api/mapping-jobs')).json(); }catch(e){ return; }
     function grp(label,arr){ if(!arr||!arr.length)return ''; return '<optgroup label="'+esc(label)+'">'+arr.map(function(j){return '<option value="'+av(j.id)+'">'+esc(j.site_code||j.code)+' — '+esc(j.name)+(j.programme_end?(' · ends '+esc(j.programme_end)):'')+'</option>';}).join('')+'</optgroup>'; }
     var total=(d.live.length+d.pending.length+d.done.length);
-    sel.innerHTML='<option value="">— '+(total?('pick a job to build ('+total+' with no items)'):'no jobs without items')+' —</option>'
+    sel.innerHTML='<option value="">— '+(total?'pick a job to build':'no jobs without items')+' —</option>'
       +grp('Live',d.live)+grp('Pending',d.pending)+grp('Job done',d.done);
-    if(current&&current!=='ALL'){ var o=sel.querySelector('option[value="'+current+'"]'); if(o)sel.value=current; }
-    if(note)note.textContent=total?('Live '+d.live.length+' · Pending '+d.pending.length+' · Job done '+d.done.length):'All jobs already have items.';
+    // Keep the current mapping selection if it's still buildable; otherwise show the placeholder.
+    if(mapJob&&sel.querySelector('option[value="'+mapJob+'"]')) sel.value=mapJob; else { mapJob=''; sel.value=''; }
   }
   function mapPickJob(id){
-    if(!id)return;
-    current=id;
-    document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});
+    mapJob=id||'';
+    if(mapJob){ current=mapJob; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
     loadMapping(); loadImport();
   }
 
@@ -2700,10 +2704,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
 
   async function assignMapDate(){
+    var jid=mapJob; if(!jid){tShow('Pick a job first');return;}
     var date=document.getElementById('mapDate').value;
     if(!date){tShow('Pick a date');return;}
-    var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-date',{method:'POST',body:JSON.stringify({date:date})})).json();
-    if(d.ok){JOB_STATUS[current]='pending_mapping';JOB_MAPDATE[current]=date;tShow('Released for mapping');loadMapping();}
+    var d=await (await api('/api/job/'+encodeURIComponent(jid)+'/mapping-date',{method:'POST',body:JSON.stringify({date:date})})).json();
+    if(d.ok){JOB_STATUS[jid]='pending_mapping';JOB_MAPDATE[jid]=date;tShow('Released for mapping');loadMapping();}
     else tShow(d.error||'Failed');
   }
   // Auto-prefix a letter only when the value is a plain number ("1"->"F1"); labels like GF stay as typed.
@@ -2747,6 +2752,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function mapBlockVal(){ var e=document.getElementById('map_block'); return e?e.value.trim().toUpperCase():''; }
   // Build one floor grid per elevation (each with its own window/door counts to fill).
   function buildElevGrids(){
+    if(!mapJobId()){tShow('Pick a job to build first');return;}
     var block=mapBlockVal(); if(!block){tShow('Enter a Block first');return;}
     var nE=Math.min(60,Math.max(1,parseInt(document.getElementById('map_nelev').value,10)||1));
     var nF=Math.min(60,Math.max(1,parseInt(document.getElementById('map_nfloors').value,10)||1));
@@ -2775,12 +2781,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function floorSeg(flat){ if(!flat) return ''; return /^[0-9]+$/.test(flat) ? ('F'+flat) : flat.toUpperCase(); }
   function levelOf(floor,flat){ return (flat&&String(flat).trim()!=='')?flat:floor; }
   function mapCode(block,elev,floor,flat,item){
-    var parts=curCode().split('.');
+    var parts=mapJobCode().split('.');
     return [parts[0],parts[1],block,elev,floorSeg(levelOf(floor,flat)),item].filter(function(x){return x;}).join('.');
   }
   function stripF(v){ return String(v||'').trim().replace(/^F(?=[0-9])/i,''); } // "F1"->"1", "GF" stays
   // Preload: expand every elevation x floor x (W1..Wn, D1..Dn) into review rows carrying their elevation.
   function mapPreload(){
+    if(!mapJobId()){tShow('Pick a job to build first');return;}
     var block=mapBlockVal();
     var rows=[];
     document.querySelectorAll('#elevGrids .elevcard').forEach(function(card){
@@ -2854,6 +2861,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function mapAddRow(){ var tb=document.getElementById('mapTbody'); if(!tb)return; tb.appendChild(makeMapRow({elevation:'',floor:'',flat:'',item:'',type:'Window'})); updateSaveCount(); }
   function updateSaveCount(){ var n=document.querySelectorAll('#mapTbody tr').length; var b=document.getElementById('mapSaveBtn'); if(b)b.textContent='Save '+n+' item'+(n===1?'':'s'); }
   async function mapSave(){
+    var jid=mapJobId(); if(!jid){tShow('Pick a job to build first');return;}
     var block=mapBlockVal();
     var out=[];
     document.querySelectorAll('#mapTbody tr').forEach(function(tr){
@@ -2870,23 +2878,40 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     });
     if(!out.length){tShow('Nothing to save');return;}
     tShow('Saving '+out.length+' item(s)...');
-    var d=await (await api('/api/job/'+encodeURIComponent(current)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:'',rows:out})})).json();
-    if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); loadItems(); }
+    var d=await (await api('/api/job/'+encodeURIComponent(jid)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:'',rows:out})})).json();
+    if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); loadItems(); loadMappingJobs(); }
     else tShow(d.error||'Save failed');
   }
 
+  // Build one job row element (not appended). Jobs are addressed by uuid; the label is the site
+  // code, tooltip the client.job code.
+  function mkEl(id,label,tip){
+    var d=document.createElement('div');d.className='job'+(id===current?' on':'');d.textContent=label;d.title=tip||'';d.setAttribute('data-code',id);
+    d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';poFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});
+      if(sessionStorage.getItem('ace_tab')==='mapping'){ mapJob=(id==='ALL'?'':id); var sp=document.getElementById('mapJobPick'); if(sp){ sp.value=(sp.querySelector('option[value="'+id+'"]')?id:''); } loadMapping(); loadImport(); }
+      else loadItems();};
+    if(id!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(id);};d.appendChild(b);}
+    return d;
+  }
   async function loadJobs(){
     var jobs=await (await api('/api/jobs')).json(); var el=document.getElementById('jobs');el.innerHTML='';
     JOB_STATUS={}; JOB_MAPDATE={}; JOBS_BY_ID={};
-    // Jobs are addressed by their uuid id (two jobs may share a client.job code); the left list
-    // shows the free-text site code, tooltip shows the client.job code.
     jobs.forEach(function(j){ JOBS_BY_ID[j.id]=j; JOB_STATUS[j.id]=j.status||'pending_mapping'; JOB_MAPDATE[j.id]=j.mapping_start_date||''; });
-    function mk(id,label,tip){var d=document.createElement('div');d.className='job'+(id===current?' on':'');d.textContent=label;d.title=tip||'';d.setAttribute('data-code',id);
-      d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';poFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMappingJobs();loadMapping();loadImport();}else loadItems();};
-      if(id!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(id);};d.appendChild(b);}
-      el.appendChild(d);}
-    if(myRole!=='scanner')mk('ALL','▦ All jobs','ALL');
-    jobs.forEach(function(j){mk(j.id,(j.site_code||j.code),j.code);});
+    if(myRole!=='scanner') el.appendChild(mkEl('ALL','▦ All jobs','ALL'));
+    // Group by programme status: Live (end date still to come), Pending (no date), Job done (end passed).
+    var today=new Date().toISOString().slice(0,10);
+    var G={live:[],pending:[],done:[]};
+    jobs.forEach(function(j){ var pe=j.programme_end||''; G[!pe?'pending':(pe<today?'done':'live')].push(j); });
+    [['live','Live'],['pending','Pending'],['done','Job done']].forEach(function(pr){
+      var arr=G[pr[0]]; if(!arr.length)return;
+      var collapsed=localStorage.getItem('ace_jobgrp_'+pr[0])==='1';
+      var hdr=document.createElement('div'); hdr.className='jobgrp';
+      hdr.innerHTML='<span class="jobgrp-ar">'+(collapsed?'▸':'▾')+'</span> '+esc(pr[1])+' <span class="jobgrp-n">'+arr.length+'</span>';
+      var wrap=document.createElement('div'); wrap.className='jobgrpwrap'; if(collapsed)wrap.style.display='none';
+      hdr.onclick=function(){ var show=wrap.style.display==='none'; wrap.style.display=show?'':'none'; hdr.querySelector('.jobgrp-ar').textContent=show?'▾':'▸'; localStorage.setItem('ace_jobgrp_'+pr[0],show?'0':'1'); };
+      arr.forEach(function(j){ wrap.appendChild(mkEl(j.id,(j.site_code||j.code),j.code)); });
+      el.appendChild(hdr); el.appendChild(wrap);
+    });
     // Scanner (or an empty/stale current) lands on the first available job.
     if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].id; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
   }

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.81.0';
+export const APP_VERSION = '0.81.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.81.1', date: '2026-09-10', changes: [
+    'Mapping fix: building a plan now requires explicitly picking a job in the “Build a plan for job” list. If nothing is picked, Build grid / Preload / Save are blocked (they no longer silently save to the first job). The job list on the left of the Items screen is now grouped into collapsible sections — Live, Pending and Job done (by programme end date) — with a count per group and each group remembers whether it’s open. Removed the counts line beside the Mapping picker.',
+  ] },
   { version: '0.81.0', date: '2026-09-10', changes: [
     'Mapping: a job picker at the top of the screen to choose which job to build a plan for. It lists only jobs that don’t have any items yet, grouped by programme status — Live (a programme end date still to come), Pending (no date), and Job done (programme end date has passed). No migration needed.',
   ] },
