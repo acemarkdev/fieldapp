@@ -19,7 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, toMm } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -579,6 +579,25 @@ const server = createServer(async (req, res) => {
       if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { send(res, 400, { error: 'Use a valid date (YYYY-MM-DD).' }); return; }
       await setJobMappingDate(job.id, date, ctx.tenant_id);
       send(res, 200, { ok: true, status: date ? 'pending_mapping' : 'new' });
+      return;
+    }
+
+    // Jobs available to map (0 items yet), grouped by programme status for the Mapping picker.
+    if (p === '/api/mapping-jobs' && req.method === 'GET') {
+      if (!allow('items.create')) return;
+      const jobs = await listJobs(ctx.tenant_id);
+      const counts = await jobItemCounts(ctx.tenant_id);
+      const today = new Date().toISOString().slice(0, 10);
+      const live: any[] = [], pending: any[] = [], done: any[] = [];
+      for (const j of jobs) {
+        if ((counts[j.id] ?? 0) > 0) continue;                 // only jobs with no items yet
+        const pe = (j as any).programme_end || null;
+        const e = { id: j.id, code: `${j.client_code}.${j.job_code}`, site_code: (j as any).site_code ?? null, name: j.name, programme_end: pe };
+        if (!pe) pending.push(e);
+        else if (pe < today) done.push(e);
+        else live.push(e);
+      }
+      send(res, 200, { live, pending, done });
       return;
     }
 
@@ -2157,6 +2176,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <h2>Mapping</h2>
       <div class="sub" id="mapSub">Import a survey sheet, or pre-load a job's items floor by floor.</div>
 
+      <div class="card2" id="mapPickCard" style="margin:14px 0;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:12.5px;color:var(--muted)">Build a plan for job
+          <select id="mapJobPick" onchange="mapPickJob(this.value)" style="min-width:340px;margin-left:8px"></select>
+        </label>
+        <span id="mapPickNote" class="sub" style="margin:0"></span>
+      </div>
+
       <div class="card2" id="importCard" style="margin:14px 0;padding:16px 18px">
         <div style="font-weight:800;font-size:14px;margin-bottom:3px">Import from Excel</div>
         <div class="sub" style="margin:0 0 12px">Upload a survey sheet (the <b>Main</b> tab). Rows load into an editable, filterable grid below and are saved as a draft for this job. When you're ready, <b>Upload to Items</b> — any row missing required data is created as <b>Unfinished</b> so you can complete it later.</div>
@@ -2387,6 +2413,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       return;
     }
     renderMapBuilder(box);
+  }
+  // Job picker at the top of Mapping: only jobs with no items yet, grouped by programme status.
+  async function loadMappingJobs(){
+    var sel=document.getElementById('mapJobPick'); if(!sel)return;
+    var note=document.getElementById('mapPickNote');
+    var d; try{ d=await (await api('/api/mapping-jobs')).json(); }catch(e){ if(note)note.textContent='Could not load jobs.'; return; }
+    function grp(label,arr){ if(!arr||!arr.length)return ''; return '<optgroup label="'+esc(label)+'">'+arr.map(function(j){return '<option value="'+av(j.id)+'">'+esc(j.site_code||j.code)+' — '+esc(j.name)+(j.programme_end?(' · ends '+esc(j.programme_end)):'')+'</option>';}).join('')+'</optgroup>'; }
+    var total=(d.live.length+d.pending.length+d.done.length);
+    sel.innerHTML='<option value="">— '+(total?('pick a job to build ('+total+' with no items)'):'no jobs without items')+' —</option>'
+      +grp('Live',d.live)+grp('Pending',d.pending)+grp('Job done',d.done);
+    if(current&&current!=='ALL'){ var o=sel.querySelector('option[value="'+current+'"]'); if(o)sel.value=current; }
+    if(note)note.textContent=total?('Live '+d.live.length+' · Pending '+d.pending.length+' · Job done '+d.done.length):'All jobs already have items.';
+  }
+  function mapPickJob(id){
+    if(!id)return;
+    current=id;
+    document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});
+    loadMapping(); loadImport();
   }
 
   // ---- Excel import (Operations ▸ Mapping ▸ Import from Excel) ----
@@ -2838,7 +2882,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     // shows the free-text site code, tooltip shows the client.job code.
     jobs.forEach(function(j){ JOBS_BY_ID[j.id]=j; JOB_STATUS[j.id]=j.status||'pending_mapping'; JOB_MAPDATE[j.id]=j.mapping_start_date||''; });
     function mk(id,label,tip){var d=document.createElement('div');d.className='job'+(id===current?' on':'');d.textContent=label;d.title=tip||'';d.setAttribute('data-code',id);
-      d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';poFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMapping();loadImport();}else loadItems();};
+      d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';poFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});if(sessionStorage.getItem('ace_tab')==='mapping'){loadMappingJobs();loadMapping();loadImport();}else loadItems();};
       if(id!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(id);};d.appendChild(b);}
       el.appendChild(d);}
     if(myRole!=='scanner')mk('ALL','▦ All jobs','ALL');
@@ -3336,7 +3380,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var _tbl=document.getElementById('tabBilling'); if(_tbl)_tbl.classList.toggle('on',name==='billing');
     if(name==='items')loadItems(); // always refresh (e.g. after saving in Mapping)
     if(name==='dashboard')loadDashboard();
-    if(name==='mapping'){loadMapping();loadImport();}
+    if(name==='mapping'){loadMappingJobs();loadMapping();loadImport();}
     if(name==='teams')loadTeams();
     if(name==='sync')loadSync();
     if(name==='plans')loadPlansTab();

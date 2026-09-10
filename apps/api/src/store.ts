@@ -166,6 +166,15 @@ export async function countItemsForJob(jobId: string): Promise<number> {
   return count ?? 0;
 }
 
+// Item count per job for a tenant (one query) — used by the Mapping job picker (jobs with 0 items).
+export async function jobItemCounts(tenantId: string): Promise<Record<string, number>> {
+  const { data, error } = await db().from('survey_items').select('job_id').eq('tenant_id', tenantId);
+  if (error) throw error;
+  const m: Record<string, number> = {};
+  for (const r of data ?? []) { const id = (r as any).job_id; if (id) m[id] = (m[id] ?? 0) + 1; }
+  return m;
+}
+
 export async function deleteJob(id: string, tenantId: string): Promise<void> {
   const { error } = await db().from('jobs').delete().eq('id', id).eq('tenant_id', tenantId);
   if (error) throw error;
