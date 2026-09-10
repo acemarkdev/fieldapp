@@ -1720,7 +1720,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .bulk.bsel{background:#fff;color:var(--ink);border:1px solid #cfc9ea}
   .bulk.bdel{background:#dc2626;color:#fff}
   .bulk.bclear{background:rgba(255,255,255,.16);color:#fff;margin-left:auto}
-  .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
+  .newbtn{background:var(--magenta);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+  /* Segmented header action groups (job actions, PO) — quiet ghost buttons bound in one pill */
+  .segbar{display:inline-flex;align-items:stretch;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff;vertical-align:middle}
+  .segbar>*+*{border-left:1px solid #ece9f4}
+  .segbtn{background:none;border:none;padding:8px 13px;font-size:13px;color:var(--purple);cursor:pointer;display:inline-flex;align-items:center;gap:6px;line-height:1;white-space:nowrap}
+  .segbtn:hover{background:var(--soft)}
+  .segbtn.danger{color:#b42318}
+  .segbtn.danger:hover{background:#fdecec}
+  .seglabel{font-size:11px;font-weight:700;letter-spacing:.03em;color:var(--muted);padding:0 10px;display:inline-flex;align-items:center;background:#faf9fd}
+  .segsel{border:none;border-radius:0;padding:8px 10px;font-size:13px;background:none;color:var(--ink);cursor:pointer}
+  .segbtn svg,.newbtn svg{flex:0 0 auto}
   .snagtag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:var(--magenta);padding:2px 5px;border-radius:5px;vertical-align:middle}
   .unfintag{font-size:9px;font-weight:800;letter-spacing:.03em;color:#fff;background:#b45309;padding:2px 5px;border-radius:5px;vertical-align:middle}
   /* Required-but-empty fields on the item edit form (same colour as the Unfinished badge) */
@@ -1951,12 +1961,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <button class="jobstoggle" onclick="toggleJobs()" title="Show/hide the Jobs panel">☰ Jobs</button>
           <div><h2 id="title">—</h2><div class="sub" id="subtitle"></div></div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center">
-          <button id="filesBtn" class="jobstoggle" style="display:none" onclick="openJobFiles(current)">Files</button>
-          <button id="editJobBtn" class="jobstoggle" style="display:none" onclick="openEditJob(current)">Edit job</button>
-          <button id="delJobBtn" class="del" style="display:none" onclick="delJob()">Delete job</button>
-          <span id="poPdfWrap" style="display:none;gap:6px;align-items:center"><span style="font-size:12px;color:var(--muted)">PO</span><select id="poPhaseSel" class="colfilter" style="width:auto" title="PO phase"></select><button class="add" onclick="downloadPoPdf()" title="Download the purchase-order PDF for this PO phase (Surveyed items)">PO PDF</button></span>
-          <button id="newBtn" class="newbtn" onclick="openCreate()">+ New item</button>
+        <div style="display:flex;gap:12px;align-items:center">
+          <span id="jobActions" class="segbar" style="display:none">
+            <button id="filesBtn" class="segbtn" onclick="openJobFiles(current)" title="Job files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Files</button>
+            <button id="editJobBtn" class="segbtn" style="display:none" onclick="openEditJob(current)" title="Edit job"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Edit</button>
+            <button id="delJobBtn" class="segbtn danger" style="display:none" onclick="delJob()" title="Delete job" aria-label="Delete job"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg></button>
+          </span>
+          <span id="poPdfWrap" class="segbar" style="display:none">
+            <span class="seglabel">PO</span>
+            <select id="poPhaseSel" class="segsel" style="width:auto" title="PO phase"></select>
+            <button class="segbtn" onclick="downloadPoPdf()" title="Download the purchase-order PDF for this PO phase (Surveyed items)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>PDF</button>
+          </span>
+          <button id="newBtn" class="newbtn" onclick="openCreate()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New item</button>
         </div>
       </div>
       <div id="itemFilters" class="chips">
@@ -3129,9 +3145,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('title').innerHTML='<span class="mono">'+data.job.code+'</span> — '+esc(data.job.name)+pc;
     document.getElementById('subtitle').textContent=(current==='ALL'?'All jobs · ':'Monday board: '+(data.job.board||'(not linked)')+' · ')+'edits save to the store; use Sync to push to Monday';
     document.getElementById('newBtn').style.display=(current==='ALL')?'none':'';
-    document.getElementById('delJobBtn').style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
-    document.getElementById('filesBtn').style.display=(current!=='ALL')?'':'none';
-    var ejb=document.getElementById('editJobBtn'); if(ejb)ejb.style.display=(current!=='ALL'&&canCap('jobs.manage'))?'':'none';
+    document.getElementById('jobActions').style.display=(current!=='ALL')?'':'none';
+    document.getElementById('filesBtn').style.display='';
+    document.getElementById('delJobBtn').style.display=canCap('jobs.manage')?'':'none';
+    var ejb=document.getElementById('editJobBtn'); if(ejb)ejb.style.display=canCap('jobs.manage')?'':'none';
     // header column filters: distinct flats (this job) + all statuses
     var flats=[]; (itemsData.items||[]).forEach(function(it){var f=it.flat||''; if(f&&flats.indexOf(f)<0)flats.push(f);});
     flats.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});
