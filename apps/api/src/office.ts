@@ -2879,7 +2879,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!out.length){tShow('Nothing to save');return;}
     tShow('Saving '+out.length+' item(s)...');
     var d=await (await api('/api/job/'+encodeURIComponent(jid)+'/mapping-items',{method:'POST',body:JSON.stringify({block:block,elevation:'',rows:out})})).json();
-    if(d.ok){ document.getElementById('mapSaveNote').textContent=d.inserted+' created'+(d.skipped?(', '+d.skipped+' already existed'):''); tShow(d.inserted+' item(s) created'); loadItems(); loadMappingJobs(); }
+    if(d.ok){
+      tShow(d.inserted+' item(s) created'+(d.skipped?(' · '+d.skipped+' already existed'):''));
+      // Clear the preloaded table so the user doesn't think it's still pending.
+      var tw=document.getElementById('mapTableWrap'); if(tw)tw.innerHTML='';
+      var ft=document.getElementById('mapFooter'); if(ft)ft.style.display='none';
+      loadItems(); loadMappingJobs();
+    }
     else tShow(d.error||'Save failed');
   }
 
