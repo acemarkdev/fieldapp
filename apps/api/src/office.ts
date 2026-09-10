@@ -204,7 +204,7 @@ const itemRow = (it: any, job: any, teams: any[]) => ({
   id: it.id, full_code: it.full_code, block: it.block ?? null, elevation: it.elevation ?? null, floor: it.floor ?? null,
   flat: it.flat, room: it.room_code, item: it.item_code, stage: it.stage,
   kind: it.kind ?? 'item', snag_comment: it.snag_comment ?? null, incomplete: !!it.incomplete,
-  po_phase: it.po_phase ?? null,
+  po_phase: it.po_phase ?? null, po_ready: !!it.po_ready_at,
   install_status: it.install_status, team_id: it.team_id, rate_override_pennies: it.rate_override_pennies,
   effective_rate: formatPennies(effectiveRatePennies(it, teams)),
   synced: !!it.monday_item_id,
@@ -986,14 +986,15 @@ const server = createServer(async (req, res) => {
         if (raw === '') { const n = await bulkUpdateItems(allowed, { po_phase: null }, ctx.tenant_id); send(res, 200, { ok: true, updated: n }); return; }
         const ph = Math.round(Number(raw));
         if (!Number.isFinite(ph) || ph < 1) { send(res, 400, { error: 'PO phase must be a whole number (1 or higher).' }); return; }
-        let updated = 0, skipped = 0;
+        let updated = 0, skipped = 0, locked = 0;
         for (const id of allowed) {
           const it: any = await getSurveyItem(id);
           if (it.stage !== 'surveyed') { skipped++; continue; }
-          const { error } = await db().from('survey_items').update({ po_phase: ph }).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          if (it.po_ready_at && ctx.role !== 'admin') { locked++; continue; }  // ready-for-PO lock
+          const { error } = await db().from('survey_items').update({ po_phase: ph, po_ready_by: null, po_ready_at: null }).eq('id', id).eq('tenant_id', ctx.tenant_id);
           if (!error) updated++;
         }
-        send(res, 200, { ok: true, updated, skipped }); return;
+        send(res, 200, { ok: true, updated, skipped: skipped + locked, locked }); return;
       }
       if (action === 'delete') {
         // Destructive — managers only (matches the DB delete policy: admin/office).
@@ -1162,14 +1163,16 @@ const server = createServer(async (req, res) => {
       // a Surveyed item (clearing it is always allowed). Uses the item's current stage unless this
       // same request is also promoting it to 'surveyed'.
       if ('po_phase' in body) {
+        // A phase marked "ready for PO" is locked — only an admin can change items in it.
+        if ((item as any).po_ready_at && ctx.role !== 'admin') { send(res, 400, { error: 'This PO phase is marked ready for PO and is locked — only an admin can change it.' }); return; }
         const raw = body.po_phase;
-        if (raw === '' || raw == null) { patch.po_phase = null; }
+        if (raw === '' || raw == null) { patch.po_phase = null; patch.po_ready_by = null; patch.po_ready_at = null; }
         else {
           const n = Math.round(Number(raw));
           if (!Number.isFinite(n) || n < 1) { send(res, 400, { error: 'PO phase must be a whole number (1 or higher).' }); return; }
           const effectiveStage = (patch.stage as string) ?? item.stage;
           if (effectiveStage !== 'surveyed') { send(res, 400, { error: 'A PO phase can only be assigned once the item is Surveyed.' }); return; }
-          patch.po_phase = n;
+          patch.po_phase = n; patch.po_ready_by = null; patch.po_ready_at = null;
         }
       }
       // Editing Flat / Room rebuilds the item code — allowed only until it's synced to Monday.
@@ -1472,6 +1475,40 @@ const server = createServer(async (req, res) => {
       }
       return;
     }
+    // Mark a PO phase "ready for PO": stamps its Surveyed items with who/when and locks phase changes.
+    if (p.startsWith('/api/job/') && p.endsWith('/po-ready') && req.method === 'POST') {
+      if (!allow('items.edit')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const phase = Math.round(Number(url.searchParams.get('phase')));
+      if (!Number.isFinite(phase) || phase < 1) { send(res, 400, { error: 'Pick a valid PO phase.' }); return; }
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const { data, error } = await db().from('survey_items')
+        .update({ po_ready_by: ctx.id, po_ready_at: new Date().toISOString() })
+        .eq('tenant_id', ctx.tenant_id).eq('job_id', job.id).eq('po_phase', phase).eq('stage', 'surveyed').select('id');
+      if (error) { send(res, 500, { error: error.message }); return; }
+      const n = data?.length ?? 0;
+      audit(ctx, 'po.ready', 'job', code, `Marked PO phase ${phase} ready for PO — ${n} item(s) locked`);
+      send(res, 200, { ok: true, count: n });
+      return;
+    }
+    // Unlock a PO phase (admin only): clears the ready stamp so items can be re-assigned.
+    if (p.startsWith('/api/job/') && p.endsWith('/po-unlock') && req.method === 'POST') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin can unlock a PO phase.' }); return; }
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const phase = Math.round(Number(url.searchParams.get('phase')));
+      if (!Number.isFinite(phase) || phase < 1) { send(res, 400, { error: 'Pick a valid PO phase.' }); return; }
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const { data, error } = await db().from('survey_items')
+        .update({ po_ready_by: null, po_ready_at: null })
+        .eq('tenant_id', ctx.tenant_id).eq('job_id', job.id).eq('po_phase', phase).select('id');
+      if (error) { send(res, 500, { error: error.message }); return; }
+      audit(ctx, 'po.unlock', 'job', code, `Unlocked PO phase ${phase} — ${data?.length ?? 0} item(s)`);
+      send(res, 200, { ok: true, count: data?.length ?? 0 });
+      return;
+    }
+
     // Purchase-order PDF for one PO phase (Surveyed items only). Browser downloads it.
     if (p.startsWith('/api/job/') && p.endsWith('/po.pdf') && req.method === 'GET') {
       if (!allow('items.edit')) return;
@@ -1482,7 +1519,7 @@ const server = createServer(async (req, res) => {
       try { job = await getJobByRef(code); } catch { send(res, 404, { error: 'Job not found' }); return; }
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       try {
-        const { buffer } = await buildJobPoPdf(code, ctx.tenant_id, phase);
+        const { buffer } = await buildJobPoPdf(code, ctx.tenant_id, phase, ctx.name);
         res.writeHead(200, {
           'content-type': 'application/pdf',
           'content-disposition': `attachment; filename="${job.client_code}.${job.job_code}-PO-phase-${phase}.pdf"`,
@@ -2008,8 +2045,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           </span>
           <span id="poPdfWrap" class="segbar" style="display:none">
             <span class="seglabel">PO</span>
-            <select id="poPhaseSel" class="segsel" style="width:auto" title="PO phase"></select>
+            <select id="poPhaseSel" class="segsel" style="width:auto" title="PO phase" onchange="poPhasePick()"></select>
             <button class="segbtn" onclick="downloadPoPdf()" title="Download the purchase-order PDF for this PO phase (Surveyed items)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>PDF</button>
+            <button id="poReadyBtn" class="segbtn" onclick="poReadyClick()" title="Mark this PO phase ready for ordering (locks items from phase changes)"></button>
           </span>
           <button id="newBtn" class="newbtn" onclick="openCreate()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New item</button>
         </div>
@@ -3242,6 +3280,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var keep=sel.value;
     sel.innerHTML=phases.map(function(p){return '<option value="'+p+'">Phase '+p+'</option>';}).join('');
     if(keep&&phases.indexOf(Number(keep))>=0)sel.value=keep;
+    poPhasePick();
+  }
+  // Is any Surveyed item in this phase already marked ready-for-PO?
+  function poPhaseReady(phase){ return (itemsData&&itemsData.items||[]).some(function(it){return String(it.po_phase)===String(phase)&&it.po_ready;}); }
+  function poPhasePick(){
+    var sel=document.getElementById('poPhaseSel'), btn=document.getElementById('poReadyBtn'); if(!sel||!btn)return;
+    var phase=sel.value; var ready=phase&&poPhaseReady(phase);
+    if(ready){ btn.textContent=(myRole==='admin')?'Unlock':'Ready ✓'; btn.title=(myRole==='admin')?'Unlock this PO phase so items can be re-assigned':'This PO phase is marked ready for PO'; }
+    else { btn.textContent='Mark ready'; btn.title='Mark this PO phase ready for ordering (locks items from phase changes)'; }
+  }
+  async function poReadyClick(){
+    if(current==='ALL')return;
+    var phase=document.getElementById('poPhaseSel').value; if(!phase){tShow('Pick a PO phase');return;}
+    var ready=poPhaseReady(phase);
+    if(ready){
+      if(myRole!=='admin'){tShow('Phase '+phase+' is already marked ready for PO');return;}
+      if(!confirm('Unlock PO phase '+phase+'? Items in it become editable again.'))return;
+      try{ var d=await (await api('/api/job/'+encodeURIComponent(current)+'/po-unlock?phase='+encodeURIComponent(phase),{method:'POST'})).json();
+        if(d.ok){tShow('PO phase '+phase+' unlocked');loadItems();}else tShow(d.error||'Failed'); }catch(e){tShow('Failed');}
+    } else {
+      if(!confirm('Mark PO phase '+phase+' as ready for PO?\\n\\nItems in this phase will be locked from PO-phase changes (admins can still change them), and stamped with your name and the date.'))return;
+      try{ var d=await (await api('/api/job/'+encodeURIComponent(current)+'/po-ready?phase='+encodeURIComponent(phase),{method:'POST'})).json();
+        if(d.ok){tShow('PO phase '+phase+' marked ready · '+d.count+' item'+(d.count===1?'':'s')+' locked');loadItems();}else tShow(d.error||'Failed'); }catch(e){tShow('Failed');}
+    }
   }
   async function downloadPoPdf(){
     if(current==='ALL'){tShow('Pick a job first');return;}
@@ -3333,10 +3395,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var editable=canEdit&&!r.synced;
       var flatCell=editable?'<input class="cedit" value="'+(r.flat||'')+'" placeholder="—" onchange="saveCode(\\''+r.id+'\\',\\'flat\\',this.value)">':(r.flat||'—');
       var roomCell=editable?'<select class="sel" style="min-width:150px" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">'+roomOptions(r.room||'')+'</select>':roomLabel(r.room);
-      // PO phase: editable only on Surveyed items (a manager can group them into a purchase order).
-      var poCell=(canEdit&&r.stage==='surveyed')
+      // PO phase: editable only on Surveyed items; a phase marked ready-for-PO is locked (admins exempt).
+      var poLocked=r.po_ready&&myRole!=='admin';
+      var poCell=(canEdit&&r.stage==='surveyed'&&!poLocked)
         ?'<input class="pocell" type="number" min="1" step="1" value="'+(r.po_phase!=null?r.po_phase:'')+'" placeholder="—" onchange="savePo(\\''+r.id+'\\',this.value)">'
-        :'<span class="ro"'+(r.stage==='surveyed'?'':' title="Assign a PO phase only once the item is Surveyed"')+'>'+(r.po_phase!=null?r.po_phase:'—')+'</span>';
+        :'<span class="ro"'+(poLocked?' title="PO phase '+r.po_phase+' is ready for PO — locked (admin only)"':(r.stage==='surveyed'?'':' title="Assign a PO phase only once the item is Surveyed"'))+'>'+(r.po_phase!=null?r.po_phase:'—')+(poLocked?' \\ud83d\\udd12':'')+'</span>';
       tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
         '<td>'+snagTag+unfinTag+'<a class="codelink mono" onclick="openDetail(\\''+r.id+'\\')">'+(r.full_code||'')+'</a></td>'+
         '<td>'+(r.block||'—')+'</td><td>'+(r.elevation||'—')+'</td><td>'+flatCell+'</td><td>'+(r.floor||'—')+'</td><td>'+roomCell+'</td><td>'+(r.item||'—')+'</td>'+

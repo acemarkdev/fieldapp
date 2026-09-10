@@ -8,7 +8,7 @@ import PDFDocument from 'pdfkit';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getJobByRef, listSurveyItems } from './store';
+import { getJobByRef, listSurveyItems, userNames } from './store';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const STYLES_DIR = join(__dir, '../../mobile/assets/styles');
@@ -47,7 +47,16 @@ export interface PoPdfData {
   phase: number;
   items: any[];
   generatedAt: Date;
+  generatedBy?: string | null;
+  readyBy?: string | null;
+  readyAt?: string | null;
 }
+
+const stamp = (d: Date | string | null | undefined) => {
+  if (!d) return '';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  return dt.toLocaleDateString('en-GB') + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+};
 
 /** Pure drawing — no DB. Resolves the finished PDF bytes. */
 export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
@@ -74,15 +83,18 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
     doc.font('Helvetica').fillColor(INK).text(val, infoX + 92, y, { width: W * 0.45 - 92 });
   };
   const deliv = [data.job.delivery_address, data.job.delivery_postcode].filter(Boolean).join(', ');
-  line('Job', `${code}${data.job.site_code && data.job.site_code !== code ? '  (' + data.job.site_code + ')' : ''}`, infoY);
-  line('Site', data.job.name || '—', infoY + 13);
-  if (addr) line('Site address', addr, infoY + 26);
-  line('Deliver to', deliv || addr || '—', infoY + 39);
-  line('PO phase', String(data.phase), infoY + 52);
-  line('Date', data.generatedAt.toLocaleDateString('en-GB'), infoY + 65);
-  line('Items', String(data.items.length), infoY + 78);
+  let iy = infoY;
+  const row = (label: string, val: string) => { line(label, val, iy); iy += 13; };
+  row('Job', `${code}${data.job.site_code && data.job.site_code !== code ? '  (' + data.job.site_code + ')' : ''}`);
+  row('Site', data.job.name || '—');
+  if (addr) row('Site address', addr);
+  row('Deliver to', deliv || addr || '—');
+  row('PO phase', String(data.phase));
+  row('Items', String(data.items.length));
+  row('Generated', `${data.generatedBy ? data.generatedBy + ' · ' : ''}${stamp(data.generatedAt)}`);
+  if (data.readyAt) row('Ready for PO', `${data.readyBy ? data.readyBy + ' · ' : ''}${stamp(data.readyAt)}`);
 
-  let y = 118;
+  let y = Math.max(118, iy + 6);
   doc.moveTo(L, y).lineTo(R, y).strokeColor(LINE).lineWidth(1).stroke();
   y += 8;
 
@@ -156,13 +168,18 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
 }
 
 /** Fetch a job's Surveyed items for the given phase and render the PO PDF. */
-export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: number): Promise<{ buffer: Buffer; job: any }> {
+export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: number, generatedBy?: string | null): Promise<{ buffer: Buffer; job: any }> {
   const job = await getJobByRef(jobRef);
   if (job.tenant_id !== tenantId) throw new Error('forbidden');
   const all = await listSurveyItems(job.id);
   const items = all
     .filter((it: any) => (it.kind ?? 'item') !== 'snag' && it.stage === 'surveyed' && Number(it.po_phase) === Number(phase))
     .sort((a: any, b: any) => String(a.full_code).localeCompare(String(b.full_code)));
-  const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date() });
+  // If the phase has been marked "ready for PO", show who did it and when.
+  const readyRow = items.find((it: any) => it.po_ready_at);
+  let readyBy: string | null = null;
+  const readyAt: string | null = readyRow ? readyRow.po_ready_at : null;
+  if (readyRow?.po_ready_by) { const nm = await userNames([readyRow.po_ready_by]); readyBy = nm[readyRow.po_ready_by] ?? null; }
+  const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date(), generatedBy: generatedBy ?? null, readyBy, readyAt });
   return { buffer, job };
 }
