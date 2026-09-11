@@ -23,7 +23,7 @@ export const IMPORT_FIELDS = [
 export const REQUIRED_FIELDS = [
   'block', 'elevation', 'item', 'room',
   'material', 'item_type', 'glass', 'glazing',
-  'width_mm', 'height_mm', 'open_in_out',
+  'width_mm', 'height_mm', 'open_in_out', 'design_code',
 ] as const;
 
 // Human labels for the required fields (used in the "why unfinished" tooltip).
@@ -31,6 +31,7 @@ export const FIELD_LABELS: Record<string, string> = {
   block: 'Block', elevation: 'Elevation', flat: 'Flat', floor: 'Floor', 'flat/floor': 'Flat or Floor',
   room: 'Room', item: 'Item', material: 'Material', item_type: 'Item type',
   glass: 'Glass', glazing: 'Glazing', width_mm: 'Width', height_mm: 'Height', open_in_out: 'Open in/out',
+  design_code: 'Style (design code)',
 };
 
 export const NUMERIC_FIELDS = [

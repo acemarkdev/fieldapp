@@ -29,14 +29,14 @@ export const JOB_DATE_FIELDS = [
 ] as const;
 export type JobDates = Partial<Record<(typeof JOB_DATE_FIELDS)[number], string | null>>;
 
-export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null; site_code?: string | null; delivery_address?: string | null; delivery_postcode?: string | null; dates?: JobDates }): Promise<Job> {
-  const row: Record<string, unknown> = { tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null, postcode: j.postcode ?? null, site_code: j.site_code ?? null, delivery_address: j.delivery_address ?? null, delivery_postcode: j.delivery_postcode ?? null };
+export async function createJob(tenantId: string, j: { client_code: string; job_code: string; name: string; site_address?: string | null; postcode?: string | null; site_code?: string | null; delivery_address?: string | null; delivery_postcode?: string | null; multi_elevation?: boolean; dates?: JobDates }): Promise<Job> {
+  const row: Record<string, unknown> = { tenant_id: tenantId, client_code: j.client_code, job_code: j.job_code, name: j.name, site_address: j.site_address ?? null, postcode: j.postcode ?? null, site_code: j.site_code ?? null, delivery_address: j.delivery_address ?? null, delivery_postcode: j.delivery_postcode ?? null, multi_elevation: !!j.multi_elevation };
   for (const k of JOB_DATE_FIELDS) { const v = j.dates?.[k]; if (v !== undefined) row[k] = v || null; }
   const { data, error } = await db().from('jobs').insert(row).select().single();
   if (error) throw error;
   return data as Job;
 }
-export async function updateJobDetails(tenantId: string, jobId: string, fields: { name?: string; site_address?: string | null; postcode?: string | null; site_code?: string | null; delivery_address?: string | null; delivery_postcode?: string | null; dates?: JobDates }): Promise<Job> {
+export async function updateJobDetails(tenantId: string, jobId: string, fields: { name?: string; site_address?: string | null; postcode?: string | null; site_code?: string | null; delivery_address?: string | null; delivery_postcode?: string | null; multi_elevation?: boolean; dates?: JobDates }): Promise<Job> {
   const patch: Record<string, unknown> = {};
   if (fields.name !== undefined) patch.name = fields.name;
   if (fields.site_address !== undefined) patch.site_address = fields.site_address;
@@ -44,6 +44,7 @@ export async function updateJobDetails(tenantId: string, jobId: string, fields: 
   if (fields.site_code !== undefined) patch.site_code = fields.site_code;
   if (fields.delivery_address !== undefined) patch.delivery_address = fields.delivery_address;
   if (fields.delivery_postcode !== undefined) patch.delivery_postcode = fields.delivery_postcode;
+  if (fields.multi_elevation !== undefined) patch.multi_elevation = !!fields.multi_elevation;
   for (const k of JOB_DATE_FIELDS) { const v = fields.dates?.[k]; if (v !== undefined) patch[k] = v || null; }
   const { data, error } = await db().from('jobs').update(patch).eq('id', jobId).eq('tenant_id', tenantId).select().single();
   if (error) throw error;

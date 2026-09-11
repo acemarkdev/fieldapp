@@ -11,7 +11,7 @@ function eq(name: string, got: any, want: any) {
 const full = {
   block: 'B3', elevation: 'E1', flat: '16A', floor: 'F2', room: 'BA', item: 'W2',
   material: 'PVC', item_type: 'Casement', glass: 'Stipolite', glazing: 'Double',
-  width_mm: 640, height_mm: 560, open_in_out: 'Out',
+  width_mm: 640, height_mm: 560, open_in_out: 'Out', design_code: '27',
 };
 eq('full row complete', isRowComplete(full), true);
 eq('full row nothing missing', missingRequired(full), []);
@@ -35,8 +35,13 @@ const noMaterial = { ...full, material: '   ' };
 eq('blank material incomplete', isRowComplete(noMaterial), false);
 
 // Optional fields absent ⇒ still complete.
-const optionalGone = { ...full, add_ons: '', coupled: '', transom1_mm: '', design_code: '', comments: '', safety_glass: '', glazing_bars: '', window_type: '', cill_depth: '' };
+const optionalGone = { ...full, add_ons: '', coupled: '', transom1_mm: '', comments: '', safety_glass: '', glazing_bars: '', window_type: '', cill_depth: '' };
 eq('optionals absent still complete', isRowComplete(optionalGone), true);
+
+// Style (design code) is required.
+const noStyle = { ...full, design_code: '' };
+eq('missing style incomplete', isRowComplete(noStyle), false);
+eq('missing style lists design_code', missingRequired(noStyle), ['design_code']);
 
 // toMm parses mm strings, plain numbers, blanks.
 eq('toMm 640', toMm(640), 640);

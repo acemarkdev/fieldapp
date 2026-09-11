@@ -18,7 +18,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   latestTestResults, insertTestResult, allTestResults, listTestVersions, listDemoLeads, listCustomers,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { isRowComplete, toMm } from '@ace/shared';
+import { isRowComplete, missingRequired, FIELD_LABELS, toMm } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, listItemActivity, userNames, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
@@ -768,7 +768,7 @@ const server = createServer(async (req, res) => {
       if (!delivery_postcode) { send(res, 400, { error: 'A delivery postcode is required.' }); return; }
       const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
       try {
-        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address, postcode, site_code, delivery_address, delivery_postcode, dates: pickJobDates(b) });
+        const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address, postcode, site_code, delivery_address, delivery_postcode, multi_elevation: !!b.multi_elevation, dates: pickJobDates(b) });
         audit(ctx, 'job.create', 'job', job.id, `Created job ${job.client_code}.${job.job_code} — ${name} (site ${site_code})`);
         send(res, 200, { ok: true, id: job.id, code: `${job.client_code}.${job.job_code}`, site_code });
       } catch (err: any) {
@@ -785,7 +785,7 @@ const server = createServer(async (req, res) => {
       const job = await getJobByRef(code);
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       { const dd: Record<string, unknown> = {}; for (const k of JOB_DATE_FIELDS) dd[k] = (job as any)[k] ?? null;
-        send(res, 200, { id: job.id, code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, delivery_address: (job as any).delivery_address ?? null, delivery_postcode: (job as any).delivery_postcode ?? null, ...dd }); }
+        send(res, 200, { id: job.id, code: `${job.client_code}.${job.job_code}`, name: job.name, site_address: (job as any).site_address ?? null, postcode: (job as any).postcode ?? null, site_code: (job as any).site_code ?? null, delivery_address: (job as any).delivery_address ?? null, delivery_postcode: (job as any).delivery_postcode ?? null, multi_elevation: !!(job as any).multi_elevation, ...dd }); }
       return;
     }
     // Edit a job's details (name / address / postcode) — managers only.
@@ -806,7 +806,7 @@ const server = createServer(async (req, res) => {
       if (!delivery_address) { send(res, 400, { error: 'Delivery address is required.' }); return; }
       if (!delivery_postcode) { send(res, 400, { error: 'Delivery postcode is required.' }); return; }
       const site_code = String(b.site_code ?? '').trim() || `${job.client_code}.${job.job_code}`;
-      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address, postcode, site_code, delivery_address, delivery_postcode, dates: pickJobDates(b) });
+      await updateJobDetails(ctx.tenant_id, job.id, { name, site_address, postcode, site_code, delivery_address, delivery_postcode, multi_elevation: !!b.multi_elevation, dates: pickJobDates(b) });
       audit(ctx, 'job.update', 'job', code, `Edited details for ${code}`);
       send(res, 200, { ok: true });
       return;
@@ -927,6 +927,13 @@ const server = createServer(async (req, res) => {
         comments: str(b.comments), team_id: b.team_id || null,
         created_by: ctx.id, created_via: 'manual', surveyed_by: ctx.id,
       };
+      // A desk-created item is Surveyed on creation, so it must have all required data (style included).
+      {
+        const cRow = { block: fields.block, elevation: fields.elevation, flat: fields.flat, floor: fields.floor, room: fields.room_code, item: fields.item_code,
+          material: fields.material, item_type: fields.item_type, glass: fields.glass, glazing: fields.glazing, width_mm: fields.width_mm, height_mm: fields.height_mm, open_in_out: fields.open_in_out, design_code: fields.design_code };
+        const cmiss = missingRequired(cRow);
+        if (cmiss.length) { send(res, 400, { error: 'Can’t create the item — still missing: ' + cmiss.map((k) => FIELD_LABELS[k] || k).join(', ') }); return; }
+      }
       try {
         const created = await insertSurveyItem(fields);
         audit(ctx, 'item.create', 'item', created.id, `Created ${full_code}`);
@@ -1188,12 +1195,18 @@ const server = createServer(async (req, res) => {
         if (await codeExists(item.job_id, full_code, id)) { send(res, 409, { error: `Code ${full_code} already exists in this job — pick a different Flat/Room.` }); return; }
         patch.flat = newFlat; patch.room_code = newRoom; patch.floor = newFloor; patch.full_code = full_code;
       }
-      // An item flagged 'Unfinished' (from an Excel import) clears itself once all required data is present.
-      if (item.incomplete) {
+      // The completeness of the item after this edit (used for the Unfinished flag and the Surveyed gate).
+      {
         const m: any = { ...item, ...patch };
         const row = { block: m.block, elevation: m.elevation, flat: m.flat, floor: m.floor, room: m.room_code, item: m.item_code,
-          material: m.material, item_type: m.item_type, glass: m.glass, glazing: m.glazing, width_mm: m.width_mm, height_mm: m.height_mm, open_in_out: m.open_in_out };
-        if (isRowComplete(row)) patch.incomplete = false;
+          material: m.material, item_type: m.item_type, glass: m.glass, glazing: m.glazing, width_mm: m.width_mm, height_mm: m.height_mm, open_in_out: m.open_in_out, design_code: m.design_code };
+        // Can't move an item to 'Surveyed' while required data is still missing (style included).
+        if (patch.stage === 'surveyed') {
+          const miss = missingRequired(row).map((k) => FIELD_LABELS[k] || k);
+          if (miss.length) { send(res, 400, { error: 'Can’t mark Surveyed — still missing: ' + miss.join(', ') }); return; }
+        }
+        // An item flagged 'Unfinished' (from an Excel import) clears itself once all required data is present.
+        if (item.incomplete && isRowComplete(row)) patch.incomplete = false;
       }
       const { error } = await db().from('survey_items').update(patch).eq('id', id);
       if (error) { send(res, 500, { error: error.message }); return; }
@@ -2556,7 +2569,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     {k:'open_in_out',l:'Open'},{k:'add_ons',l:'Add-ons',wide:1},{k:'coupled',l:'Coupled'},
     {k:'design_code',l:'Design'},{k:'comments',l:'Comments',wide:1}
   ];
-  var IMP_REQ={block:1,elevation:1,item:1,room:1,material:1,item_type:1,glass:1,glazing:1,width_mm:1,height_mm:1,open_in_out:1};
+  var IMP_REQ={block:1,elevation:1,item:1,room:1,material:1,item_type:1,glass:1,glazing:1,width_mm:1,height_mm:1,open_in_out:1,design_code:1};
   // Excel header (normalized: lowercased, non-alphanumerics stripped) → canonical key. '' = ignore.
   var IMP_HDR={
     areacouncil:'',area:'',council:'',site:'',designsketch:'',sketch:'',
@@ -3085,6 +3098,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<div class="field full"><label>Delivery postcode *</label><input id="nj_delpostcode" placeholder="e.g. PO9 5RX"></div>'
       +'</div>'
       +'<div class="field full"><label>Site code</label><input id="nj_sitecode" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
+      +'<div class="field full"><label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:12.5px"><input type="checkbox" id="nj_multielev"> Multi-elevation flats <span style="color:var(--muted)">— unticked: single-elevation flats · ticked: multi-elevation flats</span></label></div>'
       +'<div class="field full"><label>Drawings / files (optional)</label><input id="nj_files" type="file" multiple accept="image/*,.pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"><div class="sub" style="margin:4px 0 0">jpg, pdf or zip · up to 25MB each</div></div>'
       +ruleField
       +'</div>';
@@ -3096,7 +3110,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal('New job',html);
     ['nj_client','nj_job'].forEach(function(id){document.getElementById(id).addEventListener('input',njCode);});
     njCode();
-    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode','nj_deladdr','nj_delpostcode','nj_sitecode'].concat(jobDateInputIds('nj')));
+    watchModalDirty(['nj_client','nj_job','nj_name','nj_addr','nj_postcode','nj_deladdr','nj_delpostcode','nj_sitecode','nj_multielev'].concat(jobDateInputIds('nj')));
   }
   function njCode(){var c=(document.getElementById('nj_client').value||'').trim().toUpperCase();var j=(document.getElementById('nj_job').value||'').trim().toUpperCase();document.getElementById('njPrev').textContent=(c||'CLIENT')+'.'+(j||'JOB');}
   // Delivery-same-as-site toggle: hide the delivery fields when ticked (default: not ticked = No).
@@ -3118,7 +3132,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!delpc){document.getElementById('njErr').textContent='Delivery postcode is required.';return;}
     var dts=collectJobDates('nj');
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('njErr').textContent=dErr;jobTab('nj','t');return;}
-    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:addr,postcode:postcode,delivery_address:deladdr,delivery_postcode:delpc,site_code:(document.getElementById('nj_sitecode').value||'').trim()},dts))});
+    var r=await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.assign({client_code:client,job_code:job,name:name,site_address:addr,postcode:postcode,delivery_address:deladdr,delivery_postcode:delpc,site_code:(document.getElementById('nj_sitecode').value||'').trim(),multi_elevation:document.getElementById('nj_multielev').checked},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){
       var rsel=document.getElementById('nj_rule');
@@ -3155,6 +3169,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<div class="field full"><label>Delivery postcode *</label><input id="ej_delpostcode" value="'+q(d.delivery_postcode)+'" placeholder="e.g. PO9 5RX"></div>'
       +'</div>'
       +'<div class="field full"><label>Site code</label><input id="ej_sitecode" value="'+q(d.site_code)+'" placeholder="shown on screen — defaults to CLIENT.JOB"></div>'
+      +'<div class="field full"><label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:12.5px"><input type="checkbox" id="ej_multielev"'+(d.multi_elevation?' checked':'')+'> Multi-elevation flats <span style="color:var(--muted)">— unticked: single-elevation flats · ticked: multi-elevation flats</span></label></div>'
       +'</div>';
     var html=jobTabBar('ej')
       +'<div id="ejDetails">'+detail+'</div>'
@@ -3162,7 +3177,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="ferr" id="ejErr" style="padding:0 22px"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveEditJob(\\''+code+'\\')">Save</button></div>';
     openModal('Edit job '+code,html);
-    watchModalDirty(['ej_name','ej_addr','ej_postcode','ej_deladdr','ej_delpostcode','ej_sitecode'].concat(jobDateInputIds('ej')));
+    watchModalDirty(['ej_name','ej_addr','ej_postcode','ej_deladdr','ej_delpostcode','ej_sitecode','ej_multielev'].concat(jobDateInputIds('ej')));
   }
   function ejToggleDel(){var same=document.getElementById('ej_delsame').checked;var w=document.getElementById('ej_delwrap');if(w)w.style.display=same?'none':'contents';}
   async function saveEditJob(code){
@@ -3179,7 +3194,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!delpc){document.getElementById('ejErr').textContent='Delivery postcode is required.';return;}
     var dts=collectJobDates('ej');
     var dErr=validateJobDates(dts); if(dErr){document.getElementById('ejErr').textContent=dErr;jobTab('ej','t');return;}
-    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:addr,postcode:postcode,delivery_address:deladdr,delivery_postcode:delpc,site_code:(document.getElementById('ej_sitecode').value||'').trim()},dts))});
+    var r=await api('/api/job/'+encodeURIComponent(code),{method:'PUT',body:JSON.stringify(Object.assign({name:name,site_address:addr,postcode:postcode,delivery_address:deladdr,delivery_postcode:delpc,site_code:(document.getElementById('ej_sitecode').value||'').trim(),multi_elevation:document.getElementById('ej_multielev').checked},dts))});
     var d=await r.json();
     if(r.ok&&d.ok){closeModal(true);tShow('Job updated');loadJobs();}else{document.getElementById('ejErr').textContent=(d.error||'Save failed');}
   }
@@ -4547,7 +4562,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function istatLabel(v){var m=ISTATUS.filter(function(s){return s[0]===(v||'')});return (m[0]||['','—'])[1];}
   async function openDetail(id){
     openModal('Loading…','<div class="empty">Loading…</div>');
-    var d=await (await api('/api/item/'+id+'/detail')).json(); var it=d.item;
+    var d=await (await api('/api/item/'+id+'/detail')).json(); var it=d.item; _detailItem=it;
     function row(k,v){return (v==null||v==='')?'':'<div class="drow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
     function attr(v){return (v==null?'':esc(String(v))).replace(/"/g,'&quot;');}
     function fieldV(id,label,val,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+attr(val)+'" placeholder="'+(ph||'')+'"></div>';}
@@ -4562,6 +4577,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +row('Install date',esc(it.actual_install_date))
       +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open ↗</a>':'not synced')
       +'</dl>';
+    // Editable Flat + Room (rebuild the item code) — the other code parts (Block/Elevation/Item) are
+    // set in the Items table. Locked once synced to Monday.
+    var codeEditable=!d.is_snag&&canCap('items.edit')&&!it.monday_item_id;
+    if(codeEditable){
+      html+='<div class="groupt" style="padding:12px 22px 0">LOCATION</div><div class="fgrid" style="padding:6px 22px 6px">'
+        +'<div class="field"><label>Flat / plot</label><input id="f_flat_edit" value="'+attr(it.flat)+'" placeholder="e.g. 12"></div>'
+        +'<div class="field"><label>Room *</label><select id="f_room_edit">'+roomOptions(it.room_code||'')+'</select></div>'
+        +'<div class="sub full" style="margin:0">Changing Flat or Room rebuilds the item code. Block, Elevation and Item are set in the Items table.</div>'
+        +'</div>';
+    }
     var specEditable=!d.is_snag&&canCap('items.edit');
     if(specEditable){
       html+='<div class="groupt" style="padding:12px 22px 0">SPECIFICATION</div><div class="fgrid" style="padding:6px 22px 12px">'
@@ -4638,8 +4663,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div id="itemActivity" style="padding:2px 22px 20px"><div class="sub">Loading…</div></div>';
     document.getElementById('modalBody').innerHTML=html;
     if(document.getElementById('f_design'))stylePreview(); // show the design sketch if a code is set
+    var frm=document.getElementById('f_room_edit'); if(frm)frm.addEventListener('change',function(){saveDetailCode(it.id,'room',this.value);});
+    var flt=document.getElementById('f_flat_edit'); if(flt)flt.addEventListener('change',function(){saveDetailCode(it.id,'flat',this.value);});
     if(specEditable)highlightNeedFill(it); // flag the required fields still to complete
     loadItemActivity(it.id);
+  }
+  // Save an edited Flat/Room from the item drawer (rebuilds the code), then reopen it refreshed.
+  async function saveDetailCode(id,field,value){
+    var body=field==='flat'?{flat:value}:{room:value};
+    var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
+    if(d.ok)tShow(field==='room'?'Room saved':'Flat saved'); else tShow(d.error||'Update failed');
+    loadItems(); openDetail(id);
   }
   var ACT_LABELS={material:'Material',item_type:'Item type',window_type:'Window type',glass:'Glass',safety_glass:'Safety glass',glazing:'Glazing',glazing_bars:'Glazing bars',cill_depth:'Cill depth',open_in_out:'Open in/out',add_ons:'Add-ons',coupled:'Coupled',design_code:'Design code',comments:'Comments',width_mm:'Width',height_mm:'Height',cill_depth_mm:'Cill depth',transom1_mm:'Transom 1',transom2_mm:'Transom 2',transom3_mm:'Transom 3',mullion1_mm:'Mullion 1',mullion2_mm:'Mullion 2',mullion3_mm:'Mullion 3',transom_equal:'Transoms equal',mullion_equal:'Mullions equal',install_status:'Install status',team_id:'Team',stage:'Stage',po_phase:'PO phase',rate_override_pennies:'Rate override',flat:'Flat',room_code:'Room',floor:'Floor'};
   function actLabel(f){return ACT_LABELS[f]||f;}
@@ -4685,13 +4719,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // knows exactly what to fill in to mark the item finished.
   function highlightNeedFill(it){
     function empty(v){return v==null||String(v).trim()==='';}
-    var map={f_material:empty(it.material),f_type:empty(it.item_type),f_glass:empty(it.glass),f_glazing:empty(it.glazing),f_openinout:empty(it.open_in_out),f_width:!(Number(it.width_mm)>0),f_height:!(Number(it.height_mm)>0)};
+    var map={f_material:empty(it.material),f_type:empty(it.item_type),f_glass:empty(it.glass),f_glazing:empty(it.glazing),f_openinout:empty(it.open_in_out),f_width:!(Number(it.width_mm)>0),f_height:!(Number(it.height_mm)>0),f_design:empty(it.design_code),
+      f_room_edit:empty(it.room_code),f_flat_edit:(empty(it.flat)&&empty(it.floor))};
     var anyField=false;
-    Object.keys(map).forEach(function(fid){ if(!map[fid])return; anyField=true; var el=document.getElementById(fid); if(!el)return; var f=el.closest('.field'); if(f)f.classList.add('needfill'); });
-    // Code fields (Block/Elevation/Room/Flat) are edited in the Items table, not here — note them.
+    Object.keys(map).forEach(function(fid){ if(!map[fid])return; var el=document.getElementById(fid); if(!el)return; anyField=true; var f=el.closest('.field'); if(f)f.classList.add('needfill'); });
+    // Code parts not editable here (Block / Elevation) — note them so the user sets them in the table.
     var code=[];
     if(empty(it.block))code.push('Block'); if(empty(it.elevation))code.push('Elevation');
-    if(empty(it.room_code))code.push('Room'); if(empty(it.flat)&&empty(it.floor))code.push('Flat or Floor');
+    // Room / Flat-or-Floor are highlighted above when the drawer offers them; otherwise note them.
+    if(empty(it.room_code)&&!document.getElementById('f_room_edit'))code.push('Room');
+    if(empty(it.flat)&&empty(it.floor)&&!document.getElementById('f_flat_edit'))code.push('Flat or Floor');
     if(anyField||code.length){
       var body=document.getElementById('modalBody');
       var note=document.createElement('div'); note.className='needfill-note';
@@ -4713,7 +4750,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(collectDetail())})).json();
     if(d.ok){tShow('Details saved');loadItems();openDetail(id);}else tShow(d.error||'Save failed'); // stays open
   }
+  // Required fields still missing for the currently-open item (from the drawer form + code fields).
+  var _detailItem=null;
+  function itemSurveyMissing(){
+    var it=_detailItem||{};
+    function g(id){var e=document.getElementById(id);return e?String(e.value||'').trim():'';}
+    function has(v){return v!=null&&String(v).trim()!=='';}
+    var room=document.getElementById('f_room_edit')?g('f_room_edit'):(it.room_code||'');
+    var flat=document.getElementById('f_flat_edit')?g('f_flat_edit'):(it.flat||'');
+    var miss=[];
+    if(!has(it.block))miss.push('Block');
+    if(!has(it.elevation))miss.push('Elevation');
+    if(!has(room))miss.push('Room');
+    if(!has(it.item_code))miss.push('Item');
+    if(!has(g('f_material')))miss.push('Material');
+    if(!has(g('f_type')))miss.push('Item type');
+    if(!has(g('f_glass')))miss.push('Glass');
+    if(!has(g('f_glazing')))miss.push('Glazing');
+    if(!(Number(g('f_width'))>0))miss.push('Width');
+    if(!(Number(g('f_height'))>0))miss.push('Height');
+    if(!has(g('f_openinout')))miss.push('Open in/out');
+    if(!has(g('f_design')))miss.push('Style');
+    if(!has(flat)&&!has(it.floor))miss.push('Flat or Floor');
+    return miss;
+  }
   async function markSurveyed(id){
+    var miss=itemSurveyMissing();
+    if(miss.length){ tShow('Fill required fields first: '+miss.join(', ')); if(_detailItem)highlightNeedFill(_detailItem); return; }
     var body=collectDetail(); body.stage='surveyed';
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
     if(d.ok){tShow('Saved · marked Surveyed');loadItems();closeModal();}else tShow(d.error||'Save failed');
