@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.86.0';
+export const APP_VERSION = '0.87.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.87.0', date: '2026-09-11', changes: [
+    'Mapping: a live running total of windows and doors (and total items) updates as you type counts into the elevation/floor grids. It’s pinned to the top so it stays visible while you scroll through the elevations. No migration needed.',
+  ] },
   { version: '0.86.0', date: '2026-09-11', changes: [
     'New/Edit job: a “Multi-elevation flats” checkbox (unticked by default) — unticked means single-elevation flats, ticked means multi-elevation flats. Saved on the job. Requires migration 0042.',
   ] },

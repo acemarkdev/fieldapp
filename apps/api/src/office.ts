@@ -1883,6 +1883,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .jobgrp:hover{color:var(--purple)}
   .jobgrp-ar{width:10px;display:inline-block;font-size:10px}
   .jobgrp-n{margin-left:auto;background:var(--soft);border-radius:999px;padding:1px 8px;font-size:10px;color:var(--muted)}
+  .maptotals{position:sticky;top:6px;z-index:5;background:#efeaf8;border:1px solid var(--line);border-radius:9px;padding:8px 13px;font-size:13px;color:var(--ink);margin:10px 0;box-shadow:0 1px 4px rgba(58,43,114,.08)}
   main{flex:1;padding:22px 26px;overflow:auto}
   h2{font-size:19px;color:var(--purple)}h2 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
   .sub{font-size:12px;color:var(--muted);margin:4px 0 16px}
@@ -2841,6 +2842,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<button class="add" id="buildGridBtn">Build grid</button>'
       +'</div>'
       +'<div class="sub" style="margin-top:8px">Each elevation gets its own floor grid (F1&hellip;FN). Fill windows &amp; doors per floor, then Preload.</div>'
+      +'<div id="mapTotals" class="maptotals" style="display:none"></div>'
       +'<div id="elevGrids" style="margin-top:14px"></div>'
       +'<button class="add" id="preloadBtn" style="margin-top:10px;display:none">Preload</button>'
       +'</div>'
@@ -2854,6 +2856,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('preloadBtn').addEventListener('click',mapPreload);
     document.getElementById('mapSaveBtn').addEventListener('click',mapSave);
     document.getElementById('mapAddRowBtn').addEventListener('click',mapAddRow);
+    document.getElementById('elevGrids').addEventListener('input',updateMapTotals);
+  }
+  // Live running totals of windows and doors across all elevation floor grids (sticky bar).
+  function updateMapTotals(){
+    var el=document.getElementById('mapTotals'); if(!el)return;
+    var w=0,d=0;
+    document.querySelectorAll('#elevGrids .ef-win').forEach(function(x){ w+=parseInt(x.value,10)||0; });
+    document.querySelectorAll('#elevGrids .ef-door').forEach(function(x){ d+=parseInt(x.value,10)||0; });
+    var has=!!document.querySelector('#elevGrids .elevcard');
+    el.style.display=has?'':'none';
+    el.innerHTML='Windows <b>'+w+'</b> &middot; Doors <b>'+d+'</b> &middot; Items <b>'+(w+d)+'</b>';
   }
   function mapBlockVal(){ var e=document.getElementById('map_block'); return e?e.value.trim().toUpperCase():''; }
   // Build one floor grid per elevation (each with its own window/door counts to fill).
@@ -2882,6 +2895,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       card.querySelectorAll('.ef-floor').forEach(function(el){ el.addEventListener('input',function(){ applyPfx(el,'F'); }); });
     }
     document.getElementById('preloadBtn').style.display='';
+    updateMapTotals();
   }
   // Floor segment: prefix F only for a plain number (1 -> F1); leave labels like GF as-is.
   function floorSeg(flat){ if(!flat) return ''; return /^[0-9]+$/.test(flat) ? ('F'+flat) : flat.toUpperCase(); }
