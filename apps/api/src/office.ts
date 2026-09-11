@@ -2880,8 +2880,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var card=document.createElement('div'); card.className='elevcard'; card.style.cssText='border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px';
       var rowsHtml='';
       for(var fN=1;fN<=nF;fN++){
+        var flabel=(fN===1)?'GF':('F'+(fN-1)); // ground floor first, then F1, F2, …
         rowsHtml+='<div class="efrow" style="display:flex;gap:8px;margin-bottom:6px;align-items:center">'
-          +'<input class="ef-floor" value="F'+fN+'" style="width:80px" title="Floor">'
+          +'<input class="ef-floor" value="'+flabel+'" style="width:80px" title="Floor">'
           +'<input class="ef-win" type="number" min="0" placeholder="Windows" style="width:110px">'
           +'<input class="ef-door" type="number" min="0" placeholder="Doors" style="width:110px"></div>';
       }
