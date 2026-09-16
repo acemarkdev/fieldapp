@@ -19,6 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, missingRequired, FIELD_LABELS, toMm } from '@ace/shared';
+import { buildItemCode, levelSeg } from '@ace/shared';
 import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, listItemActivity, userNames, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
@@ -185,19 +186,8 @@ async function dashboardData(tenantId: string) {
   };
 }
 
-// Unified item-code builder (mapping + Items-view edits). The "level" segment is the Flat if
-// set, otherwise the mapping Floor; a plain number renders as F{n}, a label (e.g. GF) as-is.
-// Order: CLIENT.JOB.BLOCK.ELEV.LEVEL.ROOM.ITEM  (empty parts skipped).
-function levelSeg(v: any): string {
-  const s = String(v ?? '').trim().replace(/^F(?=[0-9])/i, '');
-  if (!s) return '';
-  return /^[0-9]+$/.test(s) ? `F${s}` : s.toUpperCase();
-}
-function buildItemCode(p: { client: string; job: string; block?: any; elevation?: any; flat?: any; floor?: any; room?: any; item: any }): string {
-  const up = (v: any) => String(v ?? '').trim().toUpperCase();
-  const level = (p.flat != null && String(p.flat).trim() !== '') ? levelSeg(p.flat) : levelSeg(p.floor);
-  return [p.client, p.job, up(p.block), up(p.elevation), level, up(p.room), up(p.item)].filter(Boolean).join('.');
-}
+// Item-code builder + level normaliser now live in @ace/shared (imported above) so the office
+// web app and the iPad/iPhone apps all produce identical codes. See packages/shared/src/mapping.ts.
 
 // One item row for the Items table (shared by single-job and All-jobs views).
 const itemRow = (it: any, job: any, teams: any[]) => ({

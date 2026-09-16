@@ -6,7 +6,7 @@ import { cacheGet, cacheSet } from '../lib/offline';
 
 export interface Job { id: string; tenant_id: string; client_code: string; job_code: string; name: string; }
 
-export default function JobsScreen({ onOpen, onNew, canNewJob = true, onBack }: { onOpen: (job: Job) => void; onNew: () => void; canNewJob?: boolean; onBack?: () => void }) {
+export default function JobsScreen({ onOpen, onNew, canNewJob = true, onBack, onMap }: { onOpen: (job: Job) => void; onNew: () => void; canNewJob?: boolean; onBack?: () => void; onMap?: () => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
@@ -46,11 +46,18 @@ export default function JobsScreen({ onOpen, onNew, canNewJob = true, onBack }: 
           )}
           <View style={s.hrow}>
             <Text style={s.h}>Jobs</Text>
-            {canNewJob && (
-              <TouchableOpacity onPress={onNew} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Text style={s.newBtn}>+ New job</Text>
-              </TouchableOpacity>
-            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+              {onMap && (
+                <TouchableOpacity onPress={onMap} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Text style={s.newBtn}>Map</Text>
+                </TouchableOpacity>
+              )}
+              {canNewJob && (
+                <TouchableOpacity onPress={onNew} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Text style={s.newBtn}>+ New job</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
           {offline && <Text style={s.offline}>Offline — showing your last saved jobs</Text>}
         </View>

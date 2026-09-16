@@ -12,8 +12,8 @@ interface Item {
   team_id: string | null;
 }
 
-export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, onEditPending, onPlan }: {
-  job: Job; role?: string | null; teamId?: string | null; onBack: () => void; onOpen: (id: string) => void; onNew: () => void; onEditPending: (p: Pending) => void; onPlan?: () => void;
+export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, onEditPending, onPlan, onMap }: {
+  job: Job; role?: string | null; teamId?: string | null; onBack: () => void; onOpen: (id: string) => void; onNew: () => void; onEditPending: (p: Pending) => void; onPlan?: () => void; onMap?: () => void;
 }) {
   const canCreate = can(role, 'items.create');
   const fitterView = isFitter(role); // fitters see only their team's ready-to-fit items
@@ -69,6 +69,11 @@ export default function ItemsScreen({ job, role, teamId, onBack, onOpen, onNew, 
             <Text style={s.back}>‹ Jobs</Text>
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+            {onMap && canCreate && (
+              <TouchableOpacity onPress={onMap} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={s.planBtn}>Map</Text>
+              </TouchableOpacity>
+            )}
             {onPlan && (
               <TouchableOpacity onPress={onPlan} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Text style={s.planBtn}>Plan</Text>

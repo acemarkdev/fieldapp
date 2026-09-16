@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Modal, TextInput, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Modal, TextInput, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, setDemoMode } from './src/lib/supabase';
@@ -13,6 +13,10 @@ import ItemDetailScreen from './src/screens/ItemDetailScreen';
 import NewItemScreen from './src/screens/NewItemScreen';
 import NewJobScreen from './src/screens/NewJobScreen';
 import PlanScreen from './src/screens/PlanScreen';
+import MappingScreen from './src/screens/MappingScreen';
+import ImportScreen from './src/screens/ImportScreen';
+import MappingJobsScreen from './src/screens/MappingJobsScreen';
+import MappingStepperScreen from './src/screens/MappingStepperScreen';
 import ScheduleScreen from './src/screens/ScheduleScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
@@ -29,11 +33,16 @@ export default function App() {
   const [editingPending, setEditingPending] = useState<Pending | null>(null);
   const [editingItem, setEditingItem] = useState<any | null>(null); // surveyor adding spec to a saved item
   const [viewingPlan, setViewingPlan] = useState(false);
+  const [mapping, setMapping] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [mappingPicker, setMappingPicker] = useState(false);
   const [creatingJob, setCreatingJob] = useState(false);
   const [browsingJobs, setBrowsingJobs] = useState(false); // fitter: chose to browse jobs instead of the schedule
   const [demo, setDemo] = useState(false);
   const [demoEmail, setDemoEmail] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768; // phones get the stepper, tablets the full grid
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
@@ -58,7 +67,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [session]);
 
-  function resetNav() { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); setCreatingJob(false); setBrowsingJobs(false); }
+  function resetNav() { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); setMapping(false); setImporting(false); setMappingPicker(false); setCreatingJob(false); setBrowsingJobs(false); }
   function enterDemo(email: string) { resetDemoDb(); setDemoMode(true); resetNav(); setRole('admin'); setTeamId('demo-team-a'); setDemo(true); setDemoEmail(email); recordLead(email, 'demo_started'); }
   function exitDemo() { setDemoMode(false); setDemo(false); setDemoEmail(null); resetNav(); setRole(null); setTeamId(null); }
   function demoBlock(what: string) { Alert.alert('Demo mode', what + ' is disabled in the demo — explore and edit the sample data, or tap \u201CRequest a quote\u201D.'); }
@@ -98,18 +107,26 @@ export default function App() {
                 ? <ScheduleScreen teamId={teamId} onOpenItem={(id) => setItemId(id)} onBrowseJobs={() => setBrowsingJobs(true)} />
                 : creatingJob
                   ? <NewJobScreen onCancel={() => setCreatingJob(false)} onDone={() => setCreatingJob(false)} />
-                  : <JobsScreen onOpen={setJob} onNew={() => (demo ? demoBlock('Creating jobs') : setCreatingJob(true))} canNewJob={can(role, 'jobs.manage')} onBack={isFitter(role) ? () => setBrowsingJobs(false) : undefined} />)
+                  : mappingPicker
+                    ? <MappingJobsScreen onBack={() => setMappingPicker(false)} onPick={(mj) => { setMappingPicker(false); setJob({ id: mj.id, tenant_id: mj.tenant_id, client_code: mj.client_code, job_code: mj.job_code, name: mj.name ?? '' }); setMapping(true); }} />
+                    : <JobsScreen onOpen={setJob} onNew={() => (demo ? demoBlock('Creating jobs') : setCreatingJob(true))} canNewJob={can(role, 'jobs.manage')} onBack={isFitter(role) ? () => setBrowsingJobs(false) : undefined} onMap={(!demo && can(role, 'items.create')) ? () => setMappingPicker(true) : undefined} />)
           : editingPending
             ? <NewItemScreen key={editingPending.localId} job={job} role={role} editing={editingPending} onCancel={() => setEditingPending(null)} onDone={() => setEditingPending(null)} />
             : creating
               ? <NewItemScreen job={job} role={role} onCancel={() => setCreating(false)} onDone={() => setCreating(false)} />
               : editingItem
                 ? <NewItemScreen key={editingItem.id} job={job} role={role} existingItem={editingItem} onCancel={() => setEditingItem(null)} onDone={() => { setEditingItem(null); setItemId(null); }} />
+              : mapping && importing && !itemId
+                ? <ImportScreen job={job} role={role} onBack={() => setImporting(false)} onDone={() => { setImporting(false); setMapping(false); }} />
+              : mapping && !itemId
+                ? (isTablet
+                    ? <MappingScreen job={job} role={role} onBack={() => setMapping(false)} onDone={() => setMapping(false)} onImport={() => setImporting(true)} />
+                    : <MappingStepperScreen job={job} role={role} onBack={() => setMapping(false)} onDone={() => setMapping(false)} onImport={() => setImporting(true)} />)
               : viewingPlan && !itemId
                 ? <PlanScreen job={job} role={role} onBack={() => setViewingPlan(false)} onOpenItem={(id) => setItemId(id)} />
               : itemId
                 ? <ItemDetailScreen id={itemId} role={role} onEditItem={setEditingItem} onBack={() => setItemId(null)} onChanged={() => {}} />
-                : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); }} onOpen={setItemId} onNew={() => (demo ? demoBlock('Creating items') : setCreating(true))} onEditPending={setEditingPending} onPlan={() => setViewingPlan(true)} />}
+                : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); setMapping(false); }} onOpen={setItemId} onNew={() => (demo ? demoBlock('Creating items') : setCreating(true))} onEditPending={setEditingPending} onPlan={() => setViewingPlan(true)} onMap={() => (demo ? demoBlock('Mapping') : setMapping(true))} />}
       </View>
       {quoting && <QuoteModal email={demoEmail || ''} onClose={() => setQuoting(false)} />}
     </SafeAreaView>
