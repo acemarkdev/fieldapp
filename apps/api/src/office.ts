@@ -30,8 +30,10 @@ import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams
   listChildSnags, createSnagItem, addItemPhoto, uploadPhoto, ensurePhotoBucket,
   listJobPlans, createJobPlan, deleteJobPlan, listPinnedItems, setItemPin, uploadPlan, signedPlanUrl, ensurePlanBucket,
   getPinsMultiPlan, setPinsMultiPlan } from './store';
+import { computeJobBreakdown, listInvoices, getInvoice, nextInvoiceNumber, createInvoice, updateInvoice, setInvoiceStatus, deleteInvoice } from './store';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
+import { buildInvoicePdf } from './invoicePdf';
 import { buildJobPoPdf } from './poPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
@@ -510,6 +512,150 @@ const server = createServer(async (req, res) => {
       const amt = b.variation_amount_pennies == null || b.variation_amount_pennies === '' ? null : Math.round(Number(b.variation_amount_pennies));
       await setItemPricing(id, ctx.tenant_id, { is_variation: isVar, variation_amount_pennies: isVar ? amt : null });
       send(res, 200, { ok: true });
+      return;
+    }
+
+    // ---- Client invoicing (finance only) ----
+    // List invoices (optionally filtered by status / job).
+    if (p === '/api/invoices' && req.method === 'GET') {
+      if (!allow('finance.view')) return;
+      const status = url.searchParams.get('status') || undefined;
+      const jobId = url.searchParams.get('job') || undefined;
+      const rows = await listInvoices(ctx.tenant_id, { status, jobId });
+      // Outstanding = issued (sent) and not paid; overdue = past due & unpaid.
+      const today = new Date(new Date().toDateString());
+      const list = rows.map((r) => ({
+        id: r.id, number: r.number, job_id: r.job_id, status: r.status,
+        customer: r.customer, job_ref: r.snapshot?.job ? `${r.snapshot.job.client_code}.${r.snapshot.job.job_code}` : '',
+        job_name: r.snapshot?.job?.name ?? '',
+        subtotal_pennies: r.subtotal_pennies, vat_pennies: r.vat_pennies, total_pennies: r.total_pennies,
+        issue_date: r.issue_date, due_date: r.due_date, paid_at: r.paid_at, paid_ref: r.paid_ref,
+        overdue: r.status !== 'paid' && r.status !== 'void' && r.status !== 'draft' && r.due_date ? new Date(r.due_date) < today : false,
+      }));
+      const outstanding = list.filter((i) => i.status === 'sent').reduce((s, i) => s + i.total_pennies, 0);
+      const paid = list.filter((i) => i.status === 'paid').reduce((s, i) => s + i.total_pennies, 0);
+      const overdueCount = list.filter((i) => i.overdue).length;
+      send(res, 200, { invoices: list, summary: { outstanding, paid, overdueCount, count: list.length } });
+      return;
+    }
+    // Create an invoice from a priced job (snapshots the breakdown + adds VAT).
+    if (p === '/api/invoices' && req.method === 'POST') {
+      if (!allow('finance.manage')) return;
+      const b = await readJson(req);
+      const ref = String(b.job_id ?? '').trim();
+      if (!ref) { send(res, 400, { error: 'Pick a job to invoice.' }); return; }
+      let job;
+      try { job = await getJobByRef(ref); } catch { send(res, 404, { error: 'Job not found.' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const includeOmit = !!b.includeOmit;
+      const priced = await computeJobBreakdown(job.id, ctx.tenant_id, includeOmit);
+      if (!priced) { send(res, 400, { error: 'Assign a pricing rule to this job first (Budget tab).' }); return; }
+      const subtotal = priced.breakdown.saleTotal;
+      if (subtotal <= 0) { send(res, 400, { error: 'This job prices to £0 — nothing to invoice yet.' }); return; }
+      let vatRate = Number(b.vat_rate);
+      if (!isFinite(vatRate) || vatRate < 0) vatRate = 20;
+      vatRate = Math.min(vatRate, 100);
+      const vat = Math.round(subtotal * vatRate / 100);
+      const total = subtotal + vat;
+      const dueDays = Number(b.due_days);
+      const issue = new Date();
+      const issueDate = issue.toISOString().slice(0, 10);
+      let dueDate: string | null = null;
+      if (isFinite(dueDays) && dueDays >= 0) { const d = new Date(issue); d.setDate(d.getDate() + Math.round(dueDays)); dueDate = d.toISOString().slice(0, 10); }
+      let sellerName = 'ACE Group';
+      try { const t = await getTenant(ctx.tenant_id); if (t?.name) sellerName = t.name; } catch { /* default */ }
+      const snapshot = {
+        breakdown: priced.breakdown,
+        job: { client_code: job.client_code, job_code: job.job_code, name: job.name, site_address: (job as any).site_address ?? null },
+        ruleName: priced.rule.name, seller: { name: sellerName }, includeOmit,
+      };
+      const number = await nextInvoiceNumber(ctx.tenant_id);
+      try {
+        const created = await createInvoice(ctx.tenant_id, {
+          job_id: job.id, number, snapshot, customer: (priced.rule as any).customer ?? null,
+          bill_to: (b.bill_to ?? '').toString().trim() || null,
+          subtotal_pennies: subtotal, vat_rate: vatRate, vat_pennies: vat, total_pennies: total,
+          issue_date: issueDate, due_date: dueDate, notes: (b.notes ?? '').toString().trim() || null, created_by: ctx.name ?? null,
+        });
+        send(res, 200, { ok: true, id: created.id, number: created.number });
+      } catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: 'That invoice number already exists — try again.' }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
+      return;
+    }
+    // Get one invoice (full detail incl. snapshot breakdown).
+    if (p.startsWith('/api/invoice/') && p.split('/').length === 4 && req.method === 'GET') {
+      if (!allow('finance.view')) return;
+      const id = p.split('/')[3] ?? '';
+      const inv = await getInvoice(id, ctx.tenant_id);
+      if (!inv) { send(res, 404, { error: 'Invoice not found.' }); return; }
+      send(res, 200, inv);
+      return;
+    }
+    // Edit an invoice's billing address / notes / due date / VAT (VAT recomputes totals).
+    if (p.startsWith('/api/invoice/') && p.split('/').length === 4 && req.method === 'PUT') {
+      if (!allow('finance.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const inv = await getInvoice(id, ctx.tenant_id);
+      if (!inv) { send(res, 404, { error: 'Invoice not found.' }); return; }
+      if (inv.status === 'void') { send(res, 400, { error: 'This invoice is void and can’t be edited.' }); return; }
+      const b = await readJson(req);
+      const patch: Record<string, unknown> = {};
+      if (b.bill_to !== undefined) patch.bill_to = (b.bill_to ?? '').toString().trim() || null;
+      if (b.notes !== undefined) patch.notes = (b.notes ?? '').toString().trim() || null;
+      if (b.due_date !== undefined) patch.due_date = b.due_date || null;
+      if (b.customer !== undefined) patch.customer = (b.customer ?? '').toString().trim() || null;
+      if (b.vat_rate !== undefined) {
+        let vatRate = Number(b.vat_rate); if (!isFinite(vatRate) || vatRate < 0) vatRate = 0; vatRate = Math.min(vatRate, 100);
+        patch.vat_rate = vatRate;
+        patch.vat_pennies = Math.round(inv.subtotal_pennies * vatRate / 100);
+        patch.total_pennies = inv.subtotal_pennies + (patch.vat_pennies as number);
+      }
+      await updateInvoice(id, ctx.tenant_id, patch as any);
+      send(res, 200, { ok: true });
+      return;
+    }
+    // Delete a draft or void invoice (issued/paid ones must be voided, not deleted).
+    if (p.startsWith('/api/invoice/') && p.split('/').length === 4 && req.method === 'DELETE') {
+      if (!allow('finance.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const inv = await getInvoice(id, ctx.tenant_id);
+      if (!inv) { send(res, 404, { error: 'Invoice not found.' }); return; }
+      if (inv.status !== 'draft' && inv.status !== 'void') { send(res, 400, { error: 'Only draft or void invoices can be deleted — void it first.' }); return; }
+      await deleteInvoice(id, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+    // Change invoice status: draft → sent → paid, or void; unpaid reverts paid → sent.
+    if (p.startsWith('/api/invoice/') && p.endsWith('/status') && req.method === 'POST') {
+      if (!allow('finance.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const inv = await getInvoice(id, ctx.tenant_id);
+      if (!inv) { send(res, 404, { error: 'Invoice not found.' }); return; }
+      const b = await readJson(req);
+      const status = String(b.status ?? '');
+      if (!['draft', 'sent', 'paid', 'void'].includes(status)) { send(res, 400, { error: 'Unknown status.' }); return; }
+      await setInvoiceStatus(id, ctx.tenant_id, status as any, { paid_ref: (b.paid_ref ?? '').toString().trim() || null });
+      send(res, 200, { ok: true });
+      return;
+    }
+    // Invoice PDF (customer-facing, from the snapshot). Browser downloads it.
+    if (p.startsWith('/api/invoice/') && p.endsWith('/pdf') && req.method === 'GET') {
+      if (!allow('finance.view')) return;
+      const id = p.split('/')[3] ?? '';
+      try {
+        const out = await buildInvoicePdf(id, ctx.tenant_id);
+        if (!out) { send(res, 404, { error: 'Invoice not found.' }); return; }
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-disposition': `attachment; filename="${out.number}.pdf"`,
+          'cache-control': 'no-store',
+        });
+        res.end(out.buffer);
+      } catch (e: any) {
+        send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) });
+      }
       return;
     }
 
@@ -2003,6 +2149,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div></div>
       <div class="grp" id="grp_finance"><button class="grpbtn" onclick="toggleGrp('finance')">Finance \u25be</button><div class="grpmenu" id="menu_finance">
         <button id="tabBudget" class="tab" style="display:none" onclick="showTab('budget')">Budget</button>
+        <button id="tabInvoices" class="tab" style="display:none" onclick="showTab('invoices')">Invoices</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
@@ -2215,6 +2362,28 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <span id="fpMsg" class="itemcount"></span>
       </div>
       <div id="fpBreak"></div>
+    </main>
+  </div>
+
+  <div id="invoicesView" style="display:none">
+    <main style="max-width:1080px">
+      <div class="titlerow">
+        <div><h2>Invoices</h2><div class="sub">Raise a VAT invoice from a priced job, download the PDF, and track paid / unpaid. Finance-only — no one else can see it.</div></div>
+        <button class="newbtn" onclick="openNewInvoice()">+ New invoice</button>
+      </div>
+      <div class="statgrid" id="invSummary" style="margin:14px 0"></div>
+      <div class="chips" style="align-items:center;margin-bottom:6px">
+        <select id="invStatusFilter" class="tinput" onchange="loadInvoices()">
+          <option value="">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="sent">Awaiting payment</option>
+          <option value="paid">Paid</option>
+          <option value="void">Void</option>
+        </select>
+      </div>
+      <div class="card2"><table><thead><tr>
+        <th>INVOICE</th><th>JOB</th><th>CUSTOMER</th><th>ISSUED</th><th>DUE</th><th>TOTAL</th><th>STATUS</th><th></th>
+      </tr></thead><tbody id="invRows"></tbody></table></div>
     </main>
   </div>
 
@@ -2479,7 +2648,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -3526,6 +3695,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('plansView').style.display=name==='plans'?'block':'none';
     document.getElementById('calView').style.display=name==='cal'?'block':'none';
     document.getElementById('budgetView').style.display=name==='budget'?'block':'none';
+    document.getElementById('invoicesView').style.display=name==='invoices'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -3541,6 +3711,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabPlans').classList.toggle('on',name==='plans');
     document.getElementById('tabCal').classList.toggle('on',name==='cal');
     document.getElementById('tabBudget').classList.toggle('on',name==='budget');
+    var _tinv=document.getElementById('tabInvoices'); if(_tinv)_tinv.classList.toggle('on',name==='invoices');
     document.getElementById('tabTests').classList.toggle('on',name==='tests');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
@@ -3556,6 +3727,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='plans')loadPlansTab();
     if(name==='cal')loadCalendar();
     if(name==='budget')loadBudget();
+    if(name==='invoices')loadInvoices();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -3566,8 +3738,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -3695,6 +3867,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabPlans',canCap('plans.view'));
     show('tabCal',canCap('calendar.view'));
     show('tabBudget',canCap('finance.view'));
+    show('tabInvoices',canCap('finance.view'));
     show('tabTests',canCap('dashboard.view'));
     show('tabLeads',canCap('jobs.manage'));
     show('tabCustomers',canCap('jobs.manage'));
@@ -4425,6 +4598,113 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!confirm('Delete this pricing rule? Jobs using it will become unpriced.'))return;
     var r=await api('/api/pricing-rules/'+id,{method:'DELETE'});var d=await r.json();
     if(r.ok&&d.ok){tShow('Rule deleted');loadBudget();}else tShow(d.error||'Could not delete');
+  }
+
+  // ---- Client invoicing (admin / invoice_manager) ----
+  var INV_STATUS={draft:{t:'Draft',c:'#6b6880'},sent:{t:'Awaiting payment',c:'#3a2b72'},paid:{t:'Paid',c:'#16a34a'},void:{t:'Void',c:'#9a97a8'}};
+  function invDate(s){ if(!s)return '—'; var d=new Date(s); return isNaN(d.getTime())?s:d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}); }
+  function invBadge(inv){ var m=INV_STATUS[inv.status]||INV_STATUS.draft; var lbl=inv.overdue?'Overdue':m.t; var col=inv.overdue?'#c0392b':m.c;
+    return '<span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;background:'+col+'">'+lbl+'</span>'; }
+  async function loadInvoices(){
+    var f=document.getElementById('invStatusFilter'); var q=f&&f.value?('?status='+encodeURIComponent(f.value)):'';
+    var d; try{ d=await (await api('/api/invoices'+q)).json(); }catch(e){ d={invoices:[],summary:{}}; }
+    var s=d.summary||{};
+    document.getElementById('invSummary').innerHTML=
+      '<div class="stat"><div class="v">'+gbp(s.outstanding||0)+'</div><div class="l">Outstanding</div><div class="s">awaiting payment</div></div>'
+      +'<div class="stat"><div class="v">'+gbp(s.paid||0)+'</div><div class="l">Paid</div><div class="s">received</div></div>'
+      +'<div class="stat'+((s.overdueCount||0)?' warn':'')+'"><div class="v">'+(s.overdueCount||0)+'</div><div class="l">Overdue</div><div class="s">past due date</div></div>'
+      +'<div class="stat"><div class="v">'+(s.count||0)+'</div><div class="l">Invoices</div></div>';
+    var tb=document.getElementById('invRows');
+    var rows=d.invoices||[];
+    tb.innerHTML=rows.length?rows.map(function(i){
+      var act='<a class="codelink" onclick="dlInvoicePdf(\\''+i.id+'\\')">PDF</a>';
+      if(i.status==='draft')act+=' &nbsp; <a class="codelink" onclick="invSetStatus(\\''+i.id+'\\',\\'sent\\')">Send</a> &nbsp; <a class="codelink" onclick="openInvoice(\\''+i.id+'\\')">Edit</a> &nbsp; <a class="codelink" style="color:#c0392b" onclick="delInvoice(\\''+i.id+'\\')">Delete</a>';
+      else if(i.status==='sent')act+=' &nbsp; <a class="codelink" onclick="invMarkPaid(\\''+i.id+'\\')">Mark paid</a> &nbsp; <a class="codelink" onclick="invSetStatus(\\''+i.id+'\\',\\'void\\')">Void</a>';
+      else if(i.status==='paid')act+=' &nbsp; <a class="codelink" onclick="invSetStatus(\\''+i.id+'\\',\\'sent\\')">Mark unpaid</a>';
+      else if(i.status==='void')act+=' &nbsp; <a class="codelink" style="color:#c0392b" onclick="delInvoice(\\''+i.id+'\\')">Delete</a>';
+      return '<tr><td><a class="codelink" onclick="openInvoice(\\''+i.id+'\\')"><b>'+esc(i.number)+'</b></a></td>'
+        +'<td class="mono">'+esc(i.job_ref||'')+'<div style="color:var(--muted);font-size:11px">'+esc(i.job_name||'')+'</div></td>'
+        +'<td>'+esc(i.customer||'—')+'</td><td>'+invDate(i.issue_date)+'</td><td>'+invDate(i.due_date)+'</td>'
+        +'<td><b>'+gbp(i.total_pennies)+'</b></td><td>'+invBadge(i)+'</td>'
+        +'<td style="text-align:right;white-space:nowrap">'+act+'</td></tr>';
+    }).join(''):'<tr><td colspan="8" class="ro">No invoices yet — raise one from a priced job.</td></tr>';
+  }
+  async function openNewInvoice(){
+    var jobs; try{ jobs=await (await api('/api/jobs')).json(); }catch(e){ jobs=[]; }
+    var opts=jobs.map(function(j){return '<option value="'+j.id+'">'+esc(j.site_code||j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    var html='<div class="fgrid">'
+      +'<div class="field full"><label>Job *</label><select id="ni_job" class="tinput">'+opts+'</select><div class="sub" style="margin-top:4px">Only jobs with a pricing rule assigned (Budget tab) can be invoiced.</div></div>'
+      +'<div class="field"><label>VAT rate (%)</label><input id="ni_vat" type="number" min="0" max="100" step="0.5" value="20"></div>'
+      +'<div class="field"><label>Payment terms (days)</label><input id="ni_due" type="number" min="0" step="1" value="30"></div>'
+      +'<div class="field full"><label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="ni_omit" style="width:15px;height:15px"> Include items marked Omit</label></div>'
+      +'<div class="field full"><label>Bill-to address</label><textarea id="ni_billto" rows="3" placeholder="Customer billing address (appears on the invoice)"></textarea></div>'
+      +'<div class="field full"><label>Notes</label><input id="ni_notes" placeholder="e.g. PO reference, payment instructions"></div>'
+      +'</div>';
+    openModal('New invoice','<form onsubmit="return false">'+html+'<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="createInvoice()">Create invoice</button></div></form>');
+  }
+  async function createInvoice(){
+    var job=document.getElementById('ni_job').value; if(!job){tShow('Pick a job');return;}
+    var body={job_id:job,vat_rate:parseFloat(document.getElementById('ni_vat').value),due_days:parseInt(document.getElementById('ni_due').value,10),
+      includeOmit:document.getElementById('ni_omit').checked,bill_to:document.getElementById('ni_billto').value,notes:document.getElementById('ni_notes').value};
+    var r=await api('/api/invoices',{method:'POST',body:JSON.stringify(body)}); var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Invoice '+d.number+' created');loadInvoices();}else tShow(d.error||'Could not create invoice');
+  }
+  async function openInvoice(id){
+    var inv; try{ inv=await (await api('/api/invoice/'+id)).json(); }catch(e){ tShow('Could not load'); return; }
+    if(inv.error){tShow(inv.error);return;}
+    var b=(inv.snapshot&&inv.snapshot.breakdown)||{flats:[],doors:{},communal:{},variations:[]};
+    var lines='';
+    (b.flats||[]).forEach(function(f){ lines+='<tr><td>Flat '+esc(f.flat)+'</td><td class="ro">'+f.windows+' window'+(f.windows===1?'':'s')+(f.extraWindows?(' · '+f.extraWindows+' extra'):'')+'</td><td style="text-align:right">'+gbp(f.total)+'</td></tr>'; });
+    if(b.doors&&b.doors.count)lines+='<tr><td>Doors</td><td class="ro">'+b.doors.count+'</td><td style="text-align:right">'+gbp(b.doors.amount)+'</td></tr>';
+    if(b.communal&&b.communal.windows)lines+='<tr><td>Communal / COM windows</td><td class="ro">'+b.communal.windows+' ('+b.communal.m2+' m²)</td><td style="text-align:right">'+gbp(b.communal.amount)+'</td></tr>';
+    (b.variations||[]).forEach(function(v){ lines+='<tr><td>Variation '+esc(v.code||'')+'</td><td class="ro">agreed</td><td style="text-align:right">'+gbp(v.amount)+'</td></tr>'; });
+    var editable=(inv.status==='draft');
+    var head='<div class="sub" style="margin-bottom:8px">'+esc((inv.snapshot&&inv.snapshot.job&&(inv.snapshot.job.client_code+'.'+inv.snapshot.job.job_code))||'')+' · '+esc(inv.customer||'—')+' · '+invBadge({status:inv.status,overdue:false})+'</div>';
+    var tbl='<div class="card2" style="margin-bottom:12px"><table><thead><tr><th>DESCRIPTION</th><th>DETAILS</th><th style="text-align:right">AMOUNT</th></tr></thead><tbody>'+lines
+      +'<tr style="border-top:1px solid var(--line)"><td colspan="2" style="text-align:right">Subtotal (ex VAT)</td><td style="text-align:right">'+gbp(inv.subtotal_pennies)+'</td></tr>'
+      +'<tr><td colspan="2" style="text-align:right">VAT @ '+Number(inv.vat_rate)+'%</td><td style="text-align:right">'+gbp(inv.vat_pennies)+'</td></tr>'
+      +'<tr style="border-top:2px solid var(--line)"><td colspan="2" style="text-align:right"><b>Total</b></td><td style="text-align:right"><b>'+gbp(inv.total_pennies)+'</b></td></tr></tbody></table></div>';
+    var form='<div class="fgrid">'
+      +'<div class="field"><label>VAT rate (%)</label><input id="ei_vat" type="number" min="0" max="100" step="0.5" value="'+Number(inv.vat_rate)+'" '+(editable?'':'disabled')+'></div>'
+      +'<div class="field"><label>Due date</label><input id="ei_due" type="date" value="'+(inv.due_date||'')+'" '+(editable?'':'disabled')+'></div>'
+      +'<div class="field full"><label>Bill-to address</label><textarea id="ei_billto" rows="3" '+(editable?'':'disabled')+'>'+esc(inv.bill_to||'')+'</textarea></div>'
+      +'<div class="field full"><label>Notes</label><input id="ei_notes" value="'+av(inv.notes||'')+'" '+(editable?'':'disabled')+'></div>'
+      +'</div>';
+    var actions='<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Close</button>'
+      +'<button class="btn ghost" type="button" onclick="dlInvoicePdf(\\''+inv.id+'\\')">Download PDF</button>'
+      +(editable?'<button class="btn" type="button" onclick="saveInvoice(\\''+inv.id+'\\')">Save changes</button>':'')+'</div>';
+    openModal('Invoice '+esc(inv.number),head+tbl+(editable?'<div class="groupt">EDIT (draft only)</div>':'')+form+actions);
+  }
+  async function saveInvoice(id){
+    var body={vat_rate:parseFloat(document.getElementById('ei_vat').value),due_date:document.getElementById('ei_due').value||null,
+      bill_to:document.getElementById('ei_billto').value,notes:document.getElementById('ei_notes').value};
+    var r=await api('/api/invoice/'+id,{method:'PUT',body:JSON.stringify(body)}); var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Saved');loadInvoices();}else tShow(d.error||'Could not save');
+  }
+  async function invSetStatus(id,status){
+    if(status==='void'&&!confirm('Void this invoice? It stays on record but is marked void.'))return;
+    var r=await api('/api/invoice/'+id+'/status',{method:'POST',body:JSON.stringify({status:status})}); var d=await r.json();
+    if(r.ok&&d.ok){tShow(status==='sent'?'Marked sent':status==='void'?'Voided':'Updated');loadInvoices();}else tShow(d.error||'Failed');
+  }
+  async function invMarkPaid(id){
+    var ref=prompt('Mark paid — payment reference (optional):','');
+    if(ref===null)return;
+    var r=await api('/api/invoice/'+id+'/status',{method:'POST',body:JSON.stringify({status:'paid',paid_ref:ref})}); var d=await r.json();
+    if(r.ok&&d.ok){tShow('Marked paid');loadInvoices();}else tShow(d.error||'Failed');
+  }
+  async function delInvoice(id){
+    if(!confirm('Delete this invoice permanently?'))return;
+    var r=await api('/api/invoice/'+id,{method:'DELETE'}); var d=await r.json();
+    if(r.ok&&d.ok){tShow('Invoice deleted');loadInvoices();}else tShow(d.error||'Could not delete');
+  }
+  async function dlInvoicePdf(id){
+    try{
+      var r=await fetch('/api/invoice/'+id+'/pdf',{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PDF failed');return;}
+      var blob=await r.blob(); var u=URL.createObjectURL(blob);
+      var a=document.createElement('a'); a.href=u; a.download='invoice.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){URL.revokeObjectURL(u);},4000); tShow('Invoice PDF downloaded');
+    }catch(err){tShow('PDF failed');}
   }
 
   // ---- In-app QA test run ----

@@ -13,7 +13,7 @@ const ok = (label: string, cond: boolean) => { if (!cond) { fail++; console.erro
 
 // A finance route line: declares an HTTP route (has req.method) AND touches finance paths.
 const isRouteDecl = (l: string) => /req\.method\s*===/.test(l) && /if \(p\b/.test(l);
-const touchesFinance = (l: string) => /pricing-rules|\/pricing'|price\.pdf/.test(l);
+const touchesFinance = (l: string) => /pricing-rules|\/pricing'|price\.pdf|\/api\/invoices|\/api\/invoice\//.test(l);
 const isGenericItemRoute = (l: string) => /!p\.endsWith\('\/pricing'\)/.test(l); // explicitly NOT finance
 
 let financeRoutes = 0;
@@ -37,7 +37,7 @@ const walk = (p: string) => {
     if (statSync(fp).isDirectory()) walk(fp);
     else if (/\.(ts|tsx)$/.test(f)) {
       const t = readFileSync(fp, 'utf8');
-      if (/\.from\(['"](pricing_rules|job_pricing|item_pricing)['"]\)/.test(t)) { mobileHits++; console.error('  finance table used in', fp); }
+      if (/\.from\(['"](pricing_rules|job_pricing|item_pricing|invoices)['"]\)/.test(t)) { mobileHits++; console.error('  finance table used in', fp); }
     }
   }
 };

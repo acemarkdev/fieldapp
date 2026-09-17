@@ -1,6 +1,7 @@
 // Canonical-store access — the survey item's home before (and after) it reaches Monday.
 import { db } from './supabase';
 import type { Job, SurveyItem, FitterTeam, Snag, ItemPhoto } from '@ace/shared';
+import { priceJob, classifyCategory, type PriceItem, type JobBreak } from '@ace/shared';
 
 export async function getJobByCode(clientCode: string, jobCode: string): Promise<Job> {
   const { data, error } = await db()
@@ -738,4 +739,101 @@ export async function deleteImportedItems(tenantId: string, jobId: string): Prom
     .eq('tenant_id', tenantId).eq('job_id', jobId).eq('from_import', true).is('monday_item_id', null).select('id');
   if (error) throw error;
   return { deleted: data?.length ?? 0, skippedSynced: synced?.length ?? 0 };
+}
+
+// ============================================================
+//  Client invoicing (finance-only; admin / invoice_manager, server-gated + RLS)
+// ============================================================
+
+export interface InvoiceRow {
+  id: string; tenant_id: string; job_id: string; number: string;
+  status: 'draft' | 'sent' | 'paid' | 'void';
+  snapshot: any; customer: string | null; bill_to: string | null;
+  subtotal_pennies: number; vat_rate: number; vat_pennies: number; total_pennies: number;
+  issue_date: string; due_date: string | null; notes: string | null;
+  paid_at: string | null; paid_ref: string | null; created_by: string | null; created_at: string;
+}
+
+// Price a job into the customer breakdown, resolving its assigned rule. Shared by the
+// budget view, the price PDF and invoicing so they always agree. Returns null when the job
+// has no rule (or a rule with no sale params) — i.e. nothing to price yet.
+export async function computeJobBreakdown(
+  jobId: string, tenantId: string, includeOmit: boolean,
+): Promise<{ rule: PricingRuleRow; breakdown: JobBreak } | null> {
+  const ruleId = await getJobRuleId(jobId);
+  const rule = ruleId ? await getPricingRule(ruleId, tenantId) : null;
+  if (!rule || !(rule.params as any)?.sale) return null;
+  let items = await listSurveyItems(jobId);
+  if (!includeOmit) items = items.filter((it: any) => it.install_status !== 'omit');
+  const ipMap = new Map((await listItemPricing(items.map((i) => i.id))).map((r) => [r.item_id, r]));
+  const priceItems: PriceItem[] = items.map((it: any) => {
+    const f = ipMap.get(it.id);
+    return {
+      id: it.id, full_code: it.full_code, kind: it.kind,
+      category: classifyCategory({ item_type: it.item_type, item_code: it.item_code }),
+      width_mm: it.width_mm, height_mm: it.height_mm, flat: it.flat,
+      is_variation: !!f?.is_variation, variation_amount: f?.variation_amount_pennies ?? 0,
+    };
+  });
+  return { rule, breakdown: priceJob(priceItems, rule as any) };
+}
+
+export async function listInvoices(tenantId: string, filter?: { status?: string; jobId?: string }): Promise<InvoiceRow[]> {
+  let q = db().from('invoices').select('*').eq('tenant_id', tenantId);
+  if (filter?.status) q = q.eq('status', filter.status);
+  if (filter?.jobId) q = q.eq('job_id', filter.jobId);
+  const { data, error } = await q.order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as InvoiceRow[];
+}
+
+export async function getInvoice(id: string, tenantId: string): Promise<InvoiceRow | null> {
+  const { data, error } = await db().from('invoices').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as InvoiceRow | null;
+}
+
+// Next sequential invoice number for a tenant: INV-0001, INV-0002, … derived from the
+// highest existing number so gaps from deleted drafts don't repeat a live number.
+export async function nextInvoiceNumber(tenantId: string): Promise<string> {
+  const { data, error } = await db().from('invoices').select('number').eq('tenant_id', tenantId);
+  if (error) throw error;
+  let max = 0;
+  for (const r of (data ?? []) as any[]) {
+    const m = /(\d+)\s*$/.exec(String(r.number ?? ''));
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return 'INV-' + String(max + 1).padStart(4, '0');
+}
+
+export async function createInvoice(tenantId: string, row: {
+  job_id: string; number: string; snapshot: any; customer: string | null; bill_to: string | null;
+  subtotal_pennies: number; vat_rate: number; vat_pennies: number; total_pennies: number;
+  issue_date: string; due_date: string | null; notes: string | null; created_by: string | null;
+}): Promise<InvoiceRow> {
+  const { data, error } = await db().from('invoices')
+    .insert({ tenant_id: tenantId, status: 'draft', ...row }).select().single();
+  if (error) throw error;
+  return data as InvoiceRow;
+}
+
+// Editable fields on an invoice (only ever on drafts, enforced by the server).
+export async function updateInvoice(id: string, tenantId: string, patch: Partial<Pick<InvoiceRow,
+  'bill_to' | 'notes' | 'due_date' | 'vat_rate' | 'vat_pennies' | 'total_pennies' | 'customer'>>): Promise<void> {
+  const { error } = await db().from('invoices').update(patch).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+export async function setInvoiceStatus(id: string, tenantId: string, status: 'draft' | 'sent' | 'paid' | 'void',
+  extra?: { paid_at?: string | null; paid_ref?: string | null }): Promise<void> {
+  const patch: Record<string, unknown> = { status };
+  if (status === 'paid') { patch.paid_at = extra?.paid_at ?? new Date().toISOString(); if (extra?.paid_ref !== undefined) patch.paid_ref = extra.paid_ref; }
+  else { patch.paid_at = null; patch.paid_ref = null; }
+  const { error } = await db().from('invoices').update(patch).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+export async function deleteInvoice(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('invoices').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
 }
