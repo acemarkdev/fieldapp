@@ -7,7 +7,8 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList, StyleSheet, ActivityIndicator, Alert, Modal,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+// SDK 54+ moved the classic file API (readAsStringAsync / EncodingType) to the /legacy entry.
+import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import * as XLSX from 'xlsx';
 import { C } from '../lib/theme';

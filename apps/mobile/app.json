@@ -2,20 +2,50 @@
   "expo": {
     "name": "FitAWindow",
     "slug": "ace-field",
-    "version": "0.65.1",
+    "version": "0.71.1",
     "orientation": "portrait",
     "scheme": "acefield",
     "userInterfaceStyle": "light",
-    "splash": { "backgroundColor": "#3a2b72" },
-    "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true, "bundleIdentifier": "uk.co.acegroup.field" },
-    "android": { "package": "uk.co.acegroup.field", "versionCode": 1 },
-    "web": { "bundler": "metro" },
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#3a2b72"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "uk.co.acegroup.field"
+    },
+    "android": {
+      "package": "uk.co.acegroup.field",
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#3a2b72"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    },
     "plugins": [
-      ["expo-image-picker", {
-        "photosPermission": "FitAWindow needs access to your photos to attach survey images.",
-        "cameraPermission": "FitAWindow needs the camera to take survey photos."
-      }]
-    ]
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FitAWindow needs access to your photos to attach survey images.",
+          "cameraPermission": "FitAWindow needs the camera to take survey photos."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "fb009dd5-8383-4f04-b82f-d3afe4b9395a"
+      }
+    }
   }
 }
