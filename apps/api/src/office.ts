@@ -4780,7 +4780,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="field full"><label>Bill-to address</label><textarea id="ni_billto" rows="3" placeholder="Customer billing address (appears on the invoice)"></textarea></div>'
       +'<div class="field full"><label>Notes</label><input id="ni_notes" placeholder="e.g. PO reference, payment instructions"></div>'
       +'</div>';
-    openModal('New invoice','<form onsubmit="return false">'+html+'<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="createInvoice()">Create invoice</button></div></form>');
+    openModal('New invoice','<form onsubmit="return false">'+html+'<div class="foot"><button class="cancel" type="button" onclick="closeModal()">Cancel</button><button class="save" type="button" onclick="createInvoice()">Create invoice</button></div></form>');
   }
   async function createInvoice(){
     var job=document.getElementById('ni_job').value; if(!job){tShow('Pick a job');return;}
@@ -4810,9 +4810,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="field full"><label>Bill-to address</label><textarea id="ei_billto" rows="3" '+(editable?'':'disabled')+'>'+esc(inv.bill_to||'')+'</textarea></div>'
       +'<div class="field full"><label>Notes</label><input id="ei_notes" value="'+av(inv.notes||'')+'" '+(editable?'':'disabled')+'></div>'
       +'</div>';
-    var actions='<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Close</button>'
-      +'<button class="btn ghost" type="button" onclick="dlInvoicePdf(\\''+inv.id+'\\')">Download PDF</button>'
-      +(editable?'<button class="btn" type="button" onclick="saveInvoice(\\''+inv.id+'\\')">Save changes</button>':'')+'</div>';
+    var actions='<div class="foot"><button class="cancel" type="button" onclick="closeModal()">Close</button>'
+      +'<button class="cancel" type="button" onclick="dlInvoicePdf(\\''+inv.id+'\\')">Download PDF</button>'
+      +(editable?'<button class="save" type="button" onclick="saveInvoice(\\''+inv.id+'\\')">Save changes</button>':'')+'</div>';
     openModal('Invoice '+esc(inv.number),head+tbl+(editable?'<div class="groupt">EDIT (draft only)</div>':'')+form+actions);
   }
   async function saveInvoice(id){
@@ -4894,10 +4894,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var itemsNote='<div class="sub" style="margin-bottom:10px">'+(d.items||[]).length+' item'+((d.items||[]).length===1?'':'s')+' in this flat. Tick each check that passes; untick and note anything that fails.</div>';
     var resultSel='<div class="fgrid"><div class="field"><label>Result</label><select id="qa_result" class="tinput"><option value="pass"'+(d.result!=='fail'?' selected':'')+'>Pass</option><option value="fail"'+(d.result==='fail'?' selected':'')+'>Fail</option></select></div>'
       +'<div class="field full"><label>Overall notes</label><input id="qa_notes" value="'+av(d.notes||'')+'" placeholder="Handover notes (optional)"></div></div>';
-    var actions='<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Cancel</button>'
-      +(d.exists?'<button class="btn ghost" type="button" style="color:#c0392b" onclick="delSignoff()">Clear</button>':'')
-      +(d.exists?'<button class="btn ghost" type="button" onclick="dlSignoffPdf(\\''+esc(flat)+'\\')">PDF</button>':'')
-      +'<button class="btn" type="button" onclick="saveFlatSignoff()">Save sign-off</button></div>';
+    var actions='<div class="foot"><button class="cancel" type="button" onclick="closeModal()">Cancel</button>'
+      +(d.exists?'<button class="cancel" type="button" style="color:#c0392b;border-color:#f0c2bb" onclick="delSignoff()">Clear</button>':'')
+      +(d.exists?'<button class="cancel" type="button" onclick="dlSignoffPdf(\\''+esc(flat)+'\\')">Download PDF</button>':'')
+      +'<button class="save" type="button" onclick="saveFlatSignoff()">Save sign-off</button></div>';
     openModal('Flat '+esc(flat)+' — sign-off',itemsNote+checklistTbl+photoHtml+resultSel+actions);
   }
   async function saveFlatSignoff(){
@@ -4933,7 +4933,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var html='<div class="field full"><label>Checklist lines (one per line)</label>'
       +'<textarea id="qa_tmpl" rows="10" style="width:100%;font-size:13px">'+esc(rows)+'</textarea>'
       +'<div class="sub" style="margin-top:6px">Each line becomes a QA check. Existing sign-offs keep the wording they were saved with.</div></div>';
-    openModal('Edit QA checklist',html+'<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="saveQaTemplate()">Save checklist</button></div>');
+    openModal('Edit QA checklist',html+'<div class="foot"><button class="cancel" type="button" onclick="closeModal()">Cancel</button><button class="save" type="button" onclick="saveQaTemplate()">Save checklist</button></div>');
   }
   async function saveQaTemplate(){
     var lines=document.getElementById('qa_tmpl').value.split('\\n').map(function(s){return s.trim();}).filter(Boolean);

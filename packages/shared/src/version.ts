@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.89.0';
+export const APP_VERSION = '0.89.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.89.1', date: '2026-09-19', changes: [
+    'Style fix: the sign-off, invoice and QA-checklist dialog buttons now use the standard footer styling (magenta primary + outlined secondary), instead of showing as plain browser buttons.',
+  ] },
   { version: '0.89.0', date: '2026-09-19', changes: [
     'Install sign-off (Operations ▸ Sign-off, admin / office). A new tab lists every flat on a job with its install progress — items, how many are installed, open snags, and whether it’s ready (all installs done). Open a flat to run a QA checklist (each line ticks Pass by default; untick and note anything that fails), see that flat’s after-install photos, mark the flat Passed or Failed with handover notes, and save. Signed-off flats show a Passed/Failed badge and can produce a one-page handover certificate PDF (checklist results, notes, who signed and when, and the after-photos). Admins can edit the tenant’s checklist wording; each sign-off snapshots the checklist it was saved with, so past records never change. New qa.signoff capability (admin + office only); the sign-off table is tenant-read with admin/office-only writes. Requires migration 0045.',
   ] },
