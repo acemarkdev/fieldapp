@@ -2,6 +2,7 @@
 import { db } from './supabase';
 import type { Job, SurveyItem, FitterTeam, Snag, ItemPhoto } from '@ace/shared';
 import { priceJob, classifyCategory, type PriceItem, type JobBreak } from '@ace/shared';
+import { QA_CHECKLIST_DEFAULT, type QAChecklistItem } from '@ace/shared';
 
 export async function getJobByCode(clientCode: string, jobCode: string): Promise<Job> {
   const { data, error } = await db()
@@ -836,4 +837,71 @@ export async function setInvoiceStatus(id: string, tenantId: string, status: 'dr
 export async function deleteInvoice(id: string, tenantId: string): Promise<void> {
   const { error } = await db().from('invoices').delete().eq('id', id).eq('tenant_id', tenantId);
   if (error) throw error;
+}
+
+// ============================================================
+//  Install sign-off / QA (operational; admin / office write, tenant read)
+// ============================================================
+
+export interface QaSignoffRow {
+  id: string; tenant_id: string; job_id: string; flat: string;
+  result: 'pass' | 'fail'; checklist: any; notes: string | null;
+  signed_by: string | null; signed_by_id: string | null; signed_at: string;
+  created_at: string; updated_at: string;
+}
+
+// Per-tenant checklist template (falls back to the shared default). Stored in the global
+// app_config table under a tenant-namespaced key so no extra table is needed.
+const qaTemplateKey = (tenantId: string) => `qa_checklist:${tenantId}`;
+export async function getQaChecklistTemplate(tenantId: string): Promise<QAChecklistItem[]> {
+  const raw = await getConfig(qaTemplateKey(tenantId));
+  if (!raw) return QA_CHECKLIST_DEFAULT;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.every((x) => x && x.key && x.label)) return arr as QAChecklistItem[];
+  } catch { /* fall through to default */ }
+  return QA_CHECKLIST_DEFAULT;
+}
+export async function setQaChecklistTemplate(tenantId: string, list: QAChecklistItem[]): Promise<void> {
+  await setConfig(qaTemplateKey(tenantId), JSON.stringify(list));
+}
+
+export async function listSignoffs(jobId: string): Promise<QaSignoffRow[]> {
+  const { data, error } = await db().from('qa_signoffs').select('*').eq('job_id', jobId);
+  if (error) throw error;
+  return (data ?? []) as QaSignoffRow[];
+}
+export async function getSignoff(jobId: string, flat: string): Promise<QaSignoffRow | null> {
+  const { data, error } = await db().from('qa_signoffs').select('*').eq('job_id', jobId).eq('flat', flat).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as QaSignoffRow | null;
+}
+export async function upsertSignoff(tenantId: string, jobId: string, flat: string, s: {
+  result: 'pass' | 'fail'; checklist: any; notes: string | null; signed_by: string | null; signed_by_id: string | null;
+}): Promise<QaSignoffRow> {
+  const { data, error } = await db().from('qa_signoffs')
+    .upsert({ tenant_id: tenantId, job_id: jobId, flat, result: s.result, checklist: s.checklist, notes: s.notes,
+      signed_by: s.signed_by, signed_by_id: s.signed_by_id, signed_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { onConflict: 'job_id,flat' })
+    .select().single();
+  if (error) throw error;
+  return data as QaSignoffRow;
+}
+export async function deleteSignoff(jobId: string, flat: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('qa_signoffs').delete().eq('job_id', jobId).eq('flat', flat).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// After-install photos for every item in a given flat of a job (for the QA view + certificate).
+export async function listFlatAfterPhotos(jobId: string, flat: string): Promise<{ storage_path: string; full_code: string | null }[]> {
+  const { data: items, error: e1 } = await db().from('survey_items')
+    .select('id,full_code').eq('job_id', jobId).eq('flat', flat);
+  if (e1) throw e1;
+  const ids = (items ?? []).map((i: any) => i.id);
+  if (!ids.length) return [];
+  const codeById = new Map((items ?? []).map((i: any) => [i.id, i.full_code]));
+  const { data: photos, error: e2 } = await db().from('item_photos')
+    .select('item_id,storage_path,kind').in('item_id', ids).eq('kind', 'after');
+  if (e2) throw e2;
+  return (photos ?? []).map((p: any) => ({ storage_path: p.storage_path, full_code: codeById.get(p.item_id) ?? null }));
 }

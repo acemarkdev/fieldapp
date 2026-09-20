@@ -31,9 +31,12 @@ import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams
   listJobPlans, createJobPlan, deleteJobPlan, listPinnedItems, setItemPin, uploadPlan, signedPlanUrl, ensurePlanBucket,
   getPinsMultiPlan, setPinsMultiPlan } from './store';
 import { computeJobBreakdown, listInvoices, getInvoice, nextInvoiceNumber, createInvoice, updateInvoice, setInvoiceStatus, deleteInvoice } from './store';
+import { listSignoffs, getSignoff, upsertSignoff, deleteSignoff, getQaChecklistTemplate, setQaChecklistTemplate, listFlatAfterPhotos } from './store';
+import { rollupFlats, QA_CHECKLIST_DEFAULT } from '@ace/shared';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
 import { buildInvoicePdf } from './invoicePdf';
+import { buildFlatSignoffPdf } from './signoffPdf';
 import { buildJobPoPdf } from './poPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
@@ -650,6 +653,122 @@ const server = createServer(async (req, res) => {
         res.writeHead(200, {
           'content-type': 'application/pdf',
           'content-disposition': `attachment; filename="${out.number}.pdf"`,
+          'cache-control': 'no-store',
+        });
+        res.end(out.buffer);
+      } catch (e: any) {
+        send(res, e?.message === 'forbidden' ? 403 : 500, { error: e?.message ?? String(e) });
+      }
+      return;
+    }
+
+    // ---- Install sign-off / QA (admin / office; qa.signoff) ----
+    // The tenant's checklist template (admin edits it; everyone with qa.signoff reads it).
+    if (p === '/api/qa-checklist' && req.method === 'GET') {
+      if (!allow('qa.signoff')) return;
+      send(res, 200, { checklist: await getQaChecklistTemplate(ctx.tenant_id), default: QA_CHECKLIST_DEFAULT });
+      return;
+    }
+    if (p === '/api/qa-checklist' && req.method === 'PUT') {
+      if (!allow('users.manage')) return;         // template is an admin-level setting
+      const b = await readJson(req);
+      const list = Array.isArray(b.checklist) ? b.checklist
+        .map((c: any) => ({ key: String(c.key ?? '').trim(), label: String(c.label ?? '').trim() }))
+        .filter((c: any) => c.key && c.label) : [];
+      if (!list.length) { send(res, 400, { error: 'Add at least one checklist line.' }); return; }
+      await setQaChecklistTemplate(ctx.tenant_id, list);
+      send(res, 200, { ok: true });
+      return;
+    }
+    // All flats of a job with install readiness + sign-off status.
+    if (p.startsWith('/api/job/') && p.endsWith('/signoff') && p.split('/').length === 5 && req.method === 'GET') {
+      if (!allow('qa.signoff')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const items = await listSurveyItems(job.id);
+      const rollup = rollupFlats(items.map((it: any) => ({ flat: it.flat, kind: it.kind, install_status: it.install_status })));
+      const soMap = new Map((await listSignoffs(job.id)).map((s) => [s.flat, s]));
+      const flats = rollup.map((f) => {
+        const so = soMap.get(f.flat);
+        return { ...f, signoff: so ? { result: so.result, signed_by: so.signed_by, signed_at: so.signed_at } : null };
+      });
+      send(res, 200, { flats, template: await getQaChecklistTemplate(ctx.tenant_id) });
+      return;
+    }
+    // One flat's sign-off detail (checklist prefilled, items, after-photos).
+    if (p.includes('/flat/') && p.endsWith('/signoff') && p.split('/').length === 7 && req.method === 'GET') {
+      if (!allow('qa.signoff')) return;
+      const parts = p.split('/');
+      const code = decodeURIComponent(parts[3] ?? '');
+      const flat = decodeURIComponent(parts[5] ?? '');
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const template = await getQaChecklistTemplate(ctx.tenant_id);
+      const saved = await getSignoff(job.id, flat);
+      const savedByKey = new Map<string, any>((saved?.checklist ?? []).map((c: any) => [c.key, c]));
+      // Prefill: saved answer if present, else default to OK (supervisor unticks any failure).
+      const checklist = template.map((t) => {
+        const s = savedByKey.get(t.key);
+        return { key: t.key, label: t.label, ok: s ? !!s.ok : true, note: s?.note ?? '' };
+      });
+      const items = (await listSurveyItems(job.id))
+        .filter((it: any) => (it.flat ?? '').trim() === flat && (it.kind ?? 'item') !== 'snag')
+        .map((it: any) => ({ id: it.id, full_code: it.full_code, install_status: it.install_status }));
+      const photos = await Promise.all((await listFlatAfterPhotos(job.id, flat)).map(async (m) => ({
+        code: m.full_code, url: await signedPhotoUrl(m.storage_path),
+      })));
+      send(res, 200, {
+        flat, checklist, items, photos,
+        result: saved?.result ?? 'pass', notes: saved?.notes ?? '',
+        signed_by: saved?.signed_by ?? null, signed_at: saved?.signed_at ?? null, exists: !!saved,
+      });
+      return;
+    }
+    // Save a flat's sign-off.
+    if (p.includes('/flat/') && p.endsWith('/signoff') && p.split('/').length === 7 && req.method === 'PUT') {
+      if (!allow('qa.signoff')) return;
+      const parts = p.split('/');
+      const code = decodeURIComponent(parts[3] ?? '');
+      const flat = decodeURIComponent(parts[5] ?? '');
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const b = await readJson(req);
+      const checklist = Array.isArray(b.checklist) ? b.checklist.map((c: any) => ({
+        key: String(c.key ?? ''), label: String(c.label ?? ''), ok: !!c.ok, note: (c.note ?? '').toString().trim() || null,
+      })) : [];
+      const result = b.result === 'fail' ? 'fail' : 'pass';
+      await upsertSignoff(ctx.tenant_id, job.id, flat, {
+        result, checklist, notes: (b.notes ?? '').toString().trim() || null,
+        signed_by: ctx.name ?? null, signed_by_id: ctx.id ?? null,
+      });
+      send(res, 200, { ok: true });
+      return;
+    }
+    // Clear a flat's sign-off.
+    if (p.includes('/flat/') && p.endsWith('/signoff') && p.split('/').length === 7 && req.method === 'DELETE') {
+      if (!allow('qa.signoff')) return;
+      const parts = p.split('/');
+      const code = decodeURIComponent(parts[3] ?? '');
+      const flat = decodeURIComponent(parts[5] ?? '');
+      const job = await getJobByRef(code);
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      await deleteSignoff(job.id, flat, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+    // Flat sign-off certificate PDF.
+    if (p.includes('/flat/') && p.endsWith('/signoff.pdf') && req.method === 'GET') {
+      if (!allow('qa.signoff')) return;
+      const parts = p.split('/');
+      const code = decodeURIComponent(parts[3] ?? '');
+      const flat = decodeURIComponent(parts[5] ?? '');
+      try {
+        const out = await buildFlatSignoffPdf(code, flat, ctx.tenant_id);
+        if (!out) { send(res, 400, { error: 'Sign off this flat first.' }); return; }
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-disposition': `attachment; filename="${out.job.client_code}.${out.job.job_code}-flat-${flat}-signoff.pdf"`,
           'cache-control': 'no-store',
         });
         res.end(out.buffer);
@@ -2140,6 +2259,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabMapping" class="tab" style="display:none" onclick="showTab('mapping')">Mapping</button>
         <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
         <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
+        <button id="tabSignoff" class="tab" style="display:none" onclick="showTab('signoff')">Sign-off</button>
       </div></div>
       <div class="grp" id="grp_sales"><button class="grpbtn" onclick="toggleGrp('sales')">Sales \u25be</button><div class="grpmenu" id="menu_sales">
         <button id="tabLeads" class="tab" style="display:none" onclick="showTab('leads')">Leads</button>
@@ -2384,6 +2504,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2"><table><thead><tr>
         <th>INVOICE</th><th>JOB</th><th>CUSTOMER</th><th>ISSUED</th><th>DUE</th><th>TOTAL</th><th>STATUS</th><th></th>
       </tr></thead><tbody id="invRows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="signoffView" style="display:none">
+    <main style="max-width:1080px">
+      <div class="titlerow">
+        <div><h2>Install sign-off</h2><div class="sub">Run the QA checklist per flat when its installs are done, mark it Passed or Failed, and download a handover certificate.</div></div>
+        <button class="add" id="qaEditBtn" style="display:none;align-self:center" onclick="openQaTemplate()">Edit checklist</button>
+      </div>
+      <div class="planbar">
+        <select id="soJob" class="tinput" onchange="loadSignoff()"></select>
+        <span id="soMsg" class="itemcount"></span>
+      </div>
+      <div class="card2"><table><thead><tr>
+        <th>FLAT</th><th>ITEMS</th><th>INSTALLED</th><th>SNAGS</th><th>READY</th><th>SIGN-OFF</th><th></th>
+      </tr></thead><tbody id="soRows"></tbody></table></div>
     </main>
   </div>
 
@@ -2648,7 +2784,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -3696,6 +3832,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('calView').style.display=name==='cal'?'block':'none';
     document.getElementById('budgetView').style.display=name==='budget'?'block':'none';
     document.getElementById('invoicesView').style.display=name==='invoices'?'block':'none';
+    document.getElementById('signoffView').style.display=name==='signoff'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -3712,6 +3849,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabCal').classList.toggle('on',name==='cal');
     document.getElementById('tabBudget').classList.toggle('on',name==='budget');
     var _tinv=document.getElementById('tabInvoices'); if(_tinv)_tinv.classList.toggle('on',name==='invoices');
+    var _tso=document.getElementById('tabSignoff'); if(_tso)_tso.classList.toggle('on',name==='signoff');
     document.getElementById('tabTests').classList.toggle('on',name==='tests');
     document.getElementById('tabUsers').classList.toggle('on',name==='users');
     document.getElementById('tabRoles').classList.toggle('on',name==='roles');
@@ -3728,6 +3866,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='cal')loadCalendar();
     if(name==='budget')loadBudget();
     if(name==='invoices')loadInvoices();
+    if(name==='signoff')loadSignoff();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -3738,8 +3877,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -3866,6 +4005,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabSync',canCap('monday.sync'));
     show('tabPlans',canCap('plans.view'));
     show('tabCal',canCap('calendar.view'));
+    show('tabSignoff',canCap('qa.signoff'));
     show('tabBudget',canCap('finance.view'));
     show('tabInvoices',canCap('finance.view'));
     show('tabTests',canCap('dashboard.view'));
@@ -4705,6 +4845,103 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var a=document.createElement('a'); a.href=u; a.download='invoice.pdf'; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function(){URL.revokeObjectURL(u);},4000); tShow('Invoice PDF downloaded');
     }catch(err){tShow('PDF failed');}
+  }
+
+  // ---- Install sign-off / QA (admin / office) ----
+  var SO_CUR={job:'',flat:'',checklist:[]};
+  async function loadSignoff(){
+    var jsel=document.getElementById('soJob');
+    var jobs; try{ jobs=await (await api('/api/jobs')).json(); }catch(e){ jobs=[]; }
+    var keep=jsel.value;
+    jsel.innerHTML=jobs.map(function(j){return '<option value="'+j.id+'">'+esc(j.site_code||j.code)+' — '+esc(j.name)+'</option>';}).join('');
+    if(keep)jsel.value=keep;
+    var eb=document.getElementById('qaEditBtn'); if(eb)eb.style.display=canCap('users.manage')?'inline-block':'none';
+    await loadSignoffFlats();
+  }
+  async function loadSignoffFlats(){
+    var code=document.getElementById('soJob').value;
+    var tb=document.getElementById('soRows');
+    if(!code){tb.innerHTML='<tr><td colspan="7" class="ro">No job selected.</td></tr>';return;}
+    var d; try{ d=await (await api('/api/job/'+encodeURIComponent(code)+'/signoff')).json(); }catch(e){ d={flats:[]}; }
+    var flats=d.flats||[];
+    document.getElementById('soMsg').textContent=flats.length?(flats.length+' flat'+(flats.length===1?'':'s')):'';
+    tb.innerHTML=flats.length?flats.map(function(f){
+      var so=f.signoff;
+      var badge=so?('<span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;background:'+(so.result==='pass'?'#16a34a':'#c0392b')+'">'+(so.result==='pass'?'Passed':'Failed')+'</span>'):'<span class="ro">—</span>';
+      var ready=f.ready?'<span style="color:#16a34a;font-weight:700">✓</span>':('<span class="ro">'+f.outstanding+' left</span>');
+      var act='<a class="codelink" onclick="openFlatSignoff(\\''+esc(f.flat)+'\\')">'+(so?'Review':'Sign off')+'</a>';
+      if(so)act+=' &nbsp; <a class="codelink" onclick="dlSignoffPdf(\\''+esc(f.flat)+'\\')">PDF</a>';
+      return '<tr><td><b>'+esc(f.flat)+'</b></td><td>'+f.total+'</td><td>'+f.installed+'</td>'
+        +'<td>'+(f.snags?('<span style="color:#c0392b">'+f.snags+'</span>'):'0')+'</td><td>'+ready+'</td><td>'+badge+'</td>'
+        +'<td style="text-align:right;white-space:nowrap">'+act+'</td></tr>';
+    }).join(''):'<tr><td colspan="7" class="ro">No flats on this job yet.</td></tr>';
+  }
+  async function openFlatSignoff(flat){
+    var code=document.getElementById('soJob').value;
+    var d; try{ d=await (await api('/api/job/'+encodeURIComponent(code)+'/flat/'+encodeURIComponent(flat)+'/signoff')).json(); }catch(e){ tShow('Could not load'); return; }
+    if(d.error){tShow(d.error);return;}
+    SO_CUR={job:code,flat:flat,checklist:d.checklist||[]};
+    var rows=(d.checklist||[]).map(function(c,i){
+      return '<tr><td style="text-align:center"><input type="checkbox" id="qa_ok_'+i+'" '+(c.ok?'checked':'')+' style="width:16px;height:16px;accent-color:var(--magenta)"></td>'
+        +'<td>'+esc(c.label)+'</td>'
+        +'<td><input id="qa_note_'+i+'" value="'+av(c.note||'')+'" placeholder="note (optional)" style="width:100%;border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:12px"></td></tr>';
+    }).join('');
+    var checklistTbl='<div class="card2" style="margin:6px 0 12px"><table><thead><tr><th style="width:44px">OK</th><th>CHECK</th><th style="width:34%">NOTE</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    var photos=(d.photos||[]).filter(function(p){return p.url;});
+    var photoHtml=photos.length?('<div class="groupt">AFTER-INSTALL PHOTOS ('+photos.length+')</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+      +photos.map(function(p){return '<a href="'+p.url+'" target="_blank" title="'+av(p.code||'')+'"><img src="'+p.url+'" style="width:96px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line)"></a>';}).join('')+'</div>')
+      :'<div class="sub" style="margin-bottom:12px">No after-install photos uploaded for this flat yet.</div>';
+    var itemsNote='<div class="sub" style="margin-bottom:10px">'+(d.items||[]).length+' item'+((d.items||[]).length===1?'':'s')+' in this flat. Tick each check that passes; untick and note anything that fails.</div>';
+    var resultSel='<div class="fgrid"><div class="field"><label>Result</label><select id="qa_result" class="tinput"><option value="pass"'+(d.result!=='fail'?' selected':'')+'>Pass</option><option value="fail"'+(d.result==='fail'?' selected':'')+'>Fail</option></select></div>'
+      +'<div class="field full"><label>Overall notes</label><input id="qa_notes" value="'+av(d.notes||'')+'" placeholder="Handover notes (optional)"></div></div>';
+    var actions='<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Cancel</button>'
+      +(d.exists?'<button class="btn ghost" type="button" style="color:#c0392b" onclick="delSignoff()">Clear</button>':'')
+      +(d.exists?'<button class="btn ghost" type="button" onclick="dlSignoffPdf(\\''+esc(flat)+'\\')">PDF</button>':'')
+      +'<button class="btn" type="button" onclick="saveFlatSignoff()">Save sign-off</button></div>';
+    openModal('Flat '+esc(flat)+' — sign-off',itemsNote+checklistTbl+photoHtml+resultSel+actions);
+  }
+  async function saveFlatSignoff(){
+    var checklist=SO_CUR.checklist.map(function(c,i){
+      var ok=document.getElementById('qa_ok_'+i); var note=document.getElementById('qa_note_'+i);
+      return {key:c.key,label:c.label,ok:ok?ok.checked:false,note:note?note.value:''};
+    });
+    var body={result:document.getElementById('qa_result').value,notes:document.getElementById('qa_notes').value,checklist:checklist};
+    var r=await api('/api/job/'+encodeURIComponent(SO_CUR.job)+'/flat/'+encodeURIComponent(SO_CUR.flat)+'/signoff',{method:'PUT',body:JSON.stringify(body)});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Flat '+SO_CUR.flat+' signed off');loadSignoffFlats();}else tShow(d.error||'Could not save');
+  }
+  async function delSignoff(){
+    if(!confirm('Clear this flat\\'s sign-off?'))return;
+    var r=await api('/api/job/'+encodeURIComponent(SO_CUR.job)+'/flat/'+encodeURIComponent(SO_CUR.flat)+'/signoff',{method:'DELETE'});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Sign-off cleared');loadSignoffFlats();}else tShow(d.error||'Failed');
+  }
+  async function dlSignoffPdf(flat){
+    var code=document.getElementById('soJob').value;
+    try{
+      var r=await fetch('/api/job/'+encodeURIComponent(code)+'/flat/'+encodeURIComponent(flat)+'/signoff.pdf',{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PDF failed');return;}
+      var blob=await r.blob(); var u=URL.createObjectURL(blob);
+      var a=document.createElement('a'); a.href=u; a.download='flat-'+flat+'-signoff.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){URL.revokeObjectURL(u);},4000); tShow('Certificate downloaded');
+    }catch(err){tShow('PDF failed');}
+  }
+  async function openQaTemplate(){
+    var d; try{ d=await (await api('/api/qa-checklist')).json(); }catch(e){ tShow('Could not load'); return; }
+    var list=d.checklist||[];
+    var rows=list.map(function(c){return c.label;}).join('\\n');
+    var html='<div class="field full"><label>Checklist lines (one per line)</label>'
+      +'<textarea id="qa_tmpl" rows="10" style="width:100%;font-size:13px">'+esc(rows)+'</textarea>'
+      +'<div class="sub" style="margin-top:6px">Each line becomes a QA check. Existing sign-offs keep the wording they were saved with.</div></div>';
+    openModal('Edit QA checklist',html+'<div class="modactions"><button class="btn ghost" type="button" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="saveQaTemplate()">Save checklist</button></div>');
+  }
+  async function saveQaTemplate(){
+    var lines=document.getElementById('qa_tmpl').value.split('\\n').map(function(s){return s.trim();}).filter(Boolean);
+    if(!lines.length){tShow('Add at least one line');return;}
+    var checklist=lines.map(function(label,i){return {key:'c'+(i+1),label:label};});
+    var r=await api('/api/qa-checklist',{method:'PUT',body:JSON.stringify({checklist:checklist})});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Checklist saved');loadSignoffFlats();}else tShow(d.error||'Could not save');
   }
 
   // ---- In-app QA test run ----

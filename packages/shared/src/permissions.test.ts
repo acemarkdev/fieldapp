@@ -13,7 +13,7 @@ for (const r of ROLES) {
 }
 
 // --- invoice_manager must have NO operational capabilities ---
-for (const cap of ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'teams.manage', 'monday.sync', 'users.manage', 'dashboard.view'] as const) {
+for (const cap of ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'teams.manage', 'monday.sync', 'users.manage', 'dashboard.view'] as const) {
   ok(`invoice_manager lacks ${cap}`, can('invoice_manager', cap) === false);
 }
 
