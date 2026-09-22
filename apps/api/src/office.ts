@@ -2920,6 +2920,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function normHdr(h){ return String(h==null?'':h).toLowerCase().replace(/[^a-z0-9]/g,''); }
   function impVal(v){ return v==null?'':String(v).trim(); }
   function roomToCode(v){ if(v==null||v==='')return ''; var t=String(v).replace(/\\u00a0/g,' ').trim(); var n=t.toLowerCase().replace(/[^a-z0-9]/g,''); return impRoomMap()[n]||t.toUpperCase(); }
+  // Snap common spellings of Material to the canonical option so imported values match the dropdown.
+  function normMaterial(v){ var t=String(v==null?'':v).replace(/\\u00a0/g,' ').trim(); if(!t)return ''; var n=t.toLowerCase().replace(/[^a-z]/g,'');
+    if(n==='pvc'||n==='upvc'||n==='pvcu'||n==='uvpc'||n==='vpvc')return 'uPVC';
+    if(n==='alu'||n==='ali'||n==='aluminium'||n==='aluminum'||n==='aluminimum')return 'Aluminium';
+    if(n==='timber'||n==='wood'||n==='wooden')return 'Timber';
+    if(n==='composite'||n==='comp')return 'Composite';
+    return t; }
   function normSafety(v){ if(v===false||v==null)return ''; if(v===true)return 'Yes'; var t=String(v).trim(); if(!t||/^n\\/?a$/i.test(t))return ''; if(/^y/i.test(t))return 'Yes'; return t; }
   // Which required fields a row is missing (flat OR floor satisfies the level requirement).
   function impMissing(r){
@@ -2965,6 +2972,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         var key=colKey[cc]; if(!key)continue; var val=arr[cc]; if(val==null)continue;
         if(key==='room')val=roomToCode(val);
         else if(key==='safety_glass')val=normSafety(val);
+        else if(key==='material')val=normMaterial(val);
         else val=String(val).replace(/\\u00a0/g,' ').trim();
         if(obj[key]==null||obj[key]==='')obj[key]=val;
       }
@@ -5122,7 +5130,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function row(k,v){return (v==null||v==='')?'':'<div class="drow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
     function attr(v){return (v==null?'':esc(String(v))).replace(/"/g,'&quot;');}
     function fieldV(id,label,val,ph,type){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+attr(val)+'" placeholder="'+(ph||'')+'"></div>';}
-    function selField(id,label,val,opts){var o='<option value="">—</option>'+opts.map(function(x){return '<option'+(String(val==null?'':val)===x?' selected':'')+'>'+esc(x)+'</option>';}).join('');return '<div class="field"><label>'+label+'</label><select id="'+id+'">'+o+'</select></div>';}
+    function selField(id,label,val,opts){var cur=String(val==null?'':val);var list=opts.slice();if(cur&&list.indexOf(cur)<0)list.unshift(cur);/* keep any non-standard stored value visible, never silently blank it */var o='<option value="">—</option>'+list.map(function(x){return '<option'+(cur===x?' selected':'')+'>'+esc(x)+'</option>';}).join('');return '<div class="field"><label>'+label+'</label><select id="'+id+'">'+o+'</select></div>';}
     function chkField(id,label,checked){return '<div class="field"><label>'+label+'</label><label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:400;color:var(--ink)"><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'> equally spaced</label></div>';}
     var html='<dl class="dl">'
       +row('Full code','<span class="mono">'+esc(it.full_code)+'</span>')
