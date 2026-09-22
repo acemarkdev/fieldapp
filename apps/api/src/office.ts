@@ -1217,7 +1217,24 @@ const server = createServer(async (req, res) => {
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
-      if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'flat' || action === 'room') {
+      // Spec text/enum fields — set on selected (blank clears). The resync trigger flags synced
+      // items so the change re-pushes to Monday. Column name == action name.
+      if (['glazing', 'glass', 'material', 'item_type', 'open_in_out', 'design_code'].includes(action)) {
+        if (!allow('items.edit')) return;
+        const n = await bulkUpdateItems(allowed, { [action]: String(value ?? '').trim() || null }, ctx.tenant_id);
+        send(res, 200, { ok: true, updated: n }); return;
+      }
+      // Numeric spec fields — Width / Height in mm (blank clears).
+      if (action === 'width' || action === 'height') {
+        if (!allow('items.edit')) return;
+        const col = action === 'width' ? 'width_mm' : 'height_mm';
+        const raw = String(value ?? '').trim();
+        const num = raw === '' ? null : Math.round(Number(raw));
+        if (raw !== '' && (!Number.isFinite(num as number) || (num as number) < 0)) { send(res, 400, { error: 'Width / Height must be a whole number of millimetres.' }); return; }
+        const n = await bulkUpdateItems(allowed, { [col]: num }, ctx.tenant_id);
+        send(res, 200, { ok: true, updated: n }); return;
+      }
+      if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'flat' || action === 'room' || action === 'item') {
         if (!allow('items.edit')) return;
         // Sets the field AND rebuilds each item's code — skipped for items already synced to Monday.
         const raw = String(value ?? '').trim();
@@ -1227,15 +1244,16 @@ const server = createServer(async (req, res) => {
           const it: any = await getSurveyItem(id);
           if (it.monday_item_id) { locked++; continue; } // code locked after sync
           const job = jobCache[it.job_id] || (jobCache[it.job_id] = await getJob(it.job_id));
-          let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code;
+          let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code, item = it.item_code;
           if (action === 'block') block = raw.toUpperCase() || null;
           else if (action === 'elevation') elevation = raw.toUpperCase() || null;
           else if (action === 'floor') { floor = levelSeg(raw) || null; } // Floor and Flat are independent; don't clear the other
           else if (action === 'flat') { flat = raw.replace(/^F(?=[0-9])/i, '').toUpperCase() || null; }
           else if (action === 'room') room = raw.toUpperCase() || null;
-          const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item: it.item_code });
+          else if (action === 'item') item = raw.toUpperCase() || null;
+          const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item });
           if (await codeExists(it.job_id, full_code, id)) { dupes++; continue; }
-          const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, full_code }).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, item_code: item, full_code }).eq('id', id).eq('tenant_id', ctx.tenant_id);
           if (!error) updated++;
         }
         send(res, 200, { ok: true, updated, skipped: locked + dupes, locked, dupes }); return;
@@ -2344,9 +2362,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div class="bulkrow">
           <span class="bulklabel">Set on selected:</span>
           <select id="bulkField" class="bulk bsel" onchange="bulkFieldPick()">
-            <option value="team">Team</option><option value="status">Install status</option>
-            <option value="block">Block</option><option value="elevation">Elevation</option>
-            <option value="floor">Floor</option><option value="flat">Flat</option><option value="room">Room</option><option value="po">PO phase</option>
+            <option value="team">Team</option><option value="status">Install status</option><option value="po">PO phase</option>
+            <optgroup label="Location (code)">
+              <option value="block">Block</option><option value="elevation">Elevation</option>
+              <option value="floor">Floor</option><option value="flat">Flat</option><option value="room">Room</option><option value="item">Item code</option>
+            </optgroup>
+            <optgroup label="Specification">
+              <option value="material">Material</option><option value="item_type">Item type</option>
+              <option value="glazing">Glass (panes)</option><option value="glass">Glass texture</option>
+              <option value="width">Width (mm)</option><option value="height">Height (mm)</option>
+              <option value="open_in_out">Open in/out</option><option value="design_code">Style (design code)</option>
+            </optgroup>
           </select>
           <span id="bulkValWrap"></span>
           <button id="bulkApplyBtn" class="bulk bapply" onclick="bulkEditApply()">Apply</button>
@@ -3780,12 +3806,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }catch(e){tShow('Bulk sync failed');}
     loadItems();
   }
+  function bulkSelect(arr,label){return '<select id="bulkVal" class="bulk bsel"><option value="">— '+label+' (blank = clear) —</option>'+arr.map(function(x){return opt(x,x,'')}).join('')+'</select>';}
   function bulkFieldPick(){
     var sel=document.getElementById('bulkField'); if(!sel)return;
     var f=sel.value; var w=document.getElementById('bulkValWrap');
     if(f==='team') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— team —</option>'+teamOptionList('')+'</select>';
     else if(f==='status') w.innerHTML='<select id="bulkVal" class="bulk bsel"><option value="">— status —</option>'+ISTATUS.filter(function(s){return s[0]}).map(function(s){return opt(s[0],s[1],'')}).join('')+'</select>';
     else if(f==='po') w.innerHTML='<input id="bulkVal" class="bulk" type="number" min="1" step="1" placeholder="PO phase (blank = clear)" style="width:150px">';
+    else if(f==='glazing') w.innerHTML=bulkSelect(GLASS_PANES,'panes');
+    else if(f==='glass') w.innerHTML=bulkSelect(GLASS_TEXTURES,'texture');
+    else if(f==='material') w.innerHTML=bulkSelect(MATERIALS,'material');
+    else if(f==='item_type') w.innerHTML=bulkSelect(['Window','Door'],'type');
+    else if(f==='open_in_out') w.innerHTML=bulkSelect(['In','Out'],'open in/out');
+    else if(f==='width'||f==='height') w.innerHTML='<input id="bulkVal" class="bulk" type="number" min="0" step="1" placeholder="'+(f==='width'?'Width':'Height')+' mm (blank = clear)" style="width:170px">';
+    else if(f==='design_code') w.innerHTML='<input id="bulkVal" class="bulk" placeholder="Style code e.g. 27 (blank = clear)" style="width:200px">';
     else w.innerHTML='<input id="bulkVal" class="bulk" placeholder="'+(f.charAt(0).toUpperCase()+f.slice(1))+' value" style="width:130px;text-transform:uppercase">';
   }
   async function bulkEditApply(){

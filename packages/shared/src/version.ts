@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.89.1';
+export const APP_VERSION = '0.90.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.90.0', date: '2026-09-22', changes: [
+    'Items: mass-update every mandatory field. The “Set on selected” bulk bar now covers all required item fields, grouped into Location (Block, Elevation, Floor, Flat, Room, Item code — these rebuild the item code and skip items already synced to Monday) and Specification (Material, Item type, Glass (panes), Glass texture, Width, Height, Open in/out, Style/design code). Tick the items, pick a field and value, and Apply sets it on all of them at once (leave the value blank to clear). Where the field is one that syncs to Monday, changed items are automatically re-flagged for re-sync. Needs items.edit; no migration.',
+  ] },
   { version: '0.89.1', date: '2026-09-19', changes: [
     'Style fix: the sign-off, invoice and QA-checklist dialog buttons now use the standard footer styling (magenta primary + outlined secondary), instead of showing as plain browser buttons.',
   ] },
