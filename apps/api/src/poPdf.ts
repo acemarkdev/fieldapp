@@ -167,14 +167,29 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
   return done;
 }
 
+// Natural, case-insensitive compare so "13" sorts after "3" and "F2" after "F10" correctly.
+const nat = (a: any, b: any) => String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+const chain = (...cmps: ((a: any, b: any) => number)[]) => (a: any, b: any) => { for (const c of cmps) { const r = c(a, b); if (r) return r; } return 0; };
+
+export type PoSort = 'flat' | 'floor' | 'item' | 'code';
+// Sort strategies for the PO schedule. Each keeps a sensible secondary order so items never
+// interleave oddly (e.g. group by flat, then floor, then item code).
+const PO_SORTERS: Record<PoSort, (a: any, b: any) => number> = {
+  flat:  chain((a, b) => nat(a.flat, b.flat), (a, b) => nat(a.floor, b.floor), (a, b) => nat(a.item_code, b.item_code)),
+  floor: chain((a, b) => nat(a.floor, b.floor), (a, b) => nat(a.flat, b.flat), (a, b) => nat(a.item_code, b.item_code)),
+  item:  chain((a, b) => nat(a.item_code, b.item_code), (a, b) => nat(a.flat, b.flat), (a, b) => nat(a.floor, b.floor)),
+  code:  (a, b) => nat(a.full_code, b.full_code),
+};
+
 /** Fetch a job's Surveyed items for the given phase and render the PO PDF. */
-export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: number, generatedBy?: string | null): Promise<{ buffer: Buffer; job: any }> {
+export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: number, generatedBy?: string | null, sort: PoSort = 'flat'): Promise<{ buffer: Buffer; job: any }> {
   const job = await getJobByRef(jobRef);
   if (job.tenant_id !== tenantId) throw new Error('forbidden');
   const all = await listSurveyItems(job.id);
+  const cmp = PO_SORTERS[sort] ?? PO_SORTERS.flat;
   const items = all
     .filter((it: any) => (it.kind ?? 'item') !== 'snag' && it.stage === 'surveyed' && Number(it.po_phase) === Number(phase))
-    .sort((a: any, b: any) => String(a.full_code).localeCompare(String(b.full_code)));
+    .sort(cmp);
   // If the phase has been marked "ready for PO", show who did it and when.
   const readyRow = items.find((it: any) => it.po_ready_at);
   let readyBy: string | null = null;

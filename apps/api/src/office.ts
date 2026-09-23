@@ -1804,8 +1804,10 @@ const server = createServer(async (req, res) => {
       let job: any;
       try { job = await getJobByRef(code); } catch { send(res, 404, { error: 'Job not found' }); return; }
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const sortParam = String(url.searchParams.get('sort') || 'flat');
+      const sort = (['flat', 'floor', 'item', 'code'].includes(sortParam) ? sortParam : 'flat') as any;
       try {
-        const { buffer } = await buildJobPoPdf(code, ctx.tenant_id, phase, ctx.name);
+        const { buffer } = await buildJobPoPdf(code, ctx.tenant_id, phase, ctx.name, sort);
         res.writeHead(200, {
           'content-type': 'application/pdf',
           'content-disposition': `attachment; filename="${job.client_code}.${job.job_code}-PO-phase-${phase}.pdf"`,
@@ -2335,6 +2337,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <span id="poPdfWrap" class="segbar" style="display:none">
             <span class="seglabel">PO</span>
             <select id="poPhaseSel" class="segsel" style="width:auto" title="PO phase" onchange="poPhasePick()"></select>
+            <select id="poSortSel" class="segsel" style="width:auto" title="Sort the PO schedule">
+              <option value="flat">by Flat</option><option value="floor">by Floor</option><option value="item">by Item code</option><option value="code">by Full code</option>
+            </select>
             <button class="segbtn" onclick="downloadPoPdf()" title="Download the purchase-order PDF for this PO phase (Surveyed items)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>PDF</button>
             <button id="poReadyBtn" class="segbtn" onclick="poReadyClick()" title="Mark this PO phase ready for ordering (locks items from phase changes)"></button>
           </span>
@@ -3667,9 +3672,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function downloadPoPdf(){
     if(current==='ALL'){tShow('Pick a job first');return;}
     var phase=document.getElementById('poPhaseSel').value; if(!phase){tShow('Pick a PO phase');return;}
+    var sortEl=document.getElementById('poSortSel'); var sort=sortEl?sortEl.value:'flat';
     tShow('Building PO PDF…');
     try{
-      var r=await fetch('/api/job/'+encodeURIComponent(current)+'/po.pdf?phase='+encodeURIComponent(phase),{headers:{Authorization:'Bearer '+token}});
+      var r=await fetch('/api/job/'+encodeURIComponent(current)+'/po.pdf?phase='+encodeURIComponent(phase)+'&sort='+encodeURIComponent(sort),{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PO PDF failed');return;}
       var blob=await r.blob(); var u=URL.createObjectURL(blob);
       var a=document.createElement('a'); a.href=u; a.download=curCode()+'-PO-phase-'+phase+'.pdf'; document.body.appendChild(a); a.click(); a.remove();
