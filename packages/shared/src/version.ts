@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.93.0';
+export const APP_VERSION = '0.93.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.93.1', date: '2026-09-23', changes: [
+    'Fix: on the PO PDF header, a long Site address or Deliver-to address wrapped onto two lines but the next line (PO phase, etc.) didn\u2019t move down, so they overlapped. Header rows now advance by the text\u2019s actual height, so nothing overlaps regardless of address length. No migration.',
+  ] },
   { version: '0.93.0', date: '2026-09-22', changes: [
     'PO now stays editable after Monday sync. Previously an item\u2019s PO phase went read-only the moment it was synced to Monday, so you couldn\u2019t group or generate a PO for synced items. PO phase can now be set on items that are Surveyed OR Synced, and the PO PDF includes synced items \u2014 it only locks when you click \u201cMark ready\u201d for that phase (admin can still unlock). PO phase is an internal grouping and isn\u2019t pushed to Monday, so editing it on a synced item doesn\u2019t disturb the board. No migration.',
   ] },

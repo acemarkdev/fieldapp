@@ -78,13 +78,20 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
   const infoY = 30;
   doc.font('Helvetica').fontSize(9).fillColor(INK);
   const infoX = L + W * 0.55;
+  const valW = W * 0.45 - 92;
   const line = (label: string, val: string, y: number) => {
     doc.font('Helvetica-Bold').fillColor(MUTED).text(label, infoX, y, { width: 90, continued: false });
-    doc.font('Helvetica').fillColor(INK).text(val, infoX + 92, y, { width: W * 0.45 - 92 });
+    doc.font('Helvetica').fillColor(INK).text(val, infoX + 92, y, { width: valW });
   };
   const deliv = [data.job.delivery_address, data.job.delivery_postcode].filter(Boolean).join(', ');
   let iy = infoY;
-  const row = (label: string, val: string) => { line(label, val, iy); iy += 13; };
+  // Advance by the value's actual rendered height so multi-line addresses don't overlap the next row.
+  const row = (label: string, val: string) => {
+    line(label, val, iy);
+    doc.font('Helvetica').fontSize(9);
+    const h = doc.heightOfString(String(val || '—'), { width: valW });
+    iy += Math.max(13, h + 2);
+  };
   row('Job', `${code}${data.job.site_code && data.job.site_code !== code ? '  (' + data.job.site_code + ')' : ''}`);
   row('Site', data.job.name || '—');
   if (addr) row('Site address', addr);
