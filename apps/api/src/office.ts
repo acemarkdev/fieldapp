@@ -1217,6 +1217,24 @@ const server = createServer(async (req, res) => {
         const n = await bulkUpdateItems(allowed, { install_status: value || null }, ctx.tenant_id);
         send(res, 200, { ok: true, updated: n }); return;
       }
+      // Clear the 'Unfinished' flag on selected items whose mandatory fields are ALL complete.
+      // Items still missing anything are left untouched (skipped) — validation, not a blind set.
+      if (action === 'finish') {
+        if (!allow('items.edit')) return;
+        let updated = 0, skipped = 0;
+        for (const id of allowed) {
+          const it: any = await getSurveyItem(id);
+          if ((it.kind ?? 'item') === 'snag') { skipped++; continue; }
+          const row = { block: it.block, elevation: it.elevation, flat: it.flat, floor: it.floor, room: it.room_code, item: it.item_code,
+            material: it.material, item_type: it.item_type, glass: it.glass, glazing: it.glazing, width_mm: it.width_mm, height_mm: it.height_mm, open_in_out: it.open_in_out, design_code: it.design_code };
+          if (!isRowComplete(row)) { skipped++; continue; }               // still missing something -> don't change
+          const patch: any = { incomplete: false };
+          if (!it.stage) patch.stage = 'scanned';
+          const { error } = await db().from('survey_items').update(patch).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          if (!error) updated++;
+        }
+        send(res, 200, { ok: true, updated, skipped }); return;
+      }
       // Spec text/enum fields — set on selected (blank clears). The resync trigger flags synced
       // items so the change re-pushes to Monday. Column name == action name.
       if (['glazing', 'glass', 'material', 'item_type', 'open_in_out', 'design_code'].includes(action)) {
@@ -2361,6 +2379,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div class="bulkrow">
           <span id="bulkcount">0 selected</span>
           <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
+          <button class="bulk bapply" onclick="bulkFinish()" title="Clear the Unfinished flag on selected items whose mandatory fields are all complete (incomplete ones are skipped)">Mark scanned</button>
           <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
           <button class="bulk bclear" onclick="clearSel()">Clear selection</button>
         </div>
@@ -3818,6 +3837,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:'sync'})})).json();
       if(d.ok)tShow(d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));else tShow(d.error||'Bulk sync failed');
     }catch(e){tShow('Bulk sync failed');}
+    loadItems();
+  }
+  async function bulkFinish(){
+    var ids=selectedIds(); if(!ids.length){tShow('Select some items first');return;}
+    tShow('Checking '+ids.length+' item(s)…');
+    try{
+      var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:'finish'})})).json();
+      if(d.ok)tShow((d.updated||0)+' marked scanned'+(d.skipped?(' · '+d.skipped+' still incomplete — skipped'):''));
+      else tShow(d.error||'Failed');
+    }catch(e){tShow('Failed');}
     loadItems();
   }
   function bulkSelect(arr,label){return '<select id="bulkVal" class="bulk bsel"><option value="">— '+label+' (blank = clear) —</option>'+arr.map(function(x){return opt(x,x,'')}).join('')+'</select>';}

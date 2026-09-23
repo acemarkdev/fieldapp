@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.91.0';
+export const APP_VERSION = '0.92.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.92.0', date: '2026-09-22', changes: [
+    'Items: bulk \u201cMark scanned\u201d. Select any number of Unfinished items and click Mark scanned in the selection bar \u2014 it clears the Unfinished flag on every selected item whose mandatory fields are all complete, and skips any that are still missing something (so it never marks an incomplete item finished). Reports how many were marked and how many were skipped. Needs items.edit; no migration.',
+  ] },
   { version: '0.91.0', date: '2026-09-22', changes: [
     'PO PDF: choose the item sort order. Next to the PO phase picker there\u2019s now a sort dropdown \u2014 by Flat (default), by Floor, by Item code (groups all like windows/doors together, e.g. every W02), or by Full code (the previous behaviour). Sorting is natural/numeric, so flat 13 no longer splits across pages the way the old code-string order did.',
   ] },
