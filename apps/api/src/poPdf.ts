@@ -188,7 +188,7 @@ export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: num
   const all = await listSurveyItems(job.id);
   const cmp = PO_SORTERS[sort] ?? PO_SORTERS.flat;
   const items = all
-    .filter((it: any) => (it.kind ?? 'item') !== 'snag' && it.stage === 'surveyed' && Number(it.po_phase) === Number(phase))
+    .filter((it: any) => (it.kind ?? 'item') !== 'snag' && (it.stage === 'surveyed' || it.stage === 'synced') && Number(it.po_phase) === Number(phase))
     .sort(cmp);
   // If the phase has been marked "ready for PO", show who did it and when.
   const readyRow = items.find((it: any) => it.po_ready_at);

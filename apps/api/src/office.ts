@@ -1287,7 +1287,7 @@ const server = createServer(async (req, res) => {
         let updated = 0, skipped = 0, locked = 0;
         for (const id of allowed) {
           const it: any = await getSurveyItem(id);
-          if (it.stage !== 'surveyed') { skipped++; continue; }
+          if (it.stage !== 'surveyed' && it.stage !== 'synced') { skipped++; continue; }
           if (it.po_ready_at && ctx.role !== 'admin') { locked++; continue; }  // ready-for-PO lock
           const { error } = await db().from('survey_items').update({ po_phase: ph, po_ready_by: null, po_ready_at: null }).eq('id', id).eq('tenant_id', ctx.tenant_id);
           if (!error) updated++;
@@ -1469,7 +1469,7 @@ const server = createServer(async (req, res) => {
           const n = Math.round(Number(raw));
           if (!Number.isFinite(n) || n < 1) { send(res, 400, { error: 'PO phase must be a whole number (1 or higher).' }); return; }
           const effectiveStage = (patch.stage as string) ?? item.stage;
-          if (effectiveStage !== 'surveyed') { send(res, 400, { error: 'A PO phase can only be assigned once the item is Surveyed.' }); return; }
+          if (effectiveStage !== 'surveyed' && effectiveStage !== 'synced') { send(res, 400, { error: 'A PO phase can only be assigned once the item is Surveyed.' }); return; }
           patch.po_phase = n; patch.po_ready_by = null; patch.po_ready_at = null;
         }
       }
@@ -1789,7 +1789,7 @@ const server = createServer(async (req, res) => {
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const { data, error } = await db().from('survey_items')
         .update({ po_ready_by: ctx.id, po_ready_at: new Date().toISOString() })
-        .eq('tenant_id', ctx.tenant_id).eq('job_id', job.id).eq('po_phase', phase).eq('stage', 'surveyed').select('id');
+        .eq('tenant_id', ctx.tenant_id).eq('job_id', job.id).eq('po_phase', phase).in('stage', ['surveyed','synced']).select('id');
       if (error) { send(res, 500, { error: error.message }); return; }
       const n = data?.length ?? 0;
       audit(ctx, 'po.ready', 'job', code, `Marked PO phase ${phase} ready for PO — ${n} item(s) locked`);
@@ -3655,7 +3655,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // Populate the PO-phase dropdown (distinct phases on Surveyed items) and show the PO PDF control.
   function fillPoPdfControl(){
     var wrap=document.getElementById('poPdfWrap'), sel=document.getElementById('poPhaseSel'); if(!wrap||!sel)return;
-    var phases=[]; (itemsData.items||[]).forEach(function(it){ if(it.stage==='surveyed'&&it.po_phase!=null&&phases.indexOf(it.po_phase)<0)phases.push(it.po_phase); });
+    var phases=[]; (itemsData.items||[]).forEach(function(it){ if((it.stage==='surveyed'||it.stage==='synced')&&it.po_phase!=null&&phases.indexOf(it.po_phase)<0)phases.push(it.po_phase); });
     phases.sort(function(a,b){return a-b;});
     var can=canCap('items.edit')&&current!=='ALL'&&phases.length>0;
     wrap.style.display=can?'inline-flex':'none';
@@ -3781,7 +3781,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var roomCell=editable?'<select class="sel" style="min-width:150px" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">'+roomOptions(r.room||'')+'</select>':roomLabel(r.room);
       // PO phase: editable only on Surveyed items; a phase marked ready-for-PO is locked (admins exempt).
       var poLocked=r.po_ready&&myRole!=='admin';
-      var poCell=(canEdit&&r.stage==='surveyed'&&!poLocked)
+      var poCell=(canEdit&&(r.stage==='surveyed'||r.stage==='synced')&&!poLocked)
         ?'<input class="pocell" type="number" min="1" step="1" value="'+(r.po_phase!=null?r.po_phase:'')+'" placeholder="—" onchange="savePo(\\''+r.id+'\\',this.value)">'
         :'<span class="ro"'+(poLocked?' title="PO phase '+r.po_phase+' is ready for PO — locked (admin only)"':(r.stage==='surveyed'?'':' title="Assign a PO phase only once the item is Surveyed"'))+'>'+(r.po_phase!=null?r.po_phase:'—')+(poLocked?' \\ud83d\\udd12':'')+'</span>';
       tr.innerHTML='<td class="cbcell">'+(canSelect?'<input type="checkbox" class="rowcb" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+' onclick="toggleRow(\\''+r.id+'\\',this)">':'')+'</td>'+
