@@ -1640,7 +1640,7 @@ const server = createServer(async (req, res) => {
         const items = await listSurveyItems(j.id);
         const synced = items.filter((it) => it.monday_item_id).length;
         return {
-          code: `${j.client_code}.${j.job_code}`, name: j.name, board: j.monday_board_id ?? null,
+          id: j.id, code: `${j.client_code}.${j.job_code}`, name: j.name, board: j.monday_board_id ?? null,
           slug: j.monday_account_slug ?? null,
           total: items.length, synced, unsynced: items.length - synced,
         };
@@ -4153,12 +4153,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var tr=document.createElement('tr');
       var bhost=(jb.slug?jb.slug+'.monday.com':'monday.com');
       var board=manage
-        ? '<input class="board" placeholder="board id or URL" value="'+(jb.board||'')+'" onchange="saveBoard(\\''+jb.code+'\\',this.value)">'
+        ? '<input class="board" placeholder="board id or URL" value="'+(jb.board||'')+'" onchange="saveBoard(\\''+jb.id+'\\',this.value)">'
         : (jb.board?'<a class="mlink" target="_blank" href="https://'+bhost+'/boards/'+jb.board+'">'+jb.board+' ↗</a>':'<span style="color:var(--muted)">not linked</span>');
       var toSync=jb.unsynced>0?'<span class="count amber">'+jb.unsynced+'</span>':'<span class="count">0</span>';
       var canSync=jb.board&&jb.total>0;
-      var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.code+'\\',this)">Sync all</button>';
-      var pull=manage?' <button class="syncall" style="background:#fff;color:var(--purple);border:1px solid #cfc9ea" '+(jb.board?'':'disabled')+' onclick="pullFitters(\\''+jb.code+'\\',this)" title="Read team assignments (Fitters column) and planned install dates (date column) back from Monday">Pull fitters + dates</button>':'';
+      var btn='<button class="syncall" '+(canSync?'':'disabled')+' onclick="syncJob(\\''+jb.id+'\\',\\''+jb.code+'\\',this)">Sync all</button>';
+      var pull=manage?' <button class="syncall" style="background:#fff;color:var(--purple);border:1px solid #cfc9ea" '+(jb.board?'':'disabled')+' onclick="pullFitters(\\''+jb.id+'\\',this)" title="Read team assignments (Fitters column) and planned install dates (date column) back from Monday">Pull fitters + dates</button>':'';
       tr.innerHTML='<td class="mono"><b>'+jb.code+'</b><div style="font-size:11px;color:var(--muted);font-weight:400">'+(jb.name||'')+'</div></td>'+
         '<td>'+board+'</td><td>'+jb.total+'</td><td><span class="count green">'+jb.synced+'</span></td><td>'+toSync+'</td>'+
         '<td style="text-align:right;white-space:nowrap">'+btn+pull+'</td>';
@@ -4171,17 +4171,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       tShow(d.board?('Board linked'+(n?(' · '+n+' column'+(n===1?'':'s')+' created'):' · columns OK')):'Board unlinked');
       loadSync();
     } else tShow(d.error||'Failed');}
-  async function syncJob(code,btn){
-    btn.disabled=true;var old=btn.textContent;btn.textContent='Syncing…';tShow('Syncing '+code+'…');
-    try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/sync',{method:'POST'})).json();
-      if(d.ok){tShow(code+': '+d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));loadSync();}
+  async function syncJob(ref,label,btn){
+    btn.disabled=true;var old=btn.textContent;btn.textContent='Syncing…';tShow('Syncing '+label+'…');
+    try{var d=await (await api('/api/job/'+encodeURIComponent(ref)+'/sync',{method:'POST'})).json();
+      if(d.ok){tShow(label+': '+d.created+' created, '+d.updated+' updated'+(d.failed?', '+d.failed+' failed':''));loadSync();}
       else tShow(d.error||'Sync failed');
     }catch(e){tShow('Sync failed');}
     btn.textContent=old;btn.disabled=false;
   }
-  async function pullFitters(code,btn){
+  async function pullFitters(ref,btn){
     btn.disabled=true;var old=btn.textContent;btn.textContent='Pulling…';tShow('Reading fitters from Monday…');
-    try{var d=await (await api('/api/job/'+encodeURIComponent(code)+'/pull-fitters',{method:'POST'})).json();
+    try{var d=await (await api('/api/job/'+encodeURIComponent(ref)+'/pull-fitters',{method:'POST'})).json();
       if(d.ok){var msg=d.assigned+' assigned'+(d.cleared?', '+d.cleared+' cleared':'');
         if(d.datesSet||d.datesCleared)msg+=' · '+d.datesSet+' date'+(d.datesSet===1?'':'s')+' set'+(d.datesCleared?', '+d.datesCleared+' cleared':'')+(d.dateColumn?' (from "'+d.dateColumn+'")':'');
         else if(!d.dateColumn)msg+=' · no date column found';

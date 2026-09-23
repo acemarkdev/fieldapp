@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.92.0';
+export const APP_VERSION = '0.92.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.92.1', date: '2026-09-22', changes: [
+    'Fix: linking a Monday board (or Sync all / Pull fitters) failed with \u201cCannot coerce to single JSON object\u201d on any job whose client.job code was shared by more than one job. The Monday sync tab was still identifying jobs by that non-unique code; it now uses each job\u2019s unique id for board-link, sync and pull, matching the rest of the app. Display still shows the code. No migration.',
+  ] },
   { version: '0.92.0', date: '2026-09-22', changes: [
     'Items: bulk \u201cMark surveyed\u201d. Select any number of Unfinished items and click Mark surveyed in the selection bar \u2014 it promotes every selected item whose mandatory fields are all complete to Surveyed (and clears the Unfinished flag), skipping any still missing a required field (so an incomplete item is never promoted). Already-synced items aren\u2019t downgraded. Reports how many were promoted and how many were skipped. Needs items.edit; no migration.',
   ] },
