@@ -1227,9 +1227,9 @@ const server = createServer(async (req, res) => {
           if ((it.kind ?? 'item') === 'snag') { skipped++; continue; }
           const row = { block: it.block, elevation: it.elevation, flat: it.flat, floor: it.floor, room: it.room_code, item: it.item_code,
             material: it.material, item_type: it.item_type, glass: it.glass, glazing: it.glazing, width_mm: it.width_mm, height_mm: it.height_mm, open_in_out: it.open_in_out, design_code: it.design_code };
-          if (!isRowComplete(row)) { skipped++; continue; }               // still missing something -> don't change
+          if (!isRowComplete(row)) { skipped++; continue; }               // still missing something -> don't promote
           const patch: any = { incomplete: false };
-          if (!it.stage) patch.stage = 'scanned';
+          if (it.stage !== 'synced') patch.stage = 'surveyed';            // promote to Surveyed; never downgrade a synced item
           const { error } = await db().from('survey_items').update(patch).eq('id', id).eq('tenant_id', ctx.tenant_id);
           if (!error) updated++;
         }
@@ -2379,7 +2379,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div class="bulkrow">
           <span id="bulkcount">0 selected</span>
           <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
-          <button class="bulk bapply" onclick="bulkFinish()" title="Clear the Unfinished flag on selected items whose mandatory fields are all complete (incomplete ones are skipped)">Mark scanned</button>
+          <button class="bulk bapply" onclick="bulkFinish()" title="Promote selected items to Surveyed when all mandatory fields are complete (incomplete ones are skipped)">Mark surveyed</button>
           <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
           <button class="bulk bclear" onclick="clearSel()">Clear selection</button>
         </div>
@@ -3844,7 +3844,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tShow('Checking '+ids.length+' item(s)…');
     try{
       var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:'finish'})})).json();
-      if(d.ok)tShow((d.updated||0)+' marked scanned'+(d.skipped?(' · '+d.skipped+' still incomplete — skipped'):''));
+      if(d.ok)tShow((d.updated||0)+' marked surveyed'+(d.skipped?(' · '+d.skipped+' still incomplete — skipped'):''));
       else tShow(d.error||'Failed');
     }catch(e){tShow('Failed');}
     loadItems();
