@@ -2949,8 +2949,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var rows='';
     if(m.hasNone)rows+='<label><input type="checkbox" data-v="__none" '+(m.state.indexOf('__none')>=0?'checked':'')+'> — none —</label>';
     rows+=m.items.map(function(o){return '<label><input type="checkbox" data-v="'+av(o.v)+'" '+(m.state.indexOf(o.v)>=0?'checked':'')+'> '+esc(o.l)+'</label>';}).join('');
-    host.innerHTML='<div class="mfilter"><button type="button" class="mfbtn" onclick="mfToggle(\''+hostId+'\',event)"></button>'
-      +'<div class="mfpop" id="pop_'+hostId+'" onclick="event.stopPropagation()">'+rows+'<div class="mfclear" onclick="mfClear(\''+hostId+'\')" style="display:none">Clear</div></div></div>';
+    host.innerHTML='<div class="mfilter"><button type="button" class="mfbtn" onclick="mfToggle(\\''+hostId+'\\',event)"></button>'
+      +'<div class="mfpop" id="pop_'+hostId+'" onclick="event.stopPropagation()">'+rows+'<div class="mfclear" onclick="mfClear(\\''+hostId+'\\')" style="display:none">Clear</div></div></div>';
     var pop=document.getElementById('pop_'+hostId);
     Array.prototype.forEach.call(pop.querySelectorAll('input[type=checkbox]'),function(cb){ cb.addEventListener('change',function(){ mfSet(hostId,cb.getAttribute('data-v'),cb.checked); }); });
     mfBtn(hostId);
@@ -5196,8 +5196,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var rb=document.getElementById('reqTypesBtn'); if(rb)rb.style.display=d.canManage?'inline-block':'none';
     var tb=document.getElementById('custRows'); var rows=d.customers||[];
     tb.innerHTML=rows.length?rows.map(function(c){
-      var act='<a class="codelink" onclick="openCustomer(\''+c.id+'\')">'+(d.canManage?'Edit':'View')+'</a>';
-      if(d.canManage)act+=' &nbsp; <a class="codelink" style="color:#c0392b" onclick="delCustomer(\''+c.id+'\',\''+av(c.code)+'\')">Delete</a>';
+      var act='<a class="codelink" onclick="openCustomer(\\''+c.id+'\\')">'+(d.canManage?'Edit':'View')+'</a>';
+      if(d.canManage)act+=' &nbsp; <a class="codelink" style="color:#c0392b" onclick="delCustomer(\\''+c.id+'\\',\\''+av(c.code)+'\\')">Delete</a>';
       return '<tr><td><b class="mono">'+esc(c.code)+'</b></td><td>'+esc(c.name)+'</td><td>'+c.contacts+'</td><td>'+c.requirements+'</td>'
         +'<td>'+(c.active?'<span class="count green">active</span>':'<span class="count">inactive</span>')+'</td>'
         +'<td style="text-align:right;white-space:nowrap">'+act+'</td></tr>';
@@ -5234,7 +5234,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="groupt">CONTRACTUAL REQUIREMENTS</div>'
       +'<div class="field full">'+reqHtml+'</div></div>';
     var foot=ro?'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button></div>'
-      :'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveCustomer('+(id?'\''+id+'\'':'')+')">Save customer</button></div>';
+      :'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveCustomer('+(id?'\\''+id+'\\'':'')+')">Save customer</button></div>';
     openModal(id?('Customer '+esc(cust.code)):'New customer', html+foot);
   }
   async function saveCustomer(id){
@@ -5259,8 +5259,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       return '<div class="crow" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
         +'<input class="tinput rt-name" value="'+av(t.name)+'" style="flex:1">'
         +'<label style="font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px"><input type="checkbox" class="rt-active" '+(t.active?'checked':'')+'> active</label>'
-        +'<button type="button" class="cancel" onclick="saveReqType(\''+t.id+'\',this)">Save</button>'
-        +'<button type="button" class="cancel" style="color:#c0392b" onclick="delReqType(\''+t.id+'\')">✕</button></div>';
+        +'<button type="button" class="cancel" onclick="saveReqType(\\''+t.id+'\\',this)">Save</button>'
+        +'<button type="button" class="cancel" style="color:#c0392b" onclick="delReqType(\\''+t.id+'\\')">✕</button></div>';
     }).join('')||'<div class="ro">No requirements yet.</div>';
     var html='<div class="field full"><div id="reqTypeRows">'+rows+'</div></div>'
       +'<div class="field full" style="display:flex;gap:6px"><input id="rt_new" class="tinput" placeholder="New requirement, e.g. Secured by Design" style="flex:1"><button type="button" class="add" onclick="addReqType()">Add</button></div>';

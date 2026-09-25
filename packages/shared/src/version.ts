@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.95.0';
+export const APP_VERSION = '0.95.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.95.1', date: '2026-09-25', changes: [
+    'Hotfix: a mis-escaped quote in the new Customers/filter dropdown handlers caused a page script syntax error that blocked sign-in. Corrected \u2014 login and all buttons work again. No migration.',
+  ] },
   { version: '0.95.0', date: '2026-09-25', changes: [
     'Customer cards (Admin \u25b8 Customers, admin only). Each customer has a short code (e.g. AXS), full name, a list of contact people (role, name, email, phone) and the contractual requirements that apply to them \u2014 ticked from a master list you maintain (Pass24, Building control, Trickle vents, Key-locked windows, \u2026). New jobs must now pick a customer from this list: you can\u2019t add a job for a customer whose card doesn\u2019t exist yet. An item\u2019s detail drawer shows the contractual requirements inherited from its job\u2019s customer. Requires migration 0047. (Printing these on the PO comes with the PO redesign, Phase 2.)',
   ] },
