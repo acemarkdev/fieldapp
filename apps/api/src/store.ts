@@ -906,3 +906,102 @@ export async function listFlatAfterPhotos(jobId: string, flat: string): Promise<
   if (e2) throw e2;
   return (photos ?? []).map((p: any) => ({ storage_path: p.storage_path, full_code: codeById.get(p.item_id) ?? null }));
 }
+
+// ============================================================
+//  Customer master ("customer cards") + contractual requirements
+//  (admin-managed; new jobs must reference an existing customer by code)
+// ============================================================
+
+export interface CustomerContact { role?: string; name?: string; email?: string; phone?: string }
+export interface CustomerCard {
+  id: string; tenant_id: string; code: string; name: string; active: boolean;
+  contacts: CustomerContact[]; created_at: string; updated_at: string;
+}
+export interface RequirementType { id: string; tenant_id: string; name: string; active: boolean; sort: number }
+
+export async function listCustomerCards(tenantId: string): Promise<CustomerCard[]> {
+  const { data, error } = await db().from('customers').select('*').eq('tenant_id', tenantId).order('code');
+  if (error) throw error;
+  return (data ?? []).map((c: any) => ({ ...c, contacts: Array.isArray(c.contacts) ? c.contacts : [] })) as CustomerCard[];
+}
+export async function getCustomerCard(id: string, tenantId: string): Promise<CustomerCard | null> {
+  const { data, error } = await db().from('customers').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { ...(data as any), contacts: Array.isArray((data as any).contacts) ? (data as any).contacts : [] } as CustomerCard;
+}
+export async function getCustomerByCode(tenantId: string, code: string): Promise<CustomerCard | null> {
+  const { data, error } = await db().from('customers').select('*').eq('tenant_id', tenantId).eq('code', code).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { ...(data as any), contacts: Array.isArray((data as any).contacts) ? (data as any).contacts : [] } as CustomerCard;
+}
+export async function createCustomerCard(tenantId: string, c: { code: string; name: string; contacts?: CustomerContact[] }): Promise<CustomerCard> {
+  const { data, error } = await db().from('customers')
+    .insert({ tenant_id: tenantId, code: c.code, name: c.name, contacts: c.contacts ?? [] }).select().single();
+  if (error) throw error;
+  return data as CustomerCard;
+}
+export async function updateCustomerCard(id: string, tenantId: string, patch: Partial<Pick<CustomerCard, 'code' | 'name' | 'active' | 'contacts'>>): Promise<void> {
+  const { error } = await db().from('customers').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+export async function deleteCustomerCard(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('customers').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+// How many jobs currently use a given client code (blocks deleting a customer still in use).
+export async function countJobsForClientCode(tenantId: string, code: string): Promise<number> {
+  const { count, error } = await db().from('jobs').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('client_code', code);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// ---- requirement types (master list) ----
+export async function listRequirementTypes(tenantId: string, includeInactive = false): Promise<RequirementType[]> {
+  let q = db().from('requirement_types').select('*').eq('tenant_id', tenantId);
+  if (!includeInactive) q = q.eq('active', true);
+  const { data, error } = await q.order('sort').order('name');
+  if (error) throw error;
+  return (data ?? []) as RequirementType[];
+}
+export async function createRequirementType(tenantId: string, name: string, sort = 0): Promise<RequirementType> {
+  const { data, error } = await db().from('requirement_types').insert({ tenant_id: tenantId, name, sort }).select().single();
+  if (error) throw error;
+  return data as RequirementType;
+}
+export async function updateRequirementType(id: string, tenantId: string, patch: Partial<Pick<RequirementType, 'name' | 'active' | 'sort'>>): Promise<void> {
+  const { error } = await db().from('requirement_types').update(patch).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+export async function deleteRequirementType(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('requirement_types').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// ---- per-customer ticked requirements ----
+export async function listCustomerRequirementIds(customerId: string): Promise<string[]> {
+  const { data, error } = await db().from('customer_requirements').select('requirement_type_id').eq('customer_id', customerId);
+  if (error) throw error;
+  return (data ?? []).map((r: any) => r.requirement_type_id);
+}
+// Replace a customer's ticked requirements with the given set (admin edit saves the whole list).
+export async function setCustomerRequirements(tenantId: string, customerId: string, requirementIds: string[]): Promise<void> {
+  const del = await db().from('customer_requirements').delete().eq('customer_id', customerId);
+  if (del.error) throw del.error;
+  if (requirementIds.length) {
+    const rows = requirementIds.map((rid) => ({ tenant_id: tenantId, customer_id: customerId, requirement_type_id: rid }));
+    const ins = await db().from('customer_requirements').insert(rows);
+    if (ins.error) throw ins.error;
+  }
+}
+// The requirement NAMES ticked for the customer that owns a given client code (for item card + PO).
+export async function requirementNamesForClientCode(tenantId: string, code: string): Promise<string[]> {
+  const cust = await getCustomerByCode(tenantId, code);
+  if (!cust) return [];
+  const ids = await listCustomerRequirementIds(cust.id);
+  if (!ids.length) return [];
+  const { data, error } = await db().from('requirement_types').select('name,sort').in('id', ids).order('sort').order('name');
+  if (error) throw error;
+  return (data ?? []).map((r: any) => r.name);
+}

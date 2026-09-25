@@ -32,6 +32,9 @@ import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams
   getPinsMultiPlan, setPinsMultiPlan } from './store';
 import { computeJobBreakdown, listInvoices, getInvoice, nextInvoiceNumber, createInvoice, updateInvoice, setInvoiceStatus, deleteInvoice } from './store';
 import { listSignoffs, getSignoff, upsertSignoff, deleteSignoff, getQaChecklistTemplate, setQaChecklistTemplate, listFlatAfterPhotos } from './store';
+import { listCustomerCards, getCustomerCard, getCustomerByCode, createCustomerCard, updateCustomerCard, deleteCustomerCard, countJobsForClientCode,
+  listRequirementTypes, createRequirementType, updateRequirementType, deleteRequirementType,
+  listCustomerRequirementIds, setCustomerRequirements, requirementNamesForClientCode } from './store';
 import { rollupFlats, QA_CHECKLIST_DEFAULT } from '@ace/shared';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
@@ -778,6 +781,126 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- Customer cards + contractual requirements (read: jobs.manage; write: customers.manage=admin) ----
+    if (p === '/api/customers-master' && req.method === 'GET') {
+      if (!allow('jobs.manage')) return;
+      const cards = await listCustomerCards(ctx.tenant_id);
+      const out = await Promise.all(cards.map(async (c) => ({
+        id: c.id, code: c.code, name: c.name, active: c.active,
+        contacts: (c.contacts || []).length, requirements: (await listCustomerRequirementIds(c.id)).length,
+      })));
+      send(res, 200, { customers: out, canManage: can(ctx.role, 'customers.manage') });
+      return;
+    }
+    if (p === '/api/customers-master' && req.method === 'POST') {
+      if (!allow('customers.manage')) return;
+      const b = await readJson(req);
+      const code = String(b.code ?? '').trim().toUpperCase();
+      const name = String(b.name ?? '').trim();
+      if (!/^[A-Z0-9]{2,4}$/.test(code)) { send(res, 400, { error: 'Customer code must be 2-4 letters/numbers, e.g. AXS.' }); return; }
+      if (!name) { send(res, 400, { error: 'A customer name is required.' }); return; }
+      try {
+        const created = await createCustomerCard(ctx.tenant_id, { code, name, contacts: Array.isArray(b.contacts) ? b.contacts : [] });
+        if (Array.isArray(b.requirement_ids)) await setCustomerRequirements(ctx.tenant_id, created.id, b.requirement_ids);
+        audit(ctx, 'customer.create', 'customer', created.id, 'Created customer ' + code + ' - ' + name);
+        send(res, 200, { ok: true, id: created.id });
+      } catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: 'A customer with code "' + code + '" already exists.' }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
+      return;
+    }
+    if (p.startsWith('/api/customers-master/') && p.split('/').length === 4 && req.method === 'GET') {
+      if (!allow('jobs.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const c = await getCustomerCard(id, ctx.tenant_id);
+      if (!c) { send(res, 404, { error: 'Customer not found.' }); return; }
+      const types = await listRequirementTypes(ctx.tenant_id, true);
+      const checked = new Set(await listCustomerRequirementIds(id));
+      send(res, 200, {
+        customer: { id: c.id, code: c.code, name: c.name, active: c.active, contacts: c.contacts || [] },
+        requirements: types.map((t) => ({ id: t.id, name: t.name, active: t.active, checked: checked.has(t.id) })),
+      });
+      return;
+    }
+    if (p.startsWith('/api/customers-master/') && p.split('/').length === 4 && req.method === 'PUT') {
+      if (!allow('customers.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const c = await getCustomerCard(id, ctx.tenant_id);
+      if (!c) { send(res, 404, { error: 'Customer not found.' }); return; }
+      const b = await readJson(req);
+      const patch: any = {};
+      if (b.name !== undefined) patch.name = String(b.name).trim();
+      if (b.active !== undefined) patch.active = !!b.active;
+      if (Array.isArray(b.contacts)) patch.contacts = b.contacts.map((x: any) => ({
+        role: String(x.role ?? '').trim(), name: String(x.name ?? '').trim(), email: String(x.email ?? '').trim(), phone: String(x.phone ?? '').trim(),
+      })).filter((x: any) => x.role || x.name || x.email || x.phone);
+      if (b.code !== undefined) {
+        const newCode = String(b.code).trim().toUpperCase();
+        if (newCode !== c.code) {
+          if (!/^[A-Z0-9]{2,4}$/.test(newCode)) { send(res, 400, { error: 'Customer code must be 2-4 letters/numbers.' }); return; }
+          const inUse = await countJobsForClientCode(ctx.tenant_id, c.code);
+          if (inUse > 0) { send(res, 400, { error: 'Cannot change the code - ' + inUse + ' job(s) already use ' + c.code + '.' }); return; }
+          patch.code = newCode;
+        }
+      }
+      try {
+        await updateCustomerCard(id, ctx.tenant_id, patch);
+        if (Array.isArray(b.requirement_ids)) await setCustomerRequirements(ctx.tenant_id, id, b.requirement_ids);
+        audit(ctx, 'customer.update', 'customer', id, 'Updated customer ' + (patch.code || c.code));
+        send(res, 200, { ok: true });
+      } catch (err: any) {
+        if (err?.code === '23505') { send(res, 409, { error: 'Another customer already has that code.' }); return; }
+        send(res, 500, { error: err?.message ?? String(err) });
+      }
+      return;
+    }
+    if (p.startsWith('/api/customers-master/') && p.split('/').length === 4 && req.method === 'DELETE') {
+      if (!allow('customers.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const c = await getCustomerCard(id, ctx.tenant_id);
+      if (!c) { send(res, 404, { error: 'Customer not found.' }); return; }
+      const inUse = await countJobsForClientCode(ctx.tenant_id, c.code);
+      if (inUse > 0) { send(res, 400, { error: 'Cannot delete - ' + inUse + ' job(s) use customer ' + c.code + '.' }); return; }
+      await deleteCustomerCard(id, ctx.tenant_id);
+      audit(ctx, 'customer.delete', 'customer', id, 'Deleted customer ' + c.code);
+      send(res, 200, { ok: true });
+      return;
+    }
+    if (p === '/api/requirement-types' && req.method === 'GET') {
+      if (!allow('jobs.manage')) return;
+      send(res, 200, { types: await listRequirementTypes(ctx.tenant_id, true), canManage: can(ctx.role, 'customers.manage') });
+      return;
+    }
+    if (p === '/api/requirement-types' && req.method === 'POST') {
+      if (!allow('customers.manage')) return;
+      const b = await readJson(req);
+      const name = String(b.name ?? '').trim();
+      if (!name) { send(res, 400, { error: 'A requirement name is required.' }); return; }
+      try { const t = await createRequirementType(ctx.tenant_id, name, Number(b.sort) || 0); send(res, 200, { ok: true, id: t.id }); }
+      catch (err: any) { if (err?.code === '23505') { send(res, 409, { error: '"' + name + '" already exists.' }); return; } send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+    if (p.startsWith('/api/requirement-types/') && req.method === 'PUT') {
+      if (!allow('customers.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const b = await readJson(req);
+      const patch: any = {};
+      if (b.name !== undefined) patch.name = String(b.name).trim();
+      if (b.active !== undefined) patch.active = !!b.active;
+      if (b.sort !== undefined) patch.sort = Number(b.sort) || 0;
+      try { await updateRequirementType(id, ctx.tenant_id, patch); send(res, 200, { ok: true }); }
+      catch (err: any) { if (err?.code === '23505') { send(res, 409, { error: 'Another requirement has that name.' }); return; } send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+    if (p.startsWith('/api/requirement-types/') && req.method === 'DELETE') {
+      if (!allow('customers.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      await deleteRequirementType(id, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+
     if (p === '/api/jobs' && req.method === 'GET') {
       let jobs = await listJobs(ctx.tenant_id);
       // Scanners only see jobs an admin has released for mapping.
@@ -1021,6 +1144,8 @@ const server = createServer(async (req, res) => {
       if (!postcode) { send(res, 400, { error: 'A site postcode is required.' }); return; }
       if (!delivery_address) { send(res, 400, { error: 'A delivery address is required.' }); return; }
       if (!delivery_postcode) { send(res, 400, { error: 'A delivery postcode is required.' }); return; }
+      const customerCard = await getCustomerByCode(ctx.tenant_id, client_code);
+      if (!customerCard) { send(res, 400, { error: `No customer card for "${client_code}". Create it first in Admin ▸ Customers, then add the job.` }); return; }
       const site_code = String(b.site_code ?? '').trim() || `${client_code}.${job_code}`;
       try {
         const job = await createJob(ctx.tenant_id, { client_code, job_code, name, site_address, postcode, site_code, delivery_address, delivery_postcode, multi_elevation: !!b.multi_elevation, dates: pickJobDates(b) });
@@ -1343,11 +1468,13 @@ const server = createServer(async (req, res) => {
         status: s.install_status, synced: !!s.monday_item_id,
         monday_url: s.monday_item_id && job.monday_board_id ? mondayItemUrl(job, s.monday_item_id) : null,
       }));
+      const requirements = await requirementNamesForClientCode(ctx.tenant_id, job.client_code);
       send(res, 200, {
         item: it, team: team?.name ?? null, teams: allTeams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
         effective_rate: formatPennies(effectiveRatePennies(it, team ? [team] : [])),
         monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
         photos: photoOut, snags: snagOut, is_snag: (it as any).kind === 'snag',
+        customer_code: job.client_code, requirements,
       });
       return;
     }
@@ -2321,6 +2448,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
+        <button id="tabCustAdmin" class="tab" style="display:none" onclick="showTab('custadmin')">Customers</button>
         <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
         <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
         <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
@@ -2580,6 +2708,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2"><table><thead><tr>
         <th>FLAT</th><th>ITEMS</th><th>INSTALLED</th><th>SNAGS</th><th>READY</th><th>SIGN-OFF</th><th></th>
       </tr></thead><tbody id="soRows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="custadminView" style="display:none">
+    <main style="max-width:1000px">
+      <div class="titlerow">
+        <div><h2>Customers</h2><div class="sub">Customer cards: a short code, name, contact people and the contractual requirements that apply (Pass24, Building control, …). New jobs must reference a customer created here.</div></div>
+        <div style="display:flex;gap:8px;align-self:center">
+          <button class="add" id="reqTypesBtn" onclick="openReqTypes()">Requirements list</button>
+          <button class="newbtn" id="newCustBtn" onclick="openCustomer()">+ New customer</button>
+        </div>
+      </div>
+      <div class="card2" style="margin-top:14px"><table><thead><tr>
+        <th>CODE</th><th>NAME</th><th>CONTACTS</th><th>REQUIREMENTS</th><th>STATUS</th><th></th>
+      </tr></thead><tbody id="custRows"></tbody></table></div>
     </main>
   </div>
 
@@ -2879,7 +3022,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -3500,9 +3643,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       ruleField='<div class="field full"><label>Pricing rule (optional)</label><select id="nj_rule"><option value="">— none —</option>'
         +rules.map(function(r){return '<option value="'+r.id+'">'+esc(r.name)+(r.customer?(' · '+esc(r.customer)):'')+'</option>';}).join('')+'</select></div>';
     }
+    var njCusts=[]; try{ njCusts=((await (await api('/api/customers-master')).json()).customers||[]).filter(function(c){return c.active!==false;}); }catch(e){}
+    var njClientField = njCusts.length
+      ? '<div class="field"><label>Customer *</label><select id="nj_client"><option value="">— pick customer —</option>'+njCusts.map(function(c){return '<option value="'+av(c.code)+'">'+esc(c.code)+' — '+esc(c.name)+'</option>';}).join('')+'</select></div>'
+      : '<div class="field"><label>Customer *</label><input id="nj_client" type="hidden" value=""><div class="ro" style="padding:6px 0;font-size:12px">No customers yet — create one in Admin ▸ Customers first.</div></div>';
     var detail='<div class="fgrid">'
       +'<div class="codeprev" id="njPrev">CLIENT.JOB</div>'
-      +field('nj_client','Client code *','e.g. AXS')+field('nj_job','Job code *','e.g. LAB')
+      +njClientField+field('nj_job','Job code *','e.g. LAB')
       +'<div class="field full"><label>Job name *</label><input id="nj_name" placeholder="e.g. Laburnum Road, Waterlooville"></div>'
       +'<div class="field full"><label>Site address *</label><input id="nj_addr" placeholder="Full site address"></div>'
       +'<div class="field full"><label>Site postcode *</label><input id="nj_postcode" placeholder="e.g. PO7 7EW"></div>'
@@ -3925,6 +4072,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('budgetView').style.display=name==='budget'?'block':'none';
     document.getElementById('invoicesView').style.display=name==='invoices'?'block':'none';
     document.getElementById('signoffView').style.display=name==='signoff'?'block':'none';
+    document.getElementById('custadminView').style.display=name==='custadmin'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -3936,6 +4084,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabItems').classList.toggle('on',name==='items');
     document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
+    var _tca=document.getElementById('tabCustAdmin'); if(_tca)_tca.classList.toggle('on',name==='custadmin');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
     document.getElementById('tabPlans').classList.toggle('on',name==='plans');
     document.getElementById('tabCal').classList.toggle('on',name==='cal');
@@ -3959,6 +4108,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='budget')loadBudget();
     if(name==='invoices')loadInvoices();
     if(name==='signoff')loadSignoff();
+    if(name==='custadmin')loadCustAdmin();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -3969,8 +4119,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4103,6 +4253,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabTests',canCap('dashboard.view'));
     show('tabLeads',canCap('jobs.manage'));
     show('tabCustomers',canCap('jobs.manage'));
+    show('tabCustAdmin',canCap('customers.manage'));
     show('tabBilling',myRole==='admin');
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
@@ -5036,6 +5187,101 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(r.ok&&d.ok){closeModal();tShow('Checklist saved');loadSignoffFlats();}else tShow(d.error||'Could not save');
   }
 
+  // ---- Customers (Admin) ----
+  var CUST_CANMANAGE=false;
+  async function loadCustAdmin(){
+    var d; try{ d=await (await api('/api/customers-master')).json(); }catch(e){ d={customers:[],canManage:false}; }
+    CUST_CANMANAGE=!!d.canManage;
+    var nb=document.getElementById('newCustBtn'); if(nb)nb.style.display=d.canManage?'inline-block':'none';
+    var rb=document.getElementById('reqTypesBtn'); if(rb)rb.style.display=d.canManage?'inline-block':'none';
+    var tb=document.getElementById('custRows'); var rows=d.customers||[];
+    tb.innerHTML=rows.length?rows.map(function(c){
+      var act='<a class="codelink" onclick="openCustomer(\''+c.id+'\')">'+(d.canManage?'Edit':'View')+'</a>';
+      if(d.canManage)act+=' &nbsp; <a class="codelink" style="color:#c0392b" onclick="delCustomer(\''+c.id+'\',\''+av(c.code)+'\')">Delete</a>';
+      return '<tr><td><b class="mono">'+esc(c.code)+'</b></td><td>'+esc(c.name)+'</td><td>'+c.contacts+'</td><td>'+c.requirements+'</td>'
+        +'<td>'+(c.active?'<span class="count green">active</span>':'<span class="count">inactive</span>')+'</td>'
+        +'<td style="text-align:right;white-space:nowrap">'+act+'</td></tr>';
+    }).join(''):'<tr><td colspan="6" class="ro">No customers yet — create one to start adding its jobs.</td></tr>';
+  }
+  function custContactRow(c){ c=c||{};
+    return '<div class="crow" style="display:flex;gap:6px;margin-bottom:6px">'
+      +'<input class="tinput cc-role" placeholder="Role e.g. Contract manager" value="'+av(c.role||'')+'" style="flex:1.1">'
+      +'<input class="tinput cc-name" placeholder="Name" value="'+av(c.name||'')+'" style="flex:1">'
+      +'<input class="tinput cc-email" placeholder="Email" value="'+av(c.email||'')+'" style="flex:1.2">'
+      +'<input class="tinput cc-phone" placeholder="Phone" value="'+av(c.phone||'')+'" style="flex:0.9">'
+      +'<button type="button" class="cancel" onclick="this.parentNode.remove()" title="Remove">✕</button></div>';
+  }
+  function addContactRow(){ document.getElementById('custContacts').insertAdjacentHTML('beforeend',custContactRow()); }
+  function collectContacts(){
+    return Array.prototype.map.call(document.querySelectorAll('#custContacts .crow'),function(r){
+      return {role:r.querySelector('.cc-role').value.trim(),name:r.querySelector('.cc-name').value.trim(),email:r.querySelector('.cc-email').value.trim(),phone:r.querySelector('.cc-phone').value.trim()};
+    }).filter(function(x){return x.role||x.name||x.email||x.phone;});
+  }
+  async function openCustomer(id){
+    var cust={code:'',name:'',active:true,contacts:[]}, reqs=[];
+    if(id){ var d=await (await api('/api/customers-master/'+id)).json(); if(d.error){tShow(d.error);return;} cust=d.customer; reqs=d.requirements||[]; }
+    else { var t=await (await api('/api/requirement-types')).json(); reqs=(t.types||[]).map(function(x){return {id:x.id,name:x.name,active:x.active,checked:false};}); }
+    var ro=!CUST_CANMANAGE;
+    var reqHtml=reqs.filter(function(r){return r.active||r.checked;}).map(function(r){
+      return '<label style="display:inline-flex;align-items:center;gap:6px;margin:0 14px 8px 0;font-size:13px"><input type="checkbox" class="cust-req" data-id="'+r.id+'" '+(r.checked?'checked':'')+' '+(ro?'disabled':'')+'> '+esc(r.name)+(r.active?'':' <span class="ro">(retired)</span>')+'</label>';
+    }).join('')||'<div class="ro">No requirement types yet — add some via “Requirements list”.</div>';
+    var html='<div class="fgrid">'
+      +'<div class="field"><label>Customer code *</label><input id="cust_code" class="tinput" value="'+av(cust.code)+'" placeholder="e.g. AXS" style="text-transform:uppercase" '+(ro?'disabled':'')+'></div>'
+      +'<div class="field"><label>Full name *</label><input id="cust_name" class="tinput" value="'+av(cust.name)+'" placeholder="e.g. Axis Europe" '+(ro?'disabled':'')+'></div>'
+      +(id?'<div class="field full"><label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="cust_active" '+(cust.active?'checked':'')+' '+(ro?'disabled':'')+'> Active</label></div>':'')
+      +'<div class="groupt">CONTACTS</div>'
+      +'<div class="field full"><div id="custContacts">'+(cust.contacts||[]).map(custContactRow).join('')+'</div>'+(ro?'':'<button type="button" class="add" onclick="addContactRow()" style="margin-top:4px">+ Add contact</button>')+'</div>'
+      +'<div class="groupt">CONTRACTUAL REQUIREMENTS</div>'
+      +'<div class="field full">'+reqHtml+'</div></div>';
+    var foot=ro?'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button></div>'
+      :'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveCustomer('+(id?'\''+id+'\'':'')+')">Save customer</button></div>';
+    openModal(id?('Customer '+esc(cust.code)):'New customer', html+foot);
+  }
+  async function saveCustomer(id){
+    var code=(document.getElementById('cust_code').value||'').trim().toUpperCase();
+    var name=(document.getElementById('cust_name').value||'').trim();
+    if(!code||!name){tShow('Code and name are required');return;}
+    var reqIds=Array.prototype.map.call(document.querySelectorAll('.cust-req:checked'),function(cb){return cb.getAttribute('data-id');});
+    var body={code:code,name:name,contacts:collectContacts(),requirement_ids:reqIds};
+    var ae=document.getElementById('cust_active'); if(ae)body.active=ae.checked;
+    var r=id?await api('/api/customers-master/'+id,{method:'PUT',body:JSON.stringify(body)}):await api('/api/customers-master',{method:'POST',body:JSON.stringify(body)});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Customer saved');loadCustAdmin();}else tShow(d.error||'Could not save');
+  }
+  async function delCustomer(id,code){
+    if(!confirm('Delete customer '+code+'?'))return;
+    var r=await api('/api/customers-master/'+id,{method:'DELETE'}); var d=await r.json();
+    if(r.ok&&d.ok){tShow('Customer deleted');loadCustAdmin();}else tShow(d.error||'Could not delete');
+  }
+  async function openReqTypes(){
+    var d=await (await api('/api/requirement-types')).json();
+    var rows=(d.types||[]).map(function(t){
+      return '<div class="crow" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
+        +'<input class="tinput rt-name" value="'+av(t.name)+'" style="flex:1">'
+        +'<label style="font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px"><input type="checkbox" class="rt-active" '+(t.active?'checked':'')+'> active</label>'
+        +'<button type="button" class="cancel" onclick="saveReqType(\''+t.id+'\',this)">Save</button>'
+        +'<button type="button" class="cancel" style="color:#c0392b" onclick="delReqType(\''+t.id+'\')">✕</button></div>';
+    }).join('')||'<div class="ro">No requirements yet.</div>';
+    var html='<div class="field full"><div id="reqTypeRows">'+rows+'</div></div>'
+      +'<div class="field full" style="display:flex;gap:6px"><input id="rt_new" class="tinput" placeholder="New requirement, e.g. Secured by Design" style="flex:1"><button type="button" class="add" onclick="addReqType()">Add</button></div>';
+    openModal('Contractual requirements list', html+'<div class="foot"><button class="cancel" onclick="closeModal()">Done</button></div>');
+  }
+  async function addReqType(){
+    var name=(document.getElementById('rt_new').value||'').trim(); if(!name){tShow('Enter a name');return;}
+    var r=await api('/api/requirement-types',{method:'POST',body:JSON.stringify({name:name})}); var d=await r.json();
+    if(r.ok&&d.ok){tShow('Added');openReqTypes();}else tShow(d.error||'Failed');
+  }
+  async function saveReqType(id,btn){
+    var row=btn.parentNode; var name=row.querySelector('.rt-name').value.trim(); var active=row.querySelector('.rt-active').checked;
+    var r=await api('/api/requirement-types/'+id,{method:'PUT',body:JSON.stringify({name:name,active:active})}); var d=await r.json();
+    if(r.ok&&d.ok)tShow('Saved');else tShow(d.error||'Failed');
+  }
+  async function delReqType(id){
+    if(!confirm('Delete this requirement type? It is removed from all customers.'))return;
+    var r=await api('/api/requirement-types/'+id,{method:'DELETE'}); var d=await r.json();
+    if(r.ok&&d.ok){tShow('Deleted');openReqTypes();}else tShow(d.error||'Failed');
+  }
+
   // ---- In-app QA test run ----
   var TESTS={scenarios:[],results:{},version:'',current:'',versions:[]}; var TEST_VER='';
   async function loadTests(){
@@ -5191,6 +5437,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +row('Install date',esc(it.actual_install_date))
       +row('Monday',d.monday_url?'<a class="mlink" target="_blank" href="'+d.monday_url+'">open ↗</a>':'not synced')
       +'</dl>';
+    // Contractual requirements inherited from the job's customer (read-only; set on the customer card).
+    if(d.requirements&&d.requirements.length){
+      html+='<div class="groupt" style="padding:10px 22px 0">CONTRACTUAL REQUIREMENTS'+(d.customer_code?(' · '+esc(d.customer_code)):'')+'</div>'
+        +'<div style="padding:4px 22px 10px;display:flex;flex-wrap:wrap;gap:6px">'
+        +d.requirements.map(function(rq){return '<span style="background:#efeaf9;color:var(--purple);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600">'+esc(rq)+'</span>';}).join('')
+        +'</div>';
+    }
     // Editable Flat + Room (rebuild the item code) — the other code parts (Block/Elevation/Item) are
     // set in the Items table. Locked once synced to Monday.
     var codeEditable=!d.is_snag&&canCap('items.edit')&&!it.monday_item_id;

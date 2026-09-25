@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.94.0';
+export const APP_VERSION = '0.95.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.95.0', date: '2026-09-25', changes: [
+    'Customer cards (Admin \u25b8 Customers, admin only). Each customer has a short code (e.g. AXS), full name, a list of contact people (role, name, email, phone) and the contractual requirements that apply to them \u2014 ticked from a master list you maintain (Pass24, Building control, Trickle vents, Key-locked windows, \u2026). New jobs must now pick a customer from this list: you can\u2019t add a job for a customer whose card doesn\u2019t exist yet. An item\u2019s detail drawer shows the contractual requirements inherited from its job\u2019s customer. Requires migration 0047. (Printing these on the PO comes with the PO redesign, Phase 2.)',
+  ] },
   { version: '0.94.0', date: '2026-09-25', changes: [
     'Items filters are now multi-select. Every column filter (Block, Elevation, Flat, Floor, Room, Item code, Stage, PO, Install status, Team) is a tick-box dropdown \u2014 pick several values at once (e.g. flats 12 + 14 + 21, or W1 + W2) and the list and counter update to the combined view. Each filter shows how many values are selected and has a Clear. Filters still reset when you switch jobs.',
     'Job Dates: added an independent Delivery phase (start\u2013end) between Scaffold and Fitting \u2014 it shows on the Gantt like the other phases. Not tied to any other date. Requires migration 0046.',
