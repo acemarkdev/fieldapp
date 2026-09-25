@@ -2191,6 +2191,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .envbadge.prod{display:inline-block;background:var(--soft);color:var(--muted)}
   body.env-test header{box-shadow:inset 0 -3px 0 #d97706}
   .colfilter{margin-top:4px;font-size:11px;font-weight:600;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:3px 4px;max-width:120px;background:#fff}
+  .mfilter{position:relative;margin-top:4px;display:inline-block;font-weight:400}
+  .mfbtn{font-size:11px;font-weight:600;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:3px 7px;background:#fff;cursor:pointer;max-width:128px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mfbtn.act{border-color:var(--magenta);color:var(--magenta);background:#fdf1f7}
+  .mfpop{position:absolute;z-index:60;top:calc(100% + 3px);left:0;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.18);padding:5px;min-width:158px;max-height:280px;overflow:auto;display:none}
+  .mfpop.open{display:block}
+  .mfpop label{display:flex;align-items:center;gap:7px;padding:4px 7px;font-size:12px;font-weight:500;color:var(--ink);border-radius:6px;cursor:pointer;white-space:nowrap}
+  .mfpop label:hover{background:#f4f2fa}
+  .mfpop input[type=checkbox]{width:14px;height:14px;accent-color:var(--magenta);flex:0 0 auto}
+  .mfclear{font-size:11px;font-weight:700;color:var(--magenta);cursor:pointer;padding:5px 7px;border-top:1px solid var(--line);margin-top:4px}
+  .mfclear:hover{text-decoration:underline}
   td{padding:9px 12px;border-top:1px solid #f2f0f8;vertical-align:middle}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
   .pill{font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px}
@@ -2405,17 +2415,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2" style="overflow:auto"><table class="itable"><thead><tr>
         <th class="cbcell"><input type="checkbox" id="selAll" onclick="toggleAll(this)"></th>
         <th>FULL CODE</th>
-        <th>BLOCK<br><select id="blockFilter" class="colfilter" onchange="setBlockFilter(this.value)"></select></th>
-        <th>ELEV<br><select id="elevFilter" class="colfilter" onchange="setElevFilter(this.value)"></select></th>
-        <th>FLAT<br><select id="flatFilter" class="colfilter" onchange="setFlatFilter(this.value)"></select></th>
-        <th>FLOOR<br><select id="floorFilter" class="colfilter" onchange="setFloorFilter(this.value)"></select></th>
-        <th>ROOM<br><select id="roomFilter" class="colfilter" onchange="setRoomFilter(this.value)"></select></th>
-        <th>ITEM<br><select id="itemColFilter" class="colfilter" onchange="setItemColFilter(this.value)"></select></th>
-        <th>STAGE<br><select id="stageFilter" class="colfilter" onchange="setStageFilter(this.value)"></select></th>
-        <th>PO<br><select id="poFilter" class="colfilter" onchange="setPoFilter(this.value)"></select></th>
+        <th>BLOCK<br><div id="blockFilter" class="mfhost"></div></th>
+        <th>ELEV<br><div id="elevFilter" class="mfhost"></div></th>
+        <th>FLAT<br><div id="flatFilter" class="mfhost"></div></th>
+        <th>FLOOR<br><div id="floorFilter" class="mfhost"></div></th>
+        <th>ROOM<br><div id="roomFilter" class="mfhost"></div></th>
+        <th>ITEM<br><div id="itemColFilter" class="mfhost"></div></th>
+        <th>STAGE<br><div id="stageFilter" class="mfhost"></div></th>
+        <th>PO<br><div id="poFilter" class="mfhost"></div></th>
         <th>RATE (£)</th>
-        <th>INSTALL STATUS<br><select id="statusFilter" class="colfilter" onchange="setStatusFilter(this.value)"></select></th>
-        <th>TEAM<br><select id="teamFilter" class="colfilter" onchange="setTeamFilter(this.value)"></select></th><th>MONDAY</th>
+        <th>INSTALL STATUS<br><div id="statusFilter" class="mfhost"></div></th>
+        <th>TEAM<br><div id="teamFilter" class="mfhost"></div></th><th>MONDAY</th>
       </tr></thead><tbody id="rows"></tbody></table></div>
     </main>
   </div>
@@ -2777,7 +2787,42 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var token=sessionStorage.getItem('ace_token')||''; var teams=[]; var sel={};
   var current=sessionStorage.getItem('ace_job')||'AXS.LAB';
   var itemsData=null; var itemFilter=sessionStorage.getItem('ace_filter')||'all';
-  var flatFilter='', statusFilter='', teamFilter='', blockFilter='', elevFilter='', floorFilter='', roomFilter='', stageFilter='', itemColFilter='', poFilter='';
+  // ---- multi-select column filters (Items table). State lives in MF[hostId].state (array). ----
+  var MF={};
+  function mfOptions(field,mapLabel){
+    var vals=[],hasNone=false;
+    ((itemsData&&itemsData.items)||[]).forEach(function(it){var v=(it[field]==null?'':String(it[field])); if(v){if(vals.indexOf(v)<0)vals.push(v);}else hasNone=true;});
+    vals.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});
+    return {items:vals.map(function(v){return {v:v,l:mapLabel?mapLabel(v):v};}),hasNone:hasNone};
+  }
+  function buildMF(hostId,label,allLabel,opts){
+    var prev=(MF[hostId]&&MF[hostId].state)||[];
+    var avail={}; opts.items.forEach(function(o){avail[o.v]=1;}); if(opts.hasNone)avail['__none']=1;
+    MF[hostId]={state:prev.filter(function(v){return avail[v];}),items:opts.items,hasNone:!!opts.hasNone,label:label,allLabel:allLabel};
+    renderMF(hostId);
+  }
+  function renderMF(hostId){
+    var m=MF[hostId],host=document.getElementById(hostId); if(!m||!host)return;
+    var rows='';
+    if(m.hasNone)rows+='<label><input type="checkbox" data-v="__none" '+(m.state.indexOf('__none')>=0?'checked':'')+'> — none —</label>';
+    rows+=m.items.map(function(o){return '<label><input type="checkbox" data-v="'+av(o.v)+'" '+(m.state.indexOf(o.v)>=0?'checked':'')+'> '+esc(o.l)+'</label>';}).join('');
+    host.innerHTML='<div class="mfilter"><button type="button" class="mfbtn" onclick="mfToggle(\''+hostId+'\',event)"></button>'
+      +'<div class="mfpop" id="pop_'+hostId+'" onclick="event.stopPropagation()">'+rows+'<div class="mfclear" onclick="mfClear(\''+hostId+'\')" style="display:none">Clear</div></div></div>';
+    var pop=document.getElementById('pop_'+hostId);
+    Array.prototype.forEach.call(pop.querySelectorAll('input[type=checkbox]'),function(cb){ cb.addEventListener('change',function(){ mfSet(hostId,cb.getAttribute('data-v'),cb.checked); }); });
+    mfBtn(hostId);
+  }
+  function mfBtn(hostId){
+    var m=MF[hostId],host=document.getElementById(hostId); if(!m||!host)return;
+    var n=m.state.length, btn=host.querySelector('.mfbtn');
+    btn.textContent=(n?m.label+' · '+n:m.allLabel)+' ▾'; btn.classList.toggle('act',n>0);
+    var clr=host.querySelector('.mfclear'); if(clr){clr.style.display=n?'block':'none'; clr.textContent='Clear ('+n+')';}
+  }
+  function mfSet(hostId,v,on){ var m=MF[hostId]; if(!m)return; var i=m.state.indexOf(v); if(on&&i<0)m.state.push(v); else if(!on&&i>=0)m.state.splice(i,1); mfBtn(hostId); renderItems(); }
+  function mfClear(hostId){ var m=MF[hostId]; if(!m)return; m.state=[]; var host=document.getElementById(hostId); Array.prototype.forEach.call(host.querySelectorAll('input[type=checkbox]'),function(cb){cb.checked=false;}); mfBtn(hostId); renderItems(); }
+  function mfToggle(hostId,e){ if(e)e.stopPropagation(); var pop=document.getElementById('pop_'+hostId); if(!pop)return; var open=pop.classList.contains('open'); document.querySelectorAll('.mfpop.open').forEach(function(p){p.classList.remove('open');}); if(!open)pop.classList.add('open'); }
+  function mfMatch(hostId,val){ var m=MF[hostId]; if(!m||!m.state.length)return true; var v=(val==null||val==='')?'__none':String(val); return m.state.indexOf(v)>=0; }
+  document.addEventListener('click',function(){ document.querySelectorAll('.mfpop.open').forEach(function(p){p.classList.remove('open');}); });
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
@@ -3367,7 +3412,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // code, tooltip the client.job code.
   function mkEl(id,label,tip){
     var d=document.createElement('div');d.className='job'+(id===current?' on':'');d.textContent=label;d.title=tip||'';d.setAttribute('data-code',id);
-    d.onclick=function(){current=id;itemFilter='all';flatFilter='';statusFilter='';teamFilter='';blockFilter='';elevFilter='';floorFilter='';roomFilter='';stageFilter='';itemColFilter='';poFilter='';document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});
+    d.onclick=function(){current=id;itemFilter='all';MF={};document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)});
       if(sessionStorage.getItem('ace_tab')==='mapping'){ mapJob=(id==='ALL'?'':id); var sp=document.getElementById('mapJobPick'); if(sp){ sp.value=(sp.querySelector('option[value="'+id+'"]')?id:''); } loadMapping(); loadImport(); }
       else loadItems();};
     if(id!=='ALL'){var b=document.createElement('span');b.textContent='⋯';b.title='Files';b.style.cssText='float:right;cursor:pointer;padding:0 6px;opacity:.7';b.onclick=function(ev){ev.stopPropagation();openJobFiles(id);};d.appendChild(b);}
@@ -3404,6 +3449,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     {key:'survey',label:'Survey',color:'#0ea5e9'},
     {key:'scaffold_erect',label:'Scaffold erect',color:'#f59e0b'},
     {key:'scaffold_dismantle',label:'Scaffold dismantle',color:'#ef4444'},
+    {key:'delivery',label:'Delivery',color:'#0d9488'},
     {key:'fitting',label:'Fitting',color:'#10b981'}
   ];
   function jobTabBar(p){
@@ -3609,49 +3655,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('filesBtn').style.display='';
     document.getElementById('delJobBtn').style.display=canCap('jobs.manage')?'':'none';
     var ejb=document.getElementById('editJobBtn'); if(ejb)ejb.style.display=canCap('jobs.manage')?'':'none';
-    // header column filters: distinct flats (this job) + all statuses
-    var flats=[]; (itemsData.items||[]).forEach(function(it){var f=it.flat||''; if(f&&flats.indexOf(f)<0)flats.push(f);});
-    flats.sort(function(a,b){return (parseInt(a,10)||0)-(parseInt(b,10)||0)||String(a).localeCompare(String(b));});
-    if(flatFilter&&flats.indexOf(flatFilter)<0)flatFilter='';
-    document.getElementById('flatFilter').innerHTML='<option value="">All flats</option>'+flats.map(function(f){return '<option value="'+av(f)+'">'+esc(f)+'</option>';}).join('');
-    document.getElementById('flatFilter').value=flatFilter;
-    document.getElementById('statusFilter').innerHTML='<option value="">All statuses</option><option value="__none">— no status —</option>'+ISTATUS.filter(function(s){return s[0];}).map(function(s){return '<option value="'+s[0]+'">'+esc(s[1])+'</option>';}).join('');
-    document.getElementById('statusFilter').value=statusFilter;
-    // team filter: distinct teams present on this job's items (plus "no team")
-    var tids=[], hasNoTeam=false;
-    (itemsData.items||[]).forEach(function(it){ if(it.team_id){ if(tids.indexOf(it.team_id)<0)tids.push(it.team_id); } else hasNoTeam=true; });
-    tids.sort(function(a,b){return teamName(a).localeCompare(teamName(b));});
-    if(teamFilter&&teamFilter!=='__none'&&tids.indexOf(teamFilter)<0)teamFilter='';
-    if(teamFilter==='__none'&&!hasNoTeam)teamFilter='';
-    document.getElementById('teamFilter').innerHTML='<option value="">All teams</option>'
-      +(hasNoTeam?'<option value="__none">— no team —</option>':'')
-      +tids.map(function(id){return '<option value="'+av(id)+'">'+esc(teamName(id))+'</option>';}).join('');
-    document.getElementById('teamFilter').value=teamFilter;
-    // block / elevation / floor filters: distinct values on this job's items (+ "none")
-    fillColFilter('blockFilter','block',function(v){blockFilter=v;},blockFilter,'All blocks');
-    fillColFilter('elevFilter','elevation',function(v){elevFilter=v;},elevFilter,'All elevations');
-    fillColFilter('floorFilter','floor',function(v){floorFilter=v;},floorFilter,'All floors');
-    fillColFilter('roomFilter','room',function(v){roomFilter=v;},roomFilter,'All rooms');
-    fillColFilter('itemColFilter','item',function(v){itemColFilter=v;},itemColFilter,'All items');
-    fillColFilter('poFilter','po_phase',function(v){poFilter=v;},poFilter,'All PO');
+    // header column filters — multi-select popovers (state in MF[hostId].state)
+    buildMF('blockFilter','Block','All blocks',mfOptions('block'));
+    buildMF('elevFilter','Elev','All elevations',mfOptions('elevation'));
+    buildMF('flatFilter','Flat','All flats',mfOptions('flat'));
+    buildMF('floorFilter','Floor','All floors',mfOptions('floor'));
+    buildMF('roomFilter','Room','All rooms',mfOptions('room'));
+    buildMF('itemColFilter','Item','All items',mfOptions('item'));
+    buildMF('stageFilter','Stage','All stages',mfOptions('stage',function(v){return STAGE[v]||v;}));
+    buildMF('poFilter','PO','All PO',mfOptions('po_phase',function(v){return 'Phase '+v;}));
+    buildMF('statusFilter','Status','All statuses',mfOptions('install_status',function(v){return istatLabel(v);}));
+    buildMF('teamFilter','Team','All teams',mfOptions('team_id',function(v){return teamName(v);}));
     fillPoPdfControl();
-    // stage filter: distinct stages present, shown with their labels
-    var stages=[]; (itemsData.items||[]).forEach(function(it){var st=it.stage||''; if(st&&stages.indexOf(st)<0)stages.push(st);});
-    if(stageFilter&&stages.indexOf(stageFilter)<0)stageFilter='';
-    document.getElementById('stageFilter').innerHTML='<option value="">All stages</option>'+stages.map(function(st){return '<option value="'+av(st)+'">'+esc(STAGE[st]||st)+'</option>';}).join('');
-    document.getElementById('stageFilter').value=stageFilter;
     renderItems();
   }
-  function setFlatFilter(v){flatFilter=v;renderItems();}
-  function setStatusFilter(v){statusFilter=v;renderItems();}
-  function setTeamFilter(v){teamFilter=v;renderItems();}
-  function setBlockFilter(v){blockFilter=v;renderItems();}
-  function setElevFilter(v){elevFilter=v;renderItems();}
-  function setFloorFilter(v){floorFilter=v;renderItems();}
-  function setRoomFilter(v){roomFilter=v;renderItems();}
-  function setStageFilter(v){stageFilter=v;renderItems();}
-  function setItemColFilter(v){itemColFilter=v;renderItems();}
-  function setPoFilter(v){poFilter=v;renderItems();}
   // Populate the PO-phase dropdown (distinct phases on Surveyed items) and show the PO PDF control.
   function fillPoPdfControl(){
     var wrap=document.getElementById('poPdfWrap'), sel=document.getElementById('poPhaseSel'); if(!wrap||!sel)return;
@@ -3733,18 +3750,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.querySelectorAll('#itemFilters .chip').forEach(function(c){c.classList.toggle('on',c.getAttribute('data-f')===itemFilter);});
     var all=(itemsData?itemsData.items:[]);
     var rows=all.filter(matchFilter).filter(function(r){
-      if(flatFilter&&(r.flat||'')!==flatFilter)return false;
-      if(statusFilter==='__none'){if(r.install_status)return false;}
-      else if(statusFilter){if(r.install_status!==statusFilter)return false;}
-      if(teamFilter==='__none'){if(r.team_id)return false;}
-      else if(teamFilter){if(r.team_id!==teamFilter)return false;}
-      if(blockFilter==='__none'){if(r.block)return false;} else if(blockFilter){if((r.block||'')!==blockFilter)return false;}
-      if(elevFilter==='__none'){if(r.elevation)return false;} else if(elevFilter){if((r.elevation||'')!==elevFilter)return false;}
-      if(floorFilter==='__none'){if(r.floor)return false;} else if(floorFilter){if((r.floor||'')!==floorFilter)return false;}
-      if(roomFilter==='__none'){if(r.room)return false;} else if(roomFilter){if((r.room||'')!==roomFilter)return false;}
-      if(stageFilter&&(r.stage||'')!==stageFilter)return false;
-      if(itemColFilter==='__none'){if(r.item)return false;} else if(itemColFilter){if((r.item||'')!==itemColFilter)return false;}
-      if(poFilter==='__none'){if(r.po_phase!=null)return false;} else if(poFilter){if((r.po_phase==null?'':String(r.po_phase))!==poFilter)return false;}
+      if(!mfMatch('flatFilter',r.flat))return false;
+      if(!mfMatch('statusFilter',r.install_status))return false;
+      if(!mfMatch('teamFilter',r.team_id))return false;
+      if(!mfMatch('blockFilter',r.block))return false;
+      if(!mfMatch('elevFilter',r.elevation))return false;
+      if(!mfMatch('floorFilter',r.floor))return false;
+      if(!mfMatch('roomFilter',r.room))return false;
+      if(!mfMatch('stageFilter',r.stage))return false;
+      if(!mfMatch('itemColFilter',r.item))return false;
+      if(!mfMatch('poFilter',r.po_phase==null?'':String(r.po_phase)))return false;
       return true;
     });
     var canEdit=canCap('items.edit'), canFit=canCap('items.fit'), canSync=canCap('monday.sync');

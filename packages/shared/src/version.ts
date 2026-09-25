@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.93.1';
+export const APP_VERSION = '0.94.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.94.0', date: '2026-09-25', changes: [
+    'Items filters are now multi-select. Every column filter (Block, Elevation, Flat, Floor, Room, Item code, Stage, PO, Install status, Team) is a tick-box dropdown \u2014 pick several values at once (e.g. flats 12 + 14 + 21, or W1 + W2) and the list and counter update to the combined view. Each filter shows how many values are selected and has a Clear. Filters still reset when you switch jobs.',
+    'Job Dates: added an independent Delivery phase (start\u2013end) between Scaffold and Fitting \u2014 it shows on the Gantt like the other phases. Not tied to any other date. Requires migration 0046.',
+  ] },
   { version: '0.93.1', date: '2026-09-23', changes: [
     'Fix: on the PO PDF header, a long Site address or Deliver-to address wrapped onto two lines but the next line (PO phase, etc.) didn\u2019t move down, so they overlapped. Header rows now advance by the text\u2019s actual height, so nothing overlaps regardless of address length. No migration.',
   ] },

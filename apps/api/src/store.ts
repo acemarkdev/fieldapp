@@ -27,6 +27,7 @@ export async function getJobByRef(ref: string): Promise<Job> {
 export const JOB_DATE_FIELDS = [
   'programme_start','programme_end','mapping_start','mapping_end','survey_start','survey_end',
   'scaffold_erect_start','scaffold_erect_end','scaffold_dismantle_start','scaffold_dismantle_end',
+  'delivery_start','delivery_end',
   'fitting_start','fitting_end',
 ] as const;
 export type JobDates = Partial<Record<(typeof JOB_DATE_FIELDS)[number], string | null>>;

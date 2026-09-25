@@ -45,6 +45,7 @@ export interface Job {
   survey_start: string | null; survey_end: string | null;
   scaffold_erect_start: string | null; scaffold_erect_end: string | null;
   scaffold_dismantle_start: string | null; scaffold_dismantle_end: string | null;
+  delivery_start: string | null; delivery_end: string | null;
   fitting_start: string | null; fitting_end: string | null;
   monday_board_id: string | null;
   monday_account_slug: string | null;   // e.g. "ace189144" — makes item links resolve to the right account
