@@ -131,19 +131,6 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
     return Math.max(12, vh + 2);
   };
 
-  const drawFrame = (x: number, top: number, maxW: number, maxH: number, it: any) => {
-    const wmm = Number(it.width_mm) || 0, hmm = Number(it.height_mm) || 0;
-    if (!(wmm > 0 && hmm > 0)) return false;
-    const ar = wmm / hmm;
-    let rw = maxW, rh = rw / ar;
-    if (rh > maxH) { rh = maxH; rw = rh * ar; }
-    const rx = x + (maxW - rw) / 2, ry = top;
-    doc.rect(rx, ry, rw, rh).lineWidth(1.2).strokeColor(PRIMARY).stroke();
-    [it.mullion1_mm, it.mullion2_mm, it.mullion3_mm].forEach((m: any) => { const v = Number(m) || 0; if (v > 0 && v < wmm) { const mx = rx + (v / wmm) * rw; doc.moveTo(mx, ry).lineTo(mx, ry + rh).lineWidth(0.7).strokeColor(PRIMARY).stroke(); } });
-    [it.transom1_mm, it.transom2_mm, it.transom3_mm].forEach((t: any) => { const v = Number(t) || 0; if (v > 0 && v < hmm) { const ty = ry + (v / hmm) * rh; doc.moveTo(rx, ty).lineTo(rx + rw, ty).lineWidth(0.7).strokeColor(PRIMARY).stroke(); } });
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(INK).text(`${wmm} × ${hmm} mm`, x, ry + rh + 3, { width: maxW, align: 'center' });
-    return true;
-  };
 
   data.items.forEach((it, idx) => {
     if (y + CARD_H > BOTTOM) { doc.addPage(); y = doc.page.margins.top; }
@@ -168,17 +155,27 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
     if (it.coupled) ry += specRow('Coupled', String(it.coupled), leftX, ry, leftW);
     if (it.comments) ry += specRow('Comments', String(it.comments), leftX, ry, leftW);
 
-    // right: dimensioned frame + style sketch thumbnail
-    const drew = drawFrame(rightX, bodyTop + 2, rightW, 96, it);
-    let sy = bodyTop + (drew ? 116 : 4);
+    // right: the Clearview style drawing is the single window picture (authoritative for the number
+    // of sections / opening layout). Dimensions are shown as text so nothing contradicts the sketch.
     const dc = String(it.design_code ?? '').trim();
+    let ry2 = bodyTop + 2;
     if (dc) {
       try {
         const bytes = readFileSync(join(STYLES_DIR, `${dc}.png`));
-        doc.image(bytes, rightX + rightW / 2 - 22, sy, { fit: [44, 40], align: 'center' });
-        doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('Style ' + dc, rightX, sy + 42, { width: rightW, align: 'center' });
-      } catch { doc.font('Helvetica').fontSize(8).fillColor(MUTED).text('Style ' + dc, rightX, sy, { width: rightW, align: 'center' }); }
+        doc.image(bytes, rightX, ry2, { fit: [rightW, 92], align: 'center' });
+        ry2 += 96;
+        doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text('Style ' + dc, rightX, ry2, { width: rightW, align: 'center' });
+        ry2 += 13;
+      } catch { doc.font('Helvetica').fontSize(8).fillColor(MUTED).text('Style ' + dc, rightX, ry2, { width: rightW, align: 'center' }); ry2 += 13; }
     }
+    const wmm = Number(it.width_mm) || 0, hmm = Number(it.height_mm) || 0;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(INK).text(wmm && hmm ? `${wmm} × ${hmm} mm` : 'Size —', rightX, ry2, { width: rightW, align: 'center' });
+    ry2 += 12;
+    const tr = [it.transom1_mm, it.transom2_mm, it.transom3_mm].map(Number).filter((v) => v > 0);
+    const mu = [it.mullion1_mm, it.mullion2_mm, it.mullion3_mm].map(Number).filter((v) => v > 0);
+    doc.font('Helvetica').fontSize(7.5).fillColor(MUTED);
+    if (tr.length) { doc.text('Transoms (from top): ' + tr.join(', '), rightX, ry2, { width: rightW, align: 'center' }); ry2 += 10; }
+    if (mu.length) { doc.text('Mullions (from left): ' + mu.join(', '), rightX, ry2, { width: rightW, align: 'center' }); ry2 += 10; }
     y += CARD_H + GAP;
   });
 

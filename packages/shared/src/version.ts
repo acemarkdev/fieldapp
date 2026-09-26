@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.96.0';
+export const APP_VERSION = '0.96.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.96.1', date: '2026-09-26', changes: [
+    'PO card fix: removed the auto-drawn frame rectangle that could show a different number of sections than the Clearview style sketch. Each item now shows one window drawing (the style sketch) with the size and any transom/mullion positions listed as text beneath \u2014 no more conflicting pictures.',
+  ] },
   { version: '0.96.0', date: '2026-09-25', changes: [
     'PO PDF redesigned (Phase 2). The purchase order is now one detailed card per item instead of a compact table: full specification (type, opening, material, glass + safety, glazing + bars, cill, add-ons, coupled, comments), a to-scale frame sketch drawn from the item\u2019s width/height with its transom and mullion positions, and the Clearview style thumbnail. The customer\u2019s contractual requirements (Pass24, Building control, Trickle vents, \u2026) print as chips in the header. Sort order (by flat / floor / item code / full code) still applies to the card order. No migration.',
   ] },
