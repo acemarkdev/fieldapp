@@ -155,27 +155,46 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
     if (it.coupled) ry += specRow('Coupled', String(it.coupled), leftX, ry, leftW);
     if (it.comments) ry += specRow('Comments', String(it.comments), leftX, ry, leftW);
 
-    // right: the Clearview style drawing is the single window picture (authoritative for the number
-    // of sections / opening layout). Dimensions are shown as text so nothing contradicts the sketch.
+    // right: the Clearview style sketch, scaled to the item's real width:height, with the mullion
+    // and transom measurements drawn on as dimension guide lines + labels (from top / from left).
     const dc = String(it.design_code ?? '').trim();
-    let ry2 = bodyTop + 2;
+    const wmm = Number(it.width_mm) || 0, hmm = Number(it.height_mm) || 0;
+    const tr = [it.transom1_mm, it.transom2_mm, it.transom3_mm].map(Number).filter((v) => v > 0 && (!hmm || v < hmm));
+    const mu = [it.mullion1_mm, it.mullion2_mm, it.mullion3_mm].map(Number).filter((v) => v > 0 && (!wmm || v < wmm));
+    // Box scaled to the true frame proportions so the guide lines line up with the frame edges.
+    const LBL = 16;                                  // gutter for the height label on the left
+    const areaW = rightW - LBL, maxBH = 96;
+    let boxW = areaW, boxH = wmm && hmm ? boxW * (hmm / wmm) : boxW * 0.7;
+    if (boxH > maxBH) { boxH = maxBH; boxW = wmm && hmm ? boxH * (wmm / hmm) : boxH * 1.4; }
+    const bx = rightX + LBL + (areaW - boxW) / 2, by = bodyTop + 8;
     if (dc) {
       try {
         const bytes = readFileSync(join(STYLES_DIR, `${dc}.png`));
-        doc.image(bytes, rightX, ry2, { fit: [rightW, 92], align: 'center' });
-        ry2 += 96;
-        doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text('Style ' + dc, rightX, ry2, { width: rightW, align: 'center' });
-        ry2 += 13;
-      } catch { doc.font('Helvetica').fontSize(8).fillColor(MUTED).text('Style ' + dc, rightX, ry2, { width: rightW, align: 'center' }); ry2 += 13; }
+        doc.image(bytes, bx, by, { width: boxW, height: boxH });
+      } catch { doc.rect(bx, by, boxW, boxH).lineWidth(1).strokeColor(PRIMARY).stroke(); }
+    } else {
+      doc.rect(bx, by, boxW, boxH).lineWidth(1).strokeColor(PRIMARY).stroke();
     }
-    const wmm = Number(it.width_mm) || 0, hmm = Number(it.height_mm) || 0;
+    doc.rect(bx, by, boxW, boxH).lineWidth(0.8).strokeColor(PRIMARY).stroke();  // crisp outer frame
+    // dimension guide lines (dashed) + labels
+    doc.dash(2, { space: 2 });
+    doc.font('Helvetica').fontSize(6.5);
+    mu.forEach((m) => {
+      const mx = bx + (m / wmm) * boxW;
+      doc.moveTo(mx, by).lineTo(mx, by + boxH).lineWidth(0.5).strokeColor(MUTED).stroke();
+      doc.fillColor(INK).text(String(m), mx - 12, by - 8, { width: 24, align: 'center', lineBreak: false });
+    });
+    tr.forEach((t) => {
+      const ty = by + (t / hmm) * boxH;
+      doc.moveTo(bx, ty).lineTo(bx + boxW, ty).lineWidth(0.5).strokeColor(MUTED).stroke();
+      doc.fillColor(INK).text(String(t), rightX, ty - 3, { width: LBL - 2, align: 'right', lineBreak: false });
+    });
+    doc.undash();
+    // overall size caption + style number
+    let ry2 = by + boxH + 4;
     doc.font('Helvetica-Bold').fontSize(9).fillColor(INK).text(wmm && hmm ? `${wmm} × ${hmm} mm` : 'Size —', rightX, ry2, { width: rightW, align: 'center' });
     ry2 += 12;
-    const tr = [it.transom1_mm, it.transom2_mm, it.transom3_mm].map(Number).filter((v) => v > 0);
-    const mu = [it.mullion1_mm, it.mullion2_mm, it.mullion3_mm].map(Number).filter((v) => v > 0);
-    doc.font('Helvetica').fontSize(7.5).fillColor(MUTED);
-    if (tr.length) { doc.text('Transoms (from top): ' + tr.join(', '), rightX, ry2, { width: rightW, align: 'center' }); ry2 += 10; }
-    if (mu.length) { doc.text('Mullions (from left): ' + mu.join(', '), rightX, ry2, { width: rightW, align: 'center' }); ry2 += 10; }
+    if (dc) { doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text('Style ' + dc + (mu.length ? '  ·  mullions from left' : '') + (tr.length ? (mu.length ? ', transoms from top' : '  ·  transoms from top') : ''), rightX, ry2, { width: rightW, align: 'center' }); }
     y += CARD_H + GAP;
   });
 

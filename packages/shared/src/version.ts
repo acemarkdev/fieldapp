@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.96.1';
+export const APP_VERSION = '0.96.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.96.2', date: '2026-09-26', changes: [
+    'PO drawing: mullion and transom measurements are now drawn on the item sketch \u2014 the style sketch is scaled to the frame\u2019s real width:height, with dashed guide lines and mm labels for each mullion (from left, along the top) and transom (from top, down the left side), plus the overall size beneath.',
+  ] },
   { version: '0.96.1', date: '2026-09-26', changes: [
     'PO card fix: removed the auto-drawn frame rectangle that could show a different number of sections than the Clearview style sketch. Each item now shows one window drawing (the style sketch) with the size and any transom/mullion positions listed as text beneath \u2014 no more conflicting pictures.',
   ] },
