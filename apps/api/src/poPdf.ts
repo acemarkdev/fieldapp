@@ -8,7 +8,7 @@ import PDFDocument from 'pdfkit';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getJobByRef, listSurveyItems, userNames } from './store';
+import { getJobByRef, listSurveyItems, userNames, requirementNamesForClientCode } from './store';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const STYLES_DIR = join(__dir, '../../mobile/assets/styles');
@@ -50,6 +50,7 @@ export interface PoPdfData {
   generatedBy?: string | null;
   readyBy?: string | null;
   readyAt?: string | null;
+  requirements?: string[];   // customer's contractual requirements (Pass24, Building control, …)
 }
 
 const stamp = (d: Date | string | null | undefined) => {
@@ -58,116 +59,135 @@ const stamp = (d: Date | string | null | undefined) => {
   return dt.toLocaleDateString('en-GB') + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 };
 
-/** Pure drawing — no DB. Resolves the finished PDF bytes. */
+/** Pure drawing (Option B: one card per item) — no DB. Resolves the finished PDF bytes. */
 export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30,
+  const doc = new PDFDocument({ size: 'A4', margin: 34,
     info: { Title: `${data.job.client_code}.${data.job.job_code} — PO phase ${data.phase}`, Author: 'ACE Field' } });
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve) => { doc.on('data', (c: Buffer) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); });
 
-  const L = doc.page.margins.left, R = doc.page.width - doc.page.margins.right;
-  const W = R - L;
-
-  // ---- header ----
-  doc.font('Helvetica-Bold').fontSize(20).fillColor(PRIMARY).text('Purchase Order', L, 30);
-  doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-    .text('Item schedule for ordering — frame & glass', L, 54);
-
+  const L = doc.page.margins.left, R = doc.page.width - doc.page.margins.right, W = R - L;
+  const BOTTOM = doc.page.height - doc.page.margins.bottom;
   const code = `${data.job.client_code}.${data.job.job_code}`;
+
+  // ---------- page header (first page) ----------
+  doc.font('Helvetica-Bold').fontSize(19).fillColor(PRIMARY).text('Purchase Order', L, 30);
+  doc.font('Helvetica').fontSize(9).fillColor(MUTED).text(`Item schedule for ordering · PO phase ${data.phase}`, L, 52);
+
+  let y = 30;
+  const infoX = L + W * 0.5, labW = 74, valW = W * 0.5 - labW - 4;
+  const hrow = (label: string, val: string) => {
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED).text(label, infoX, y, { width: labW });
+    doc.font('Helvetica').fontSize(8.5).fillColor(INK).text(val, infoX + labW, y, { width: valW });
+    y += Math.max(12, doc.heightOfString(String(val || '—'), { width: valW }) + 2);
+  };
   const addr = [data.job.site_address, data.job.postcode].filter(Boolean).join(', ');
-  const infoY = 30;
-  doc.font('Helvetica').fontSize(9).fillColor(INK);
-  const infoX = L + W * 0.55;
-  const valW = W * 0.45 - 92;
-  const line = (label: string, val: string, y: number) => {
-    doc.font('Helvetica-Bold').fillColor(MUTED).text(label, infoX, y, { width: 90, continued: false });
-    doc.font('Helvetica').fillColor(INK).text(val, infoX + 92, y, { width: valW });
-  };
   const deliv = [data.job.delivery_address, data.job.delivery_postcode].filter(Boolean).join(', ');
-  let iy = infoY;
-  // Advance by the value's actual rendered height so multi-line addresses don't overlap the next row.
-  const row = (label: string, val: string) => {
-    line(label, val, iy);
-    doc.font('Helvetica').fontSize(9);
-    const h = doc.heightOfString(String(val || '—'), { width: valW });
-    iy += Math.max(13, h + 2);
-  };
-  row('Job', `${code}${data.job.site_code && data.job.site_code !== code ? '  (' + data.job.site_code + ')' : ''}`);
-  row('Site', data.job.name || '—');
-  if (addr) row('Site address', addr);
-  row('Deliver to', deliv || addr || '—');
-  row('PO phase', String(data.phase));
-  row('Items', String(data.items.length));
-  row('Generated', `${data.generatedBy ? data.generatedBy + ' · ' : ''}${stamp(data.generatedAt)}`);
-  if (data.readyAt) row('Ready for PO', `${data.readyBy ? data.readyBy + ' · ' : ''}${stamp(data.readyAt)}`);
+  hrow('Job', `${code}${data.job.site_code && data.job.site_code !== code ? '  (' + data.job.site_code + ')' : ''}`);
+  hrow('Site', data.job.name || '—');
+  if (addr) hrow('Site address', addr);
+  hrow('Deliver to', deliv || addr || '—');
+  hrow('Items', String(data.items.length));
+  hrow('Generated', `${data.generatedBy ? data.generatedBy + ' · ' : ''}${stamp(data.generatedAt)}`);
+  if (data.readyAt) hrow('Ready for PO', `${data.readyBy ? data.readyBy + ' · ' : ''}${stamp(data.readyAt)}`);
 
-  let y = Math.max(118, iy + 6);
+  // ---------- contractual requirements (customer-level, printed once) ----------
+  let hy = 74;
+  const reqs = data.requirements || [];
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(PRIMARY).text('Contractual requirements', L, hy);
+  hy += 14;
+  if (reqs.length) {
+    let cx = L; const chipH = 16, gap = 6;
+    doc.font('Helvetica').fontSize(8.5);
+    for (const rq of reqs) {
+      const tw = doc.widthOfString(rq) + 16;
+      if (cx + tw > L + W * 0.48) { cx = L; hy += chipH + 5; }
+      doc.roundedRect(cx, hy, tw, chipH, 8).fill('#efeaf9');
+      doc.fillColor(PRIMARY).font('Helvetica-Bold').fontSize(8.5).text(rq, cx + 8, hy + 4, { lineBreak: false });
+      cx += tw + gap;
+    }
+    hy += chipH;
+  } else {
+    doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(MUTED).text('None set for this customer.', L, hy);
+    hy += 10;
+  }
+
+  y = Math.max(y, hy) + 10;
   doc.moveTo(L, y).lineTo(R, y).strokeColor(LINE).lineWidth(1).stroke();
-  y += 8;
+  y += 10;
 
-  // ---- table columns ----
-  const cols = [
-    { key: 'n', label: '#', w: 24 },
-    { key: 'short', label: 'Short code', w: 96 },
-    { key: 'full', label: 'Full item code', w: 150 },
-    { key: 'frame', label: 'Type / Material / Style', w: 120 },
-    { key: 'size', label: 'W × H (mm)', w: 66 },
-    { key: 'glass', label: 'Glass / Glazing / Safety', w: 120 },
-    { key: 'open', label: 'Open · Cill', w: 64 },
-    { key: 'qty', label: 'Qty', w: 26 },
-    { key: 'sketch', label: 'Sketch', w: 0 }, // remainder
-  ];
-  const fixed = cols.reduce((a, c) => a + c.w, 0);
-  cols[cols.length - 1].w = Math.max(96, W - fixed);
-  const xOf = (i: number) => L + cols.slice(0, i).reduce((a, c) => a + c.w, 0);
+  if (!data.items.length) {
+    doc.font('Helvetica').fontSize(10).fillColor(MUTED).text(`No Surveyed items with PO phase ${data.phase}.`, L, y + 6);
+    doc.end();
+    return done;
+  }
 
-  const drawHeadRow = (yy: number) => {
-    doc.rect(L, yy, W, 20).fill(HEADBG);
-    doc.font('Helvetica-Bold').fontSize(8).fillColor('#ffffff');
-    cols.forEach((c, i) => doc.text(c.label, xOf(i) + 4, yy + 6, { width: c.w - 8, ellipsis: true }));
-    return yy + 20;
+  // ---------- item cards ----------
+  const CARD_H = 194, GAP = 12;
+  const specRow = (label: string, val: string, x: number, ry: number, w: number) => {
+    doc.font('Helvetica-Bold').fontSize(8).fillColor(MUTED).text(label, x, ry, { width: 66, lineBreak: false });
+    const vh = doc.font('Helvetica').fontSize(8.5).fillColor(INK).heightOfString(val || '—', { width: w - 68 });
+    doc.text(val || '—', x + 68, ry, { width: w - 68 });
+    return Math.max(12, vh + 2);
   };
-  y = drawHeadRow(y);
 
-  const ROWH = 62;
-  doc.font('Helvetica').fontSize(8).fillColor(INK);
+  const drawFrame = (x: number, top: number, maxW: number, maxH: number, it: any) => {
+    const wmm = Number(it.width_mm) || 0, hmm = Number(it.height_mm) || 0;
+    if (!(wmm > 0 && hmm > 0)) return false;
+    const ar = wmm / hmm;
+    let rw = maxW, rh = rw / ar;
+    if (rh > maxH) { rh = maxH; rw = rh * ar; }
+    const rx = x + (maxW - rw) / 2, ry = top;
+    doc.rect(rx, ry, rw, rh).lineWidth(1.2).strokeColor(PRIMARY).stroke();
+    [it.mullion1_mm, it.mullion2_mm, it.mullion3_mm].forEach((m: any) => { const v = Number(m) || 0; if (v > 0 && v < wmm) { const mx = rx + (v / wmm) * rw; doc.moveTo(mx, ry).lineTo(mx, ry + rh).lineWidth(0.7).strokeColor(PRIMARY).stroke(); } });
+    [it.transom1_mm, it.transom2_mm, it.transom3_mm].forEach((t: any) => { const v = Number(t) || 0; if (v > 0 && v < hmm) { const ty = ry + (v / hmm) * rh; doc.moveTo(rx, ty).lineTo(rx + rw, ty).lineWidth(0.7).strokeColor(PRIMARY).stroke(); } });
+    doc.font('Helvetica-Bold').fontSize(8).fillColor(INK).text(`${wmm} × ${hmm} mm`, x, ry + rh + 3, { width: maxW, align: 'center' });
+    return true;
+  };
 
   data.items.forEach((it, idx) => {
-    if (y + ROWH > doc.page.height - doc.page.margins.bottom) {
-      doc.addPage(); y = doc.page.margins.top; y = drawHeadRow(y); doc.font('Helvetica').fontSize(8).fillColor(INK);
-    }
-    // row border
-    doc.rect(L, y, W, ROWH).strokeColor(LINE).lineWidth(0.7).stroke();
-    cols.forEach((c, i) => { if (i > 0) doc.moveTo(xOf(i), y).lineTo(xOf(i), y + ROWH).strokeColor(LINE).lineWidth(0.5).stroke(); });
+    if (y + CARD_H > BOTTOM) { doc.addPage(); y = doc.page.margins.top; }
+    // card border
+    doc.roundedRect(L, y, W, CARD_H, 6).lineWidth(0.8).strokeColor(LINE).stroke();
+    // header bar
+    doc.save(); doc.roundedRect(L, y, W, 22, 6).fill(PRIMARY); doc.rect(L, y + 11, W, 11).fill(PRIMARY); doc.restore();
+    const loc = [it.block, it.elevation, it.flat ? 'Flat ' + it.flat : '', it.floor ? 'Fl ' + it.floor : '', roomName(it.room_code), it.item_code].filter(Boolean).join(' · ');
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#fff').text(`${idx + 1}.  ${shortCode(it)}`, L + 8, y + 6, { width: W * 0.55, lineBreak: false });
+    doc.font('Helvetica').fontSize(8).fillColor('#e8e5f5').text(s(it.full_code), L + W * 0.5, y + 6, { width: W * 0.5 - 8, align: 'right', lineBreak: false });
 
-    const pad = 4, top = y + 5;
-    const cell = (i: number, text: string, opts: any = {}) => doc.fillColor(opts.color || INK).font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(opts.size || 8).text(text, xOf(i) + pad, top, { width: cols[i].w - pad * 2, ...opts });
-    cell(0, String(idx + 1));
-    cell(1, shortCode(it), { bold: true });
-    doc.font('Courier').fontSize(7.5).fillColor(INK).text(s(it.full_code), xOf(2) + pad, top, { width: cols[2].w - pad * 2 });
-    cell(3, joinParts(it.item_type, it.material, it.window_type));
-    cell(4, dim(it), { bold: true, size: 9 });
-    cell(5, joinParts(it.glass, it.glazing, it.safety_glass));
-    cell(6, joinParts(it.open_in_out, it.cill_depth));
-    cell(7, '1');
+    const bodyTop = y + 28, leftX = L + 8, leftW = W * 0.56, rightX = L + W * 0.58, rightW = W * 0.42 - 8;
+    doc.fillColor(MUTED).font('Helvetica').fontSize(7.5).text(loc, leftX, bodyTop, { width: leftW, lineBreak: false });
+    let ry = bodyTop + 12;
+    ry += specRow('Type', joinParts(it.item_type, it.window_type), leftX, ry, leftW);
+    ry += specRow('Opening', joinParts(it.open_in_out), leftX, ry, leftW);
+    ry += specRow('Material', s(it.material), leftX, ry, leftW);
+    ry += specRow('Glass', joinParts(it.glass, it.safety_glass), leftX, ry, leftW);
+    ry += specRow('Glazing', joinParts(it.glazing, it.glazing_bars && it.glazing_bars !== 'None' ? it.glazing_bars + ' bars' : ''), leftX, ry, leftW);
+    ry += specRow('Cill', s(it.cill_depth), leftX, ry, leftW);
+    if (it.add_ons) ry += specRow('Add-ons', String(it.add_ons), leftX, ry, leftW);
+    if (it.coupled) ry += specRow('Coupled', String(it.coupled), leftX, ry, leftW);
+    if (it.comments) ry += specRow('Comments', String(it.comments), leftX, ry, leftW);
 
-    // sketch
+    // right: dimensioned frame + style sketch thumbnail
+    const drew = drawFrame(rightX, bodyTop + 2, rightW, 96, it);
+    let sy = bodyTop + (drew ? 116 : 4);
     const dc = String(it.design_code ?? '').trim();
-    const sx = xOf(8) + pad, sw = cols[8].w - pad * 2;
     if (dc) {
       try {
         const bytes = readFileSync(join(STYLES_DIR, `${dc}.png`));
-        doc.image(bytes, sx, y + 4, { fit: [sw, ROWH - 16], align: 'center', valign: 'center' });
-        doc.font('Helvetica').fontSize(6.5).fillColor(MUTED).text('style ' + dc, sx, y + ROWH - 10, { width: sw, align: 'center' });
-      } catch { doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('style ' + dc, sx, y + ROWH / 2 - 4, { width: sw, align: 'center' }); }
-    } else {
-      doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('—', sx, y + ROWH / 2 - 4, { width: sw, align: 'center' });
+        doc.image(bytes, rightX + rightW / 2 - 22, sy, { fit: [44, 40], align: 'center' });
+        doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('Style ' + dc, rightX, sy + 42, { width: rightW, align: 'center' });
+      } catch { doc.font('Helvetica').fontSize(8).fillColor(MUTED).text('Style ' + dc, rightX, sy, { width: rightW, align: 'center' }); }
     }
-    y += ROWH;
+    y += CARD_H + GAP;
   });
 
-  if (!data.items.length) {
-    doc.font('Helvetica').fontSize(10).fillColor(MUTED).text(`No Surveyed items with PO phase ${data.phase}.`, L, y + 10);
+  // footer page numbers
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i++) {
+    doc.switchToPage(range.start + i);
+    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+      .text(`${code} · PO phase ${data.phase} · page ${i + 1} of ${range.count}`, L, doc.page.height - 24, { width: W, align: 'center' });
   }
 
   doc.end();
@@ -202,6 +222,7 @@ export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: num
   let readyBy: string | null = null;
   const readyAt: string | null = readyRow ? readyRow.po_ready_at : null;
   if (readyRow?.po_ready_by) { const nm = await userNames([readyRow.po_ready_by]); readyBy = nm[readyRow.po_ready_by] ?? null; }
-  const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date(), generatedBy: generatedBy ?? null, readyBy, readyAt });
+  const requirements = await requirementNamesForClientCode(tenantId, job.client_code);
+  const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date(), generatedBy: generatedBy ?? null, readyBy, readyAt, requirements });
   return { buffer, job };
 }
