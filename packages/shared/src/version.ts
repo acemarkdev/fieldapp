@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.96.2';
+export const APP_VERSION = '0.97.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.97.0', date: '2026-09-27', changes: [
+    'Cost centres (Admin \u25b8 Cost centres, admin only) \u2014 foundation for purchasing/PO. One register that tags every purchase: framework phases (seeded from the PO board\u2019s All-Frame-Work list) and general overheads are added by hand, and job cost centres are imported from the Enquiries monday board (code = the L-number parsed from the enquiry name, description = the enquiry name). Type filter + search; import button pulls & refreshes enquiry-derived centres. New purchasing.manage capability (admin). Requires migration 0048. Next: the PO Request board rebuilt natively in the app, tagged by cost centre.',
+  ] },
   { version: '0.96.2', date: '2026-09-26', changes: [
     'PO drawing: mullion and transom measurements are now drawn on the item sketch \u2014 the style sketch is scaled to the frame\u2019s real width:height, with dashed guide lines and mm labels for each mullion (from left, along the top) and transom (from top, down the left side), plus the overall size beneath.',
   ] },

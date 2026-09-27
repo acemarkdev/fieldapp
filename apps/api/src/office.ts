@@ -35,6 +35,7 @@ import { listSignoffs, getSignoff, upsertSignoff, deleteSignoff, getQaChecklistT
 import { listCustomerCards, getCustomerCard, getCustomerByCode, createCustomerCard, updateCustomerCard, deleteCustomerCard, countJobsForClientCode,
   listRequirementTypes, createRequirementType, updateRequirementType, deleteRequirementType,
   listCustomerRequirementIds, setCustomerRequirements, requirementNamesForClientCode } from './store';
+import { listCostCentres, getCostCentre, createCostCentre, updateCostCentre, deleteCostCentre, parseEnquiryCostCentre, upsertEnquiryCostCentres } from './store';
 import { rollupFlats, QA_CHECKLIST_DEFAULT } from '@ace/shared';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
@@ -897,6 +898,65 @@ const server = createServer(async (req, res) => {
       if (!allow('customers.manage')) return;
       const id = p.split('/')[3] ?? '';
       await deleteRequirementType(id, ctx.tenant_id);
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    // ---- Cost centres (read: jobs.manage; write: purchasing.manage=admin) ----
+    if (p === '/api/cost-centres' && req.method === 'GET') {
+      if (!allow('jobs.manage')) return;
+      send(res, 200, { costCentres: await listCostCentres(ctx.tenant_id, true), canManage: can(ctx.role, 'purchasing.manage') });
+      return;
+    }
+    if (p === '/api/cost-centres' && req.method === 'POST') {
+      if (!allow('purchasing.manage')) return;
+      const b = await readJson(req);
+      const code = String(b.code ?? '').trim();
+      if (!code) { send(res, 400, { error: 'A cost centre code is required.' }); return; }
+      const type = ['framework', 'enquiry', 'general'].includes(b.type) ? b.type : 'general';
+      try { const c = await createCostCentre(ctx.tenant_id, { code, label: (b.label ?? '').toString().trim() || null, type, sort: Number(b.sort) || 0 }); send(res, 200, { ok: true, id: c.id }); }
+      catch (err: any) { if (err?.code === '23505') { send(res, 409, { error: 'A cost centre "' + code + '" already exists.' }); return; } send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+    if (p.startsWith('/api/cost-centres/') && p.endsWith('/import-enquiries') && req.method === 'POST') {
+      if (!allow('purchasing.manage')) return;
+      const eqBoard = (await getConfig('eq_board_id')) || '5742141764';
+      const EXCLUDE = new Set(['dead enquiries', 'cancelled jobs', 'archives', 'all subitems', 'holiday', 'complaints']);
+      try {
+        const monday = new Monday();
+        const rowsAll = await monday.listItemNames(eqBoard);
+        const rows: { eq_item_id: string; code: string; label: string }[] = [];
+        let skipped = 0;
+        for (const it of rowsAll) {
+          if (it.group && EXCLUDE.has(it.group.toLowerCase())) continue;
+          const parsed = parseEnquiryCostCentre(it.name);
+          if (!parsed) { skipped++; continue; }
+          rows.push({ eq_item_id: it.id, code: parsed.code, label: parsed.label });
+        }
+        const r = await upsertEnquiryCostCentres(ctx.tenant_id, rows);
+        audit(ctx, 'costcentre.import', 'costcentre', null, `Imported enquiry cost centres: ${r.added} added, ${r.updated} updated`);
+        send(res, 200, { ok: true, scanned: rowsAll.length, matched: rows.length, added: r.added, updated: r.updated, unparsed: skipped });
+      } catch (e: any) { send(res, 500, { error: e?.message ?? String(e) }); }
+      return;
+    }
+    if (p.startsWith('/api/cost-centres/') && req.method === 'PUT') {
+      if (!allow('purchasing.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      const b = await readJson(req);
+      const patch: any = {};
+      if (b.code !== undefined) patch.code = String(b.code).trim();
+      if (b.label !== undefined) patch.label = (b.label ?? '').toString().trim() || null;
+      if (b.type !== undefined && ['framework', 'enquiry', 'general'].includes(b.type)) patch.type = b.type;
+      if (b.active !== undefined) patch.active = !!b.active;
+      if (b.sort !== undefined) patch.sort = Number(b.sort) || 0;
+      try { await updateCostCentre(id, ctx.tenant_id, patch); send(res, 200, { ok: true }); }
+      catch (err: any) { if (err?.code === '23505') { send(res, 409, { error: 'Another cost centre has that code.' }); return; } send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+    if (p.startsWith('/api/cost-centres/') && req.method === 'DELETE') {
+      if (!allow('purchasing.manage')) return;
+      const id = p.split('/')[3] ?? '';
+      await deleteCostCentre(id, ctx.tenant_id);
       send(res, 200, { ok: true });
       return;
     }
@@ -2449,6 +2509,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
         <button id="tabCustAdmin" class="tab" style="display:none" onclick="showTab('custadmin')">Customers</button>
+        <button id="tabCostCentres" class="tab" style="display:none" onclick="showTab('costcentres')">Cost centres</button>
         <button id="tabSync" class="tab" onclick="showTab('sync')">Monday sync</button>
         <button id="tabTests" class="tab" style="display:none" onclick="showTab('tests')">Test</button>
         <button id="tabUsers" class="tab" style="display:none" onclick="showTab('users')">Users</button>
@@ -2708,6 +2769,28 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2"><table><thead><tr>
         <th>FLAT</th><th>ITEMS</th><th>INSTALLED</th><th>SNAGS</th><th>READY</th><th>SIGN-OFF</th><th></th>
       </tr></thead><tbody id="soRows"></tbody></table></div>
+    </main>
+  </div>
+
+  <div id="costcentresView" style="display:none">
+    <main style="max-width:1000px">
+      <div class="titlerow">
+        <div><h2>Cost centres</h2><div class="sub">The list that tags every purchase / PO request. Frameworks and general overheads are added by hand; job cost centres are imported from the Enquiries board (code = the L-number, description = the enquiry name).</div></div>
+        <div style="display:flex;gap:8px;align-self:center">
+          <button class="add" id="importEqBtn" onclick="importEnquiries()">Import from Enquiries</button>
+          <button class="newbtn" id="newCcBtn" onclick="openCostCentre()">+ New cost centre</button>
+        </div>
+      </div>
+      <div class="chips" style="align-items:center;margin-bottom:6px">
+        <select id="ccTypeFilter" class="tinput" onchange="loadCostCentres()">
+          <option value="">All types</option><option value="framework">Framework</option><option value="enquiry">Enquiry / job</option><option value="general">General / overhead</option>
+        </select>
+        <input id="ccSearch" class="tinput" placeholder="Search code or description" oninput="renderCostCentres()" style="min-width:220px">
+        <span id="ccCount" class="itemcount"></span>
+      </div>
+      <div class="card2"><table><thead><tr>
+        <th>CODE</th><th>DESCRIPTION</th><th>TYPE</th><th>STATUS</th><th></th>
+      </tr></thead><tbody id="ccRows"></tbody></table></div>
     </main>
   </div>
 
@@ -3022,7 +3105,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4073,6 +4156,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('invoicesView').style.display=name==='invoices'?'block':'none';
     document.getElementById('signoffView').style.display=name==='signoff'?'block':'none';
     document.getElementById('custadminView').style.display=name==='custadmin'?'block':'none';
+    document.getElementById('costcentresView').style.display=name==='costcentres'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4085,6 +4169,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('tabMapping').classList.toggle('on',name==='mapping');
     document.getElementById('tabTeams').classList.toggle('on',name==='teams');
     var _tca=document.getElementById('tabCustAdmin'); if(_tca)_tca.classList.toggle('on',name==='custadmin');
+    var _tcc=document.getElementById('tabCostCentres'); if(_tcc)_tcc.classList.toggle('on',name==='costcentres');
     document.getElementById('tabSync').classList.toggle('on',name==='sync');
     document.getElementById('tabPlans').classList.toggle('on',name==='plans');
     document.getElementById('tabCal').classList.toggle('on',name==='cal');
@@ -4109,6 +4194,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='invoices')loadInvoices();
     if(name==='signoff')loadSignoff();
     if(name==='custadmin')loadCustAdmin();
+    if(name==='costcentres')loadCostCentres();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4119,8 +4205,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],admin:['tabTeams','tabCustAdmin','tabCostCentres','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'admin',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4254,6 +4340,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabLeads',canCap('jobs.manage'));
     show('tabCustomers',canCap('jobs.manage'));
     show('tabCustAdmin',canCap('customers.manage'));
+    show('tabCostCentres',canCap('purchasing.manage'));
     show('tabBilling',myRole==='admin');
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
@@ -5185,6 +5272,77 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var r=await api('/api/qa-checklist',{method:'PUT',body:JSON.stringify({checklist:checklist})});
     var d=await r.json();
     if(r.ok&&d.ok){closeModal();tShow('Checklist saved');loadSignoffFlats();}else tShow(d.error||'Could not save');
+  }
+
+  // ---- Cost centres (Admin) ----
+  var CC_ALL=[], CC_CANMANAGE=false;
+  async function loadCostCentres(){
+    var d; try{ d=await (await api('/api/cost-centres')).json(); }catch(e){ d={costCentres:[],canManage:false}; }
+    CC_CANMANAGE=!!d.canManage; CC_ALL=d.costCentres||[];
+    var nb=document.getElementById('newCcBtn'); if(nb)nb.style.display=d.canManage?'inline-block':'none';
+    var ib=document.getElementById('importEqBtn'); if(ib)ib.style.display=d.canManage?'inline-block':'none';
+    renderCostCentres();
+  }
+  function renderCostCentres(){
+    var typeLabel={framework:'Framework',enquiry:'Enquiry / job',general:'General / overhead'};
+    var tf=(document.getElementById('ccTypeFilter')||{}).value||'';
+    var q=((document.getElementById('ccSearch')||{}).value||'').trim().toLowerCase();
+    var rows=CC_ALL.filter(function(c){
+      if(tf&&c.type!==tf)return false;
+      if(q&&(String(c.code||'').toLowerCase().indexOf(q)<0)&&(String(c.label||'').toLowerCase().indexOf(q)<0))return false;
+      return true;
+    });
+    var cnt=document.getElementById('ccCount'); if(cnt)cnt.textContent=rows.length+' of '+CC_ALL.length;
+    var tb=document.getElementById('ccRows');
+    tb.innerHTML=rows.length?rows.map(function(c){
+      var act='<a class="codelink" data-act="edit" data-id="'+c.id+'">'+(CC_CANMANAGE?'Edit':'View')+'</a>';
+      if(CC_CANMANAGE)act+=' &nbsp; <a class="codelink" style="color:#c0392b" data-act="del" data-id="'+c.id+'" data-code="'+av(c.code)+'">Delete</a>';
+      return '<tr><td><b class="mono">'+esc(c.code)+'</b></td><td>'+esc(c.label||'')+'</td><td>'+(typeLabel[c.type]||c.type)+'</td>'
+        +'<td>'+(c.active?'<span class="count green">active</span>':'<span class="count">inactive</span>')+'</td>'
+        +'<td style="text-align:right;white-space:nowrap">'+act+'</td></tr>';
+    }).join(''):'<tr><td colspan="5" class="ro">No cost centres match.</td></tr>';
+    Array.prototype.forEach.call(tb.querySelectorAll('a[data-act]'),function(a){
+      a.onclick=function(){ var id=a.getAttribute('data-id'); if(a.getAttribute('data-act')==='edit')openCostCentre(id); else delCostCentre(id,a.getAttribute('data-code')); };
+    });
+  }
+  function openCostCentre(id){
+    var cc={code:'',label:'',type:'general',active:true};
+    if(id){ cc=CC_ALL.filter(function(x){return x.id===id;})[0]||cc; }
+    var ro=!CC_CANMANAGE;
+    var types=[['framework','Framework'],['general','General / overhead'],['enquiry','Enquiry / job']];
+    var typeOpts=types.map(function(t){return '<option value="'+t[0]+'"'+(cc.type===t[0]?' selected':'')+'>'+t[1]+'</option>';}).join('');
+    var html='<div class="fgrid">'
+      +'<div class="field"><label>Code *</label><input id="cc_code" class="tinput" value="'+av(cc.code)+'" placeholder="e.g. L2025 17525 or PCC LAB Phase 1" '+(ro?'disabled':'')+'></div>'
+      +'<div class="field"><label>Type</label><select id="cc_type" class="tinput" '+(ro?'disabled':'')+'>'+typeOpts+'</select></div>'
+      +'<div class="field full"><label>Description</label><input id="cc_label" class="tinput" value="'+av(cc.label||'')+'" placeholder="framework phase or enquiry / job name" '+(ro?'disabled':'')+'></div>'
+      +(id?'<div class="field full"><label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="cc_active" '+(cc.active?'checked':'')+' '+(ro?'disabled':'')+'> Active</label></div>':'')
+      +'</div>';
+    var foot=ro?'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button></div>'
+      :'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="ccSaveBtn">Save</button></div>';
+    openModal(id?('Cost centre '+esc(cc.code)):'New cost centre', html+foot);
+    var sb=document.getElementById('ccSaveBtn'); if(sb)sb.onclick=function(){ saveCostCentre(id||''); };
+  }
+  async function saveCostCentre(id){
+    var body={code:(document.getElementById('cc_code').value||'').trim(),label:document.getElementById('cc_label').value,type:document.getElementById('cc_type').value};
+    var ae=document.getElementById('cc_active'); if(ae)body.active=ae.checked;
+    if(!body.code){tShow('Code required');return;}
+    var r=id?await api('/api/cost-centres/'+id,{method:'PUT',body:JSON.stringify(body)}):await api('/api/cost-centres',{method:'POST',body:JSON.stringify(body)});
+    var d=await r.json();
+    if(r.ok&&d.ok){closeModal();tShow('Saved');loadCostCentres();}else tShow(d.error||'Could not save');
+  }
+  async function delCostCentre(id,code){
+    if(!confirm('Delete cost centre '+code+'?'))return;
+    var r=await api('/api/cost-centres/'+id,{method:'DELETE'}); var d=await r.json();
+    if(r.ok&&d.ok){tShow('Deleted');loadCostCentres();}else tShow(d.error||'Could not delete');
+  }
+  async function importEnquiries(){
+    if(!confirm('Import cost centres from the Enquiries board? Scans all live enquiries and adds/updates job cost centres.'))return;
+    tShow('Importing from Enquiries — this can take a moment…');
+    try{
+      var r=await api('/api/cost-centres/import-enquiries',{method:'POST',body:'{}'}); var d=await r.json();
+      if(r.ok&&d.ok){tShow(d.added+' added · '+d.updated+' updated · '+d.unparsed+' unparsed (of '+d.scanned+' scanned)');loadCostCentres();}
+      else tShow(d.error||'Import failed');
+    }catch(e){tShow('Import failed');}
   }
 
   // ---- Customers (Admin) ----

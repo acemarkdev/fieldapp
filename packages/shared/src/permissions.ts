@@ -27,6 +27,7 @@ export type Capability =
   | 'monday.sync'      // link a board / push items to Monday
   | 'users.manage'     // invite users, set roles, activate/deactivate
   | 'customers.manage' // manage customer cards + contractual requirements (admin)
+  | 'purchasing.manage' // manage cost centres + PO requests (admin)
   | 'finance.view'     // see the budget / customer pricing module (admin, invoice_manager only)
   | 'finance.manage';  // edit pricing rules, assign to jobs, set variations
 
@@ -47,6 +48,7 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'monday.sync', label: 'Sync to Monday', desc: 'Link boards & push items' },
   { key: 'users.manage', label: 'Manage users', desc: 'Invite, set roles, deactivate' },
   { key: 'customers.manage', label: 'Manage customers', desc: 'Customer cards & contractual requirements' },
+  { key: 'purchasing.manage', label: 'Manage purchasing', desc: 'Cost centres & PO requests' },
   { key: 'finance.view', label: 'View finance', desc: 'Budget & customer pricing (admin / invoice manager)' },
   { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
 ];

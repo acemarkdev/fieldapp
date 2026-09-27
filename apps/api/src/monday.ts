@@ -90,6 +90,24 @@ export class Monday {
     return out;
   }
 
+  /** Every item's id, name and group title on a board (paged). Used to derive cost centres
+   *  from the Enquiries board names ("EQ - L2025 17525 - <description>"). */
+  async listItemNames(boardId: string): Promise<{ id: string; name: string; group: string | null }[]> {
+    const out: { id: string; name: string; group: string | null }[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 60; page++) {
+      const d: any = cursor
+        ? await this.gql(`query ($c: String!) { next_items_page(cursor: $c, limit: 250) { cursor items { id name group { title } } } }`, { c: cursor })
+        : await this.gql(`query ($b: [ID!]) { boards(ids: $b) { items_page(limit: 250) { cursor items { id name group { title } } } } }`, { b: [boardId] });
+      const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) out.push({ id: i.id, name: i.name, group: i.group?.title ?? null });
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
   async createItem(boardId: string, name: string, columnValues: Record<string, unknown>): Promise<string> {
     const d = await this.gql<{ create_item: { id: string } }>(
       `mutation ($b: ID!, $n: String!, $cv: JSON!) {

@@ -1005,3 +1005,76 @@ export async function requirementNamesForClientCode(tenantId: string, code: stri
   if (error) throw error;
   return (data ?? []).map((r: any) => r.name);
 }
+
+// ============================================================
+//  Cost Centre register (admin-managed; tags every purchase / PO request)
+// ============================================================
+
+export interface CostCentre {
+  id: string; tenant_id: string; code: string; label: string | null;
+  type: 'framework' | 'enquiry' | 'general'; source: 'manual' | 'eq_import';
+  eq_item_id: string | null; active: boolean; sort: number; created_at: string; updated_at: string;
+}
+
+export async function listCostCentres(tenantId: string, includeInactive = true): Promise<CostCentre[]> {
+  let q = db().from('cost_centres').select('*').eq('tenant_id', tenantId);
+  if (!includeInactive) q = q.eq('active', true);
+  const { data, error } = await q.order('type').order('sort').order('code');
+  if (error) throw error;
+  return (data ?? []) as CostCentre[];
+}
+export async function getCostCentre(id: string, tenantId: string): Promise<CostCentre | null> {
+  const { data, error } = await db().from('cost_centres').select('*').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as CostCentre | null;
+}
+export async function createCostCentre(tenantId: string, c: { code: string; label?: string | null; type?: string; sort?: number }): Promise<CostCentre> {
+  const { data, error } = await db().from('cost_centres')
+    .insert({ tenant_id: tenantId, code: c.code, label: c.label ?? null, type: c.type ?? 'general', source: 'manual', sort: c.sort ?? 0 })
+    .select().single();
+  if (error) throw error;
+  return data as CostCentre;
+}
+export async function updateCostCentre(id: string, tenantId: string, patch: Partial<Pick<CostCentre, 'code' | 'label' | 'type' | 'active' | 'sort'>>): Promise<void> {
+  const { error } = await db().from('cost_centres').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+export async function deleteCostCentre(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('cost_centres').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+// Parse an Enquiries-board item name into a cost centre.
+//   "EQ - L2025 17525 - 70 Trafalgar Street, Brighton, BN1 4EB" -> { code:"L2025 17525", label:"70 Trafalgar Street, …" }
+//   "EQ24 728 - Redwood Place, …"                               -> { code:"EQ24 728", label:"Redwood Place, …" }
+export function parseEnquiryCostCentre(name: string): { code: string; label: string } | null {
+  const raw = String(name ?? '').trim();
+  if (!raw) return null;
+  // Preferred: "EQ - <code> - <description>" where code is an L-number (L2025 17525) or similar.
+  let m = /^EQ\b[^-]*-\s*([A-Za-z]?\d{3,4}\s*\d{2,6})\s*-\s*(.+)$/.exec(raw);
+  if (m) return { code: m[1].replace(/\s+/g, ' ').trim(), label: m[2].trim() };
+  // Fallback: "EQ24 728 - description" (older) -> code is the leading token(s) before the first " - ".
+  m = /^(EQ\S*\s*\d+)\s*-\s*(.+)$/.exec(raw);
+  if (m) return { code: m[1].replace(/\s+/g, ' ').trim(), label: m[2].trim() };
+  return null;
+}
+
+// Upsert a batch of enquiry-derived cost centres (matched by eq_item_id, then code).
+export async function upsertEnquiryCostCentres(tenantId: string, rows: { eq_item_id: string; code: string; label: string }[]): Promise<{ added: number; updated: number }> {
+  let added = 0, updated = 0;
+  const existing = await listCostCentres(tenantId, true);
+  const byEq = new Map(existing.filter((c) => c.eq_item_id).map((c) => [c.eq_item_id as string, c]));
+  const byCode = new Map(existing.map((c) => [c.code, c]));
+  for (const r of rows) {
+    const hit = byEq.get(r.eq_item_id) || byCode.get(r.code);
+    if (hit) {
+      // refresh the label/link; don't touch active/type if an admin changed them
+      const { error } = await db().from('cost_centres').update({ label: r.label, eq_item_id: r.eq_item_id, source: 'eq_import', updated_at: new Date().toISOString() }).eq('id', hit.id).eq('tenant_id', tenantId);
+      if (!error) updated++;
+    } else {
+      const { error } = await db().from('cost_centres').insert({ tenant_id: tenantId, code: r.code, label: r.label, type: 'enquiry', source: 'eq_import', eq_item_id: r.eq_item_id });
+      if (!error) added++;
+    }
+  }
+  return { added, updated };
+}
