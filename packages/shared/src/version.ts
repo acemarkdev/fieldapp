@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.97.0';
+export const APP_VERSION = '0.98.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.98.0', date: '2026-09-27', changes: [
+    'PO requests, rebuilt natively (Purchasing ▸ PO requests). Staff raise a purchase-order request \u2014 title, cost centre (from the register), supplier (approved list or free-text), amount + currency, delivery date/location, qty of items/snags, remake flag, special instructions \u2014 and attach files (quote, PO, order ack, delivery docs). Requests of £2000+ are flagged as needing approval; a purchasing manager approves or rejects, then the request moves through PO sent → supplier confirmed → part/delivered. New Purchasing menu groups PO requests, Suppliers (admin-managed approved list) and Cost centres. New capabilities: purchasing.request (raise, internal staff) and purchasing.manage (approve + manage suppliers/cost centres, admin). Requires migration 0049.',
+  ] },
   { version: '0.97.0', date: '2026-09-27', changes: [
     'Cost centres (Admin \u25b8 Cost centres, admin only) \u2014 foundation for purchasing/PO. One register that tags every purchase: framework phases (seeded from the PO board\u2019s All-Frame-Work list) and general overheads are added by hand, and job cost centres are imported from the Enquiries monday board (code = the L-number parsed from the enquiry name, description = the enquiry name). Type filter + search; import button pulls & refreshes enquiry-derived centres. New purchasing.manage capability (admin). Requires migration 0048. Next: the PO Request board rebuilt natively in the app, tagged by cost centre.',
   ] },

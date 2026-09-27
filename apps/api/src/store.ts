@@ -1078,3 +1078,110 @@ export async function upsertEnquiryCostCentres(tenantId: string, rows: { eq_item
   }
   return { added, updated };
 }
+
+// ============================================================
+//  Purchasing: suppliers + PO requests + PO files
+// ============================================================
+
+export interface Supplier { id: string; tenant_id: string; name: string; contact: string | null; email: string | null; phone: string | null; active: boolean }
+export async function listSuppliers(tenantId: string, includeInactive = true): Promise<Supplier[]> {
+  let q = db().from('suppliers').select('*').eq('tenant_id', tenantId);
+  if (!includeInactive) q = q.eq('active', true);
+  const { data, error } = await q.order('name');
+  if (error) throw error;
+  return (data ?? []) as Supplier[];
+}
+export async function createSupplier(tenantId: string, s: { name: string; contact?: string|null; email?: string|null; phone?: string|null }): Promise<Supplier> {
+  const { data, error } = await db().from('suppliers').insert({ tenant_id: tenantId, name: s.name, contact: s.contact ?? null, email: s.email ?? null, phone: s.phone ?? null }).select().single();
+  if (error) throw error; return data as Supplier;
+}
+export async function updateSupplier(id: string, tenantId: string, patch: Partial<Pick<Supplier,'name'|'contact'|'email'|'phone'|'active'>>): Promise<void> {
+  const { error } = await db().from('suppliers').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+export async function deleteSupplier(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('suppliers').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+
+export interface PoRequestRow { id: string; number: string; title: string; status: string; requestor_name: string|null;
+  cost_centre_id: string|null; supplier_id: string|null; new_supplier: string|null; amount_pennies: number; currency: string;
+  delivery_date: string|null; delivery_location: string|null; site_contact: string|null; remake: boolean; special_instructions: string|null;
+  qty_items: number|null; qty_snags: number|null; approval_required: boolean; approved_by: string|null; approved_at: string|null; po_number: string|null; created_at: string; }
+
+export const PO_APPROVAL_THRESHOLD_PENNIES = 200000; // £2000
+
+export async function listPoRequests(tenantId: string, filter?: { status?: string }): Promise<any[]> {
+  let q = db().from('po_requests')
+    .select('*, cost_centres(code,label), suppliers(name)')
+    .eq('tenant_id', tenantId);
+  if (filter?.status) q = q.eq('status', filter.status);
+  const { data, error } = await q.order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function getPoRequest(id: string, tenantId: string): Promise<any | null> {
+  const { data, error } = await db().from('po_requests').select('*, cost_centres(code,label), suppliers(name,contact,email,phone)').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+  if (error) throw error; return data ?? null;
+}
+export async function nextPoRequestNumber(tenantId: string): Promise<string> {
+  const { data, error } = await db().from('po_requests').select('number').eq('tenant_id', tenantId);
+  if (error) throw error;
+  let max = 0; for (const r of (data ?? []) as any[]) { const m = /(\d+)\s*$/.exec(String(r.number ?? '')); if (m) max = Math.max(max, parseInt(m[1], 10)); }
+  return 'POR-' + String(max + 1).padStart(4, '0');
+}
+export async function createPoRequest(tenantId: string, r: Record<string, any>): Promise<any> {
+  const { data, error } = await db().from('po_requests').insert({ tenant_id: tenantId, ...r }).select().single();
+  if (error) throw error; return data;
+}
+export async function updatePoRequest(id: string, tenantId: string, patch: Record<string, any>): Promise<void> {
+  const { error } = await db().from('po_requests').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+export async function deletePoRequest(id: string, tenantId: string): Promise<void> {
+  const { error } = await db().from('po_requests').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}
+// Spend by cost centre (approved-or-beyond requests), for reporting.
+export async function poSpendByCostCentre(tenantId: string): Promise<Record<string, number>> {
+  const { data, error } = await db().from('po_requests').select('cost_centre_id,amount_pennies,status').eq('tenant_id', tenantId);
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  for (const r of (data ?? []) as any[]) { if (r.status === 'rejected' || r.status === 'cancelled' || r.status === 'in_review') continue; if (!r.cost_centre_id) continue; out[r.cost_centre_id] = (out[r.cost_centre_id] ?? 0) + (r.amount_pennies || 0); }
+  return out;
+}
+
+// ---- PO request files (pofiles bucket) ----
+export const POFILE_BUCKET = 'pofiles';
+export async function ensurePoFileBucket(): Promise<void> {
+  const { data } = await db().storage.getBucket(POFILE_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(POFILE_BUCKET, { public: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+}
+export async function uploadPoFile(path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const { error } = await db().storage.from(POFILE_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+export async function signedPoFileUrl(path: string, seconds = 3600): Promise<string | null> {
+  const { data, error } = await db().storage.from(POFILE_BUCKET).createSignedUrl(path, seconds);
+  if (error) return null; return data?.signedUrl ?? null;
+}
+export async function insertPoFile(row: { tenant_id: string; po_request_id: string; kind: string; name: string; storage_path: string; content_type: string|null; size_bytes: number|null }): Promise<void> {
+  const { error } = await db().from('po_request_files').insert(row);
+  if (error) throw error;
+}
+export async function listPoFiles(poRequestId: string): Promise<any[]> {
+  const { data, error } = await db().from('po_request_files').select('*').eq('po_request_id', poRequestId).order('created_at');
+  if (error) throw error; return data ?? [];
+}
+export async function getPoFile(id: string): Promise<any | null> {
+  const { data, error } = await db().from('po_request_files').select('*').eq('id', id).maybeSingle();
+  if (error) throw error; return data ?? null;
+}
+export async function deletePoFile(id: string, tenantId: string): Promise<void> {
+  const f = await getPoFile(id);
+  if (f) { try { await db().storage.from(POFILE_BUCKET).remove([f.storage_path]); } catch { /* best effort */ } }
+  const { error } = await db().from('po_request_files').delete().eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw error;
+}

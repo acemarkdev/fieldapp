@@ -27,7 +27,8 @@ export type Capability =
   | 'monday.sync'      // link a board / push items to Monday
   | 'users.manage'     // invite users, set roles, activate/deactivate
   | 'customers.manage' // manage customer cards + contractual requirements (admin)
-  | 'purchasing.manage' // manage cost centres + PO requests (admin)
+  | 'purchasing.manage' // manage cost centres, suppliers, approve PO requests (admin)
+  | 'purchasing.request' // raise / edit PO requests (internal staff)
   | 'finance.view'     // see the budget / customer pricing module (admin, invoice_manager only)
   | 'finance.manage';  // edit pricing rules, assign to jobs, set variations
 
@@ -48,7 +49,8 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'monday.sync', label: 'Sync to Monday', desc: 'Link boards & push items' },
   { key: 'users.manage', label: 'Manage users', desc: 'Invite, set roles, deactivate' },
   { key: 'customers.manage', label: 'Manage customers', desc: 'Customer cards & contractual requirements' },
-  { key: 'purchasing.manage', label: 'Manage purchasing', desc: 'Cost centres & PO requests' },
+  { key: 'purchasing.manage', label: 'Manage purchasing', desc: 'Cost centres, suppliers, PO approvals' },
+  { key: 'purchasing.request', label: 'Raise PO requests', desc: 'Create & edit purchase-order requests' },
   { key: 'finance.view', label: 'View finance', desc: 'Budget & customer pricing (admin / invoice manager)' },
   { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
 ];
@@ -56,10 +58,10 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
 export const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: CAPABILITIES.map((c) => c.key), // everything
-  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync'],
-  surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
-  scanner: ['calendar.view', 'items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin'],
-  fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add'],
+  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request'],
+  surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
+  scanner: ['calendar.view', 'items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
+  fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add', 'purchasing.request'],
   // Finance-only role: sees the budget/pricing module, nothing operational.
   invoice_manager: ['calendar.view', 'finance.view', 'finance.manage'],
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
