@@ -36,7 +36,7 @@ import { listCustomerCards, getCustomerCard, getCustomerByCode, createCustomerCa
   listRequirementTypes, createRequirementType, updateRequirementType, deleteRequirementType,
   listCustomerRequirementIds, setCustomerRequirements, requirementNamesForClientCode } from './store';
 import { listCostCentres, getCostCentre, createCostCentre, updateCostCentre, deleteCostCentre, parseEnquiryCostCentre, upsertEnquiryCostCentres } from './store';
-import { listSuppliers, createSupplier, updateSupplier, deleteSupplier, listPoRequests, getPoRequest, nextPoRequestNumber, createPoRequest, updatePoRequest, deletePoRequest, poSpendByCostCentre, PO_APPROVAL_THRESHOLD_PENNIES, ensurePoFileBucket, uploadPoFile, signedPoFileUrl, insertPoFile, listPoFiles, getPoFile, deletePoFile } from './store';
+import { listSuppliers, createSupplier, updateSupplier, deleteSupplier, listPoRequests, getPoRequest, nextPoRequestNumber, createPoRequest, updatePoRequest, deletePoRequest, poSpendByCostCentre, PO_APPROVAL_THRESHOLD_PENNIES, ensurePoFileBucket, uploadPoFile, signedPoFileUrl, insertPoFile, listPoFiles, getPoFile, deletePoFile, upsertSuppliersFromImport } from './store';
 import { rollupFlats, QA_CHECKLIST_DEFAULT } from '@ace/shared';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
@@ -974,6 +974,21 @@ const server = createServer(async (req, res) => {
       if (!name) { send(res, 400, { error: 'Supplier name is required.' }); return; }
       try { const sup = await createSupplier(ctx.tenant_id, { name, contact: (b.contact??'').toString().trim()||null, email: (b.email??'').toString().trim()||null, phone: (b.phone??'').toString().trim()||null }); send(res, 200, { ok: true, id: sup.id }); }
       catch (err: any) { if (err?.code === '23505') { send(res, 409, { error: 'A supplier "' + name + '" already exists.' }); return; } send(res, 500, { error: err?.message ?? String(err) }); }
+      return;
+    }
+    if (p === '/api/suppliers/import-monday' && req.method === 'POST') {
+      if (!allow('purchasing.manage')) return;
+      const boardId = (await getConfig('suppliers_board_id')) || '18428441176';
+      try {
+        const monday = new Monday();
+        const items = await monday.listItemsWithColumnText(boardId, ['long_text_mm6mqary', 'email_mm6mqey8', 'phone_mm6mq61j']);
+        const rows = items.filter((i) => (i.name || '').trim()).map((i) => ({
+          name: i.name, contact: i.cols['long_text_mm6mqary'] || null, email: i.cols['email_mm6mqey8'] || null, phone: i.cols['phone_mm6mq61j'] || null,
+        }));
+        const r = await upsertSuppliersFromImport(ctx.tenant_id, rows);
+        audit(ctx, 'supplier.import', 'supplier', null, `Imported suppliers from monday: ${r.added} added, ${r.updated} updated`);
+        send(res, 200, { ok: true, scanned: items.length, added: r.added, updated: r.updated });
+      } catch (e: any) { send(res, 500, { error: e?.message ?? String(e) }); }
       return;
     }
     if (p.startsWith('/api/suppliers/') && req.method === 'PUT') {
@@ -2958,7 +2973,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:900px">
       <div class="titlerow">
         <div><h2>Suppliers</h2><div class="sub">Approved suppliers to pick from on a PO request.</div></div>
-        <button class="newbtn" id="newSupBtn" style="display:none" onclick="openSupplier()">+ New supplier</button>
+        <div style="display:flex;gap:8px;align-self:center"><button class="add" id="impSupBtn" style="display:none" onclick="importSuppliers()">Import from Monday</button><button class="newbtn" id="newSupBtn" style="display:none" onclick="openSupplier()">+ New supplier</button></div>
       </div>
       <div class="card2" style="margin-top:14px"><table><thead><tr>
         <th>NAME</th><th>CONTACT</th><th>EMAIL</th><th>PHONE</th><th>STATUS</th><th></th>
@@ -5482,6 +5497,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d; try{ d=await (await api('/api/suppliers')).json(); }catch(e){ d={suppliers:[],canManage:false}; }
     SUP_CANMANAGE=!!d.canManage; SUP_ALL=d.suppliers||[];
     var nb=document.getElementById('newSupBtn'); if(nb)nb.style.display=d.canManage?'inline-block':'none';
+    var ib=document.getElementById('impSupBtn'); if(ib)ib.style.display=d.canManage?'inline-block':'none';
     var tb=document.getElementById('supRows');
     tb.innerHTML=SUP_ALL.length?SUP_ALL.map(function(su){
       var act=SUP_CANMANAGE?('<a class="codelink" data-act="edit" data-id="'+su.id+'">Edit</a> &nbsp; <a class="codelink" style="color:#c0392b" data-act="del" data-id="'+su.id+'" data-name="'+av(su.name)+'">Delete</a>'):'';
@@ -5509,6 +5525,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!body.name){tShow('Name required');return;}
     var r=id?await api('/api/suppliers/'+id,{method:'PUT',body:JSON.stringify(body)}):await api('/api/suppliers',{method:'POST',body:JSON.stringify(body)});
     var d=await r.json(); if(r.ok&&d.ok){closeModal();tShow('Saved');loadSuppliers();}else tShow(d.error||'Could not save');
+  }
+  async function importSuppliers(){
+    if(!confirm('Import approved suppliers from the monday board? Adds new ones and refreshes contact/email/phone on existing (matched by name).'))return;
+    tShow('Importing suppliers from monday…');
+    try{ var r=await api('/api/suppliers/import-monday',{method:'POST',body:'{}'}); var d=await r.json();
+      if(r.ok&&d.ok){tShow(d.added+' added · '+d.updated+' updated (of '+d.scanned+' on the board)');loadSuppliers();}else tShow(d.error||'Import failed');
+    }catch(e){tShow('Import failed');}
   }
   async function delSupplier(id,name){ if(!confirm('Delete supplier '+name+'?'))return; var r=await api('/api/suppliers/'+id,{method:'DELETE'}); var d=await r.json(); if(r.ok&&d.ok){tShow('Deleted');loadSuppliers();}else tShow(d.error||'Could not delete'); }
 

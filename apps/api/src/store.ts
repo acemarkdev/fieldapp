@@ -1185,3 +1185,23 @@ export async function deletePoFile(id: string, tenantId: string): Promise<void> 
   const { error } = await db().from('po_request_files').delete().eq('id', id).eq('tenant_id', tenantId);
   if (error) throw error;
 }
+
+// Upsert suppliers imported from monday (matched by name; refreshes contact/email/phone).
+export async function upsertSuppliersFromImport(tenantId: string, rows: { name: string; contact: string|null; email: string|null; phone: string|null }[]): Promise<{ added: number; updated: number }> {
+  let added = 0, updated = 0;
+  const existing = await listSuppliers(tenantId, true);
+  const byName = new Map(existing.map((s) => [s.name.trim().toLowerCase(), s]));
+  for (const r of rows) {
+    const key = r.name.trim().toLowerCase();
+    if (!key) continue;
+    const hit = byName.get(key);
+    if (hit) {
+      const { error } = await db().from('suppliers').update({ contact: r.contact, email: r.email, phone: r.phone, updated_at: new Date().toISOString() }).eq('id', hit.id).eq('tenant_id', tenantId);
+      if (!error) updated++;
+    } else {
+      const { error } = await db().from('suppliers').insert({ tenant_id: tenantId, name: r.name.trim(), contact: r.contact, email: r.email, phone: r.phone });
+      if (!error) added++;
+    }
+  }
+  return { added, updated };
+}

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.98.1';
+export const APP_VERSION = '0.99.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '0.99.0', date: '2026-09-28', changes: [
+    'Suppliers: Import from Monday. On Purchasing \u25b8 Suppliers, admins can pull the Approved Suppliers monday board into the app \u2014 it adds new suppliers and refreshes contact / email / phone on existing ones (matched by name). No migration.',
+  ] },
   { version: '0.98.1', date: '2026-09-28', changes: [
     'PO requests refinements: search box + cost-centre-type filter on the list, and a Copy button that opens a new request pre-filled from an existing one. On the request form: cost-centre-type tick boxes (Framework / Enquiry / General) that narrow the cost-centre dropdown, a Budget file upload above the Quote file, Start and End of service date fields, and a Fitters-team dropdown (active office teams). Requires migration 0050.',
   ] },

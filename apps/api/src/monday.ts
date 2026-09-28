@@ -108,6 +108,24 @@ export class Monday {
     return out;
   }
 
+  /** Every item's id, name and the text of the given columns (paged). Used to import
+   *  the Approved Suppliers board (name + contact/email/phone). */
+  async listItemsWithColumnText(boardId: string, columnIds: string[]): Promise<{ id: string; name: string; cols: Record<string, string | null> }[]> {
+    const out: { id: string; name: string; cols: Record<string, string | null> }[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 40; page++) {
+      const d: any = cursor
+        ? await this.gql(`query ($c: String!, $col: [String!]) { next_items_page(cursor: $c, limit: 200) { cursor items { id name column_values(ids: $col) { id text } } } }`, { c: cursor, col: columnIds })
+        : await this.gql(`query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 200) { cursor items { id name column_values(ids: $col) { id text } } } } }`, { b: [boardId], col: columnIds });
+      const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) { const cols: Record<string, string | null> = {}; for (const cv of (i.column_values ?? [])) cols[cv.id] = cv.text ?? null; out.push({ id: i.id, name: i.name, cols }); }
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
   async createItem(boardId: string, name: string, columnValues: Record<string, unknown>): Promise<string> {
     const d = await this.gql<{ create_item: { id: string } }>(
       `mutation ($b: ID!, $n: String!, $cv: JSON!) {
