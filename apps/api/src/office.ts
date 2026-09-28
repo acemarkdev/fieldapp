@@ -998,6 +998,8 @@ const server = createServer(async (req, res) => {
       const list = rows.map((r: any) => ({
         id: r.id, number: r.number, title: r.title, status: r.status, requestor_name: r.requestor_name,
         cost_centre: r.cost_centres ? (r.cost_centres.code + (r.cost_centres.label ? ' — ' + r.cost_centres.label : '')) : null,
+        cc_type: r.cost_centres ? r.cost_centres.type : null,
+        team: (r.fitter_teams && r.fitter_teams.name) || null,
         supplier: (r.suppliers && r.suppliers.name) || r.new_supplier || null,
         amount_pennies: r.amount_pennies, currency: r.currency, delivery_date: r.delivery_date,
         approval_required: r.approval_required, approved_at: r.approved_at, po_number: r.po_number, created_at: r.created_at,
@@ -1022,6 +1024,7 @@ const server = createServer(async (req, res) => {
           site_contact: (b.site_contact ?? '').toString().trim() || null, remake: !!b.remake, special_instructions: (b.special_instructions ?? '').toString().trim() || null,
           qty_items: b.qty_items != null && b.qty_items !== '' ? Math.round(Number(b.qty_items)) : null,
           qty_snags: b.qty_snags != null && b.qty_snags !== '' ? Math.round(Number(b.qty_snags)) : null,
+          service_start: b.service_start || null, service_end: b.service_end || null, team_id: b.team_id || null,
           approval_required: amount_pennies >= PO_APPROVAL_THRESHOLD_PENNIES, created_by: ctx.name,
         });
         audit(ctx, 'po.create', 'po_request', created.id, `Raised ${number} — ${title} (${(amount_pennies/100).toFixed(2)} ${currency})`);
@@ -1094,6 +1097,9 @@ const server = createServer(async (req, res) => {
       if (b.amount !== undefined) { patch.amount_pennies = Math.round(Number(b.amount) * 100) || 0; patch.approval_required = patch.amount_pennies >= PO_APPROVAL_THRESHOLD_PENNIES; }
       ['delivery_location','site_contact','special_instructions'].forEach((k) => { if (b[k] !== undefined) patch[k] = (b[k] ?? '').toString().trim() || null; });
       if (b.delivery_date !== undefined) patch.delivery_date = b.delivery_date || null;
+      if (b.service_start !== undefined) patch.service_start = b.service_start || null;
+      if (b.service_end !== undefined) patch.service_end = b.service_end || null;
+      if (b.team_id !== undefined) patch.team_id = b.team_id || null;
       if (b.remake !== undefined) patch.remake = !!b.remake;
       if (b.qty_items !== undefined) patch.qty_items = b.qty_items === '' || b.qty_items == null ? null : Math.round(Number(b.qty_items));
       if (b.qty_snags !== undefined) patch.qty_snags = b.qty_snags === '' || b.qty_snags == null ? null : Math.round(Number(b.qty_snags));
@@ -2936,6 +2942,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <select id="poStatusFilter" class="tinput" onchange="loadPoRequests()">
           <option value="">All statuses</option><option value="in_review">In review</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="po_sent">PO sent</option><option value="supplier_confirmed">Supplier confirmed</option><option value="part_delivered">Part delivered</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option>
         </select>
+        <select id="poCcTypeFilter" class="tinput" onchange="renderPoRows()">
+          <option value="">All cost-centre types</option><option value="framework">Framework</option><option value="enquiry">Enquiry / job</option><option value="general">General / overhead</option>
+        </select>
+        <input id="poSearch" class="tinput" placeholder="Search number, title, supplier, cost centre" oninput="renderPoRows()" style="min-width:260px">
+        <span id="poShown" class="itemcount"></span>
       </div>
       <div class="card2"><table><thead><tr>
         <th>NUMBER</th><th>TITLE</th><th>COST CENTRE</th><th>SUPPLIER</th><th>AMOUNT</th><th>REQUESTOR</th><th>STATUS</th><th></th>
@@ -5506,43 +5517,71 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var CUR_SYM={GBP:'£',PLN:'zł',EUR:'€',USD:'$'};
   function poMoney(p,cur){ return (CUR_SYM[cur]||'')+(((p||0)/100).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})); }
   function poBadge(st){ var m=PO_ST[st]||[st,'#6b6880']; return '<span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;background:'+m[1]+'">'+m[0]+'</span>'; }
-  var PO_CANAPPROVE=false;
+  var PO_CANAPPROVE=false, PO_ROWS=[], PO_CCS=[], PO_SUPS=[], PO_TEAMS=[];
+  async function poLoadRefs(){
+    try{ PO_CCS=((await (await api('/api/cost-centres')).json()).costCentres||[]).filter(function(c){return c.active;}); }catch(e){ PO_CCS=[]; }
+    try{ PO_SUPS=((await (await api('/api/suppliers')).json()).suppliers||[]).filter(function(x){return x.active;}); }catch(e){ PO_SUPS=[]; }
+    try{ var td=await (await api('/api/teams')).json(); PO_TEAMS=(td.teams||[]).filter(function(t){return t.active!==false;}); }catch(e){ PO_TEAMS=[]; }
+  }
   async function loadPoRequests(){
     var st=(document.getElementById('poStatusFilter')||{}).value||'';
     var d; try{ d=await (await api('/api/po-requests'+(st?('?status='+encodeURIComponent(st)):''))).json(); }catch(e){ d={requests:[],summary:{}}; }
-    PO_CANAPPROVE=!!d.canApprove;
+    PO_CANAPPROVE=!!d.canApprove; PO_ROWS=d.requests||[];
     var sm=d.summary||{};
     document.getElementById('poSummary').innerHTML=
       '<div class="stat"><div class="v">'+(sm.count||0)+'</div><div class="l">Requests</div></div>'
       +'<div class="stat'+((sm.awaiting||0)?' warn':'')+'"><div class="v">'+(sm.awaiting||0)+'</div><div class="l">In review</div></div>';
-    var tb=document.getElementById('poRows'); var rows=d.requests||[];
+    renderPoRows();
+  }
+  function renderPoRows(){
+    var tf=(document.getElementById('poCcTypeFilter')||{}).value||'';
+    var q=((document.getElementById('poSearch')||{}).value||'').trim().toLowerCase();
+    var rows=PO_ROWS.filter(function(r){
+      if(tf&&r.cc_type!==tf)return false;
+      if(q){ var hay=((r.number||'')+' '+(r.title||'')+' '+(r.supplier||'')+' '+(r.cost_centre||'')).toLowerCase(); if(hay.indexOf(q)<0)return false; }
+      return true;
+    });
+    var sh=document.getElementById('poShown'); if(sh)sh.textContent=rows.length+' of '+PO_ROWS.length;
+    var tb=document.getElementById('poRows');
     tb.innerHTML=rows.length?rows.map(function(r){
-      return '<tr><td><a class="codelink" data-id="'+r.id+'"><b>'+esc(r.number)+'</b></a></td><td>'+esc(r.title)+'</td>'
+      return '<tr><td><a class="codelink" data-act="open" data-id="'+r.id+'"><b>'+esc(r.number)+'</b></a></td><td>'+esc(r.title)+'</td>'
         +'<td>'+esc(r.cost_centre||'—')+'</td><td>'+esc(r.supplier||'—')+'</td>'
         +'<td><b>'+poMoney(r.amount_pennies,r.currency)+'</b>'+(r.approval_required?' <span class="count amber" title="Needs approval">≥£2k</span>':'')+'</td>'
         +'<td>'+esc(r.requestor_name||'')+'</td><td>'+poBadge(r.status)+'</td>'
-        +'<td style="text-align:right"><a class="codelink" data-id="'+r.id+'">Open</a></td></tr>';
-    }).join(''):'<tr><td colspan="8" class="ro">No PO requests yet.</td></tr>';
-    Array.prototype.forEach.call(tb.querySelectorAll('a[data-id]'),function(a){ a.onclick=function(){ openPoReq(a.getAttribute('data-id')); }; });
+        +'<td style="text-align:right;white-space:nowrap"><a class="codelink" data-act="open" data-id="'+r.id+'">Open</a> &nbsp; <a class="codelink" data-act="copy" data-id="'+r.id+'">Copy</a></td></tr>';
+    }).join(''):'<tr><td colspan="8" class="ro">No PO requests match.</td></tr>';
+    Array.prototype.forEach.call(tb.querySelectorAll('a[data-act]'),function(a){ a.onclick=function(){ var id=a.getAttribute('data-id'); if(a.getAttribute('data-act')==='copy')copyPoReq(id); else openPoReq(id); }; });
   }
   function readFilesAsDataUrls(inputEl){
     return new Promise(function(resolve){ var fs=inputEl&&inputEl.files?inputEl.files:[]; if(!fs.length){resolve([]);return;} var out=[],n=0; for(var i=0;i<fs.length;i++){ (function(file){ var rd=new FileReader(); rd.onload=function(){ out.push({name:file.name,dataUrl:rd.result}); if(++n===fs.length)resolve(out); }; rd.onerror=function(){ if(++n===fs.length)resolve(out); }; rd.readAsDataURL(file); })(fs[i]); } });
   }
-  async function poFieldsHtml(d){
+  function poCcOptions(sel){
+    var types=[]; ['framework','enquiry','general'].forEach(function(t){ var cb=document.getElementById('cc_t_'+t); if(!cb||cb.checked)types.push(t); });
+    var list=PO_CCS.filter(function(c){return types.indexOf(c.type)>=0;});
+    return '<option value="">— pick cost centre —</option>'+list.map(function(c){return '<option value="'+c.id+'"'+(sel===c.id?' selected':'')+'>'+esc(c.code+(c.label?(' — '+c.label):''))+'</option>';}).join('');
+  }
+  function poFilterCC(){ var cc=document.getElementById('po_cc'); if(cc)cc.innerHTML=poCcOptions(cc.value); }
+  function poFieldsHtml(d){
     d=d||{};
-    var cc=[]; try{ cc=((await (await api('/api/cost-centres')).json()).costCentres||[]).filter(function(c){return c.active;}); }catch(e){}
-    var sup=[]; try{ sup=((await (await api('/api/suppliers')).json()).suppliers||[]).filter(function(x){return x.active;}); }catch(e){}
-    var ccOpts='<option value="">— pick cost centre —</option>'+cc.map(function(c){return '<option value="'+c.id+'"'+(d.cost_centre_id===c.id?' selected':'')+'>'+esc(c.code+(c.label?(' — '+c.label):''))+'</option>';}).join('');
-    var supOpts='<option value="">— pick supplier —</option>'+sup.map(function(x){return '<option value="'+x.id+'"'+(d.supplier_id===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');
+    var supOpts='<option value="">— pick supplier —</option>'+PO_SUPS.map(function(x){return '<option value="'+x.id+'"'+(d.supplier_id===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');
+    var teamOpts='<option value="">— no team —</option>'+PO_TEAMS.map(function(t){return '<option value="'+t.id+'"'+(d.team_id===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
     var curOpts=['GBP','PLN','EUR','USD'].map(function(c){return '<option'+((d.currency||'GBP')===c?' selected':'')+'>'+c+'</option>';}).join('');
+    var ccInit='<option value="">— pick cost centre —</option>'+PO_CCS.map(function(c){return '<option value="'+c.id+'"'+(d.cost_centre_id===c.id?' selected':'')+'>'+esc(c.code+(c.label?(' — '+c.label):''))+'</option>';}).join('');
     return '<div class="fgrid">'
       +'<div class="field full"><label>Title / description *</label><input id="po_title" class="tinput" value="'+av(d.title||'')+'" placeholder="What is being ordered"></div>'
-      +'<div class="field full"><label>Cost centre</label><select id="po_cc" class="tinput">'+ccOpts+'</select></div>'
+      +'<div class="field full"><label>Cost-centre type</label><div style="display:flex;gap:16px;font-size:13px;font-weight:500">'
+        +'<label style="display:inline-flex;align-items:center;gap:5px"><input type="checkbox" id="cc_t_framework" checked onchange="poFilterCC()"> Framework</label>'
+        +'<label style="display:inline-flex;align-items:center;gap:5px"><input type="checkbox" id="cc_t_enquiry" checked onchange="poFilterCC()"> Enquiry / job</label>'
+        +'<label style="display:inline-flex;align-items:center;gap:5px"><input type="checkbox" id="cc_t_general" checked onchange="poFilterCC()"> General</label></div></div>'
+      +'<div class="field full"><label>Cost centre</label><select id="po_cc" class="tinput">'+ccInit+'</select></div>'
       +'<div class="field"><label>Supplier</label><select id="po_sup" class="tinput">'+supOpts+'</select></div>'
       +'<div class="field"><label>…or new supplier</label><input id="po_newsup" class="tinput" value="'+av(d.new_supplier||'')+'" placeholder="if not on the list"></div>'
       +'<div class="field"><label>Amount</label><input id="po_amount" class="tinput" type="number" min="0" step="0.01" value="'+(d.amount_pennies!=null?(d.amount_pennies/100):'')+'"></div>'
       +'<div class="field"><label>Currency</label><select id="po_cur" class="tinput">'+curOpts+'</select></div>'
+      +'<div class="field"><label>Fitters team</label><select id="po_team" class="tinput">'+teamOpts+'</select></div>'
       +'<div class="field"><label>Delivery date</label><input id="po_deldate" class="tinput" type="date" value="'+(d.delivery_date||'')+'"></div>'
+      +'<div class="field"><label>Service start</label><input id="po_svcstart" class="tinput" type="date" value="'+(d.service_start||'')+'"></div>'
+      +'<div class="field"><label>Service end</label><input id="po_svcend" class="tinput" type="date" value="'+(d.service_end||'')+'"></div>'
       +'<div class="field"><label>Site contact</label><input id="po_sitecontact" class="tinput" value="'+av(d.site_contact||'')+'"></div>'
       +'<div class="field full"><label>Delivery location</label><input id="po_delloc" class="tinput" value="'+av(d.delivery_location||'')+'"></div>'
       +'<div class="field"><label>Qty of items</label><input id="po_qty" class="tinput" type="number" min="0" step="1" value="'+(d.qty_items!=null?d.qty_items:'')+'"></div>'
@@ -5555,38 +5594,47 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     return {title:(document.getElementById('po_title').value||'').trim(),cost_centre_id:document.getElementById('po_cc').value||null,
       supplier_id:document.getElementById('po_sup').value||null,new_supplier:document.getElementById('po_newsup').value,
       amount:document.getElementById('po_amount').value||0,currency:document.getElementById('po_cur').value,
-      delivery_date:document.getElementById('po_deldate').value||null,site_contact:document.getElementById('po_sitecontact').value,
-      delivery_location:document.getElementById('po_delloc').value,qty_items:document.getElementById('po_qty').value,
-      qty_snags:document.getElementById('po_snags').value,remake:document.getElementById('po_remake').checked,
-      special_instructions:document.getElementById('po_special').value};
+      team_id:document.getElementById('po_team').value||null,
+      delivery_date:document.getElementById('po_deldate').value||null,service_start:document.getElementById('po_svcstart').value||null,service_end:document.getElementById('po_svcend').value||null,
+      site_contact:document.getElementById('po_sitecontact').value,delivery_location:document.getElementById('po_delloc').value,
+      qty_items:document.getElementById('po_qty').value,qty_snags:document.getElementById('po_snags').value,
+      remake:document.getElementById('po_remake').checked,special_instructions:document.getElementById('po_special').value};
   }
-  async function openNewPoReq(){
-    var fields=await poFieldsHtml({});
-    var html=fields
+  async function openNewPoReq(prefill){
+    await poLoadRefs();
+    var html=poFieldsHtml(prefill||{})
+      +'<div class="field full" style="padding:0 2px"><label>Budget file (optional)</label><input id="po_budget" type="file" multiple accept="image/*,.pdf,.xlsx,.xls,application/pdf"></div>'
       +'<div class="field full" style="padding:0 2px"><label>Quote file (optional)</label><input id="po_quote" type="file" multiple accept="image/*,.pdf,.xlsx,.xls,application/pdf"></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="poSave">Create request</button></div>';
-    openModal('New PO request', html);
+    openModal(prefill?'New PO request (copy)':'New PO request', html);
     document.getElementById('poSave').onclick=async function(){
       var body=poBody(); if(!body.title){tShow('Title required');return;}
       var r=await api('/api/po-requests',{method:'POST',body:JSON.stringify(body)}); var d=await r.json();
       if(!(r.ok&&d.ok)){ tShow(d.error||'Could not create'); return; }
-      var files=await readFilesAsDataUrls(document.getElementById('po_quote'));
-      if(files.length){ files=files.map(function(fl){fl.kind='quote';return fl;}); await api('/api/po-requests/'+d.id+'/files',{method:'POST',body:JSON.stringify({files:files})}); }
+      var bud=(await readFilesAsDataUrls(document.getElementById('po_budget'))).map(function(fl){fl.kind='budget';return fl;});
+      var quo=(await readFilesAsDataUrls(document.getElementById('po_quote'))).map(function(fl){fl.kind='quote';return fl;});
+      var files=bud.concat(quo);
+      if(files.length){ await api('/api/po-requests/'+d.id+'/files',{method:'POST',body:JSON.stringify({files:files})}); }
       closeModal(); tShow('Request '+d.number+' created'+(d.approval_required?' · needs approval (≥£2k)':'')); loadPoRequests();
     };
+  }
+  async function copyPoReq(id){
+    var d; try{ d=await (await api('/api/po-requests/'+id)).json(); }catch(e){ tShow('Could not load'); return; }
+    if(d.error){tShow(d.error);return;} var r=d.request;
+    openNewPoReq({title:(r.title||'')+' (copy)',cost_centre_id:r.cost_centre_id,supplier_id:r.supplier_id,new_supplier:r.new_supplier,amount_pennies:r.amount_pennies,currency:r.currency,team_id:r.team_id,delivery_date:r.delivery_date,service_start:r.service_start,service_end:r.service_end,site_contact:r.site_contact,delivery_location:r.delivery_location,qty_items:r.qty_items,qty_snags:r.qty_snags,remake:r.remake,special_instructions:r.special_instructions});
   }
   async function openPoReq(id){
     var d; try{ d=await (await api('/api/po-requests/'+id)).json(); }catch(e){ tShow('Could not load'); return; }
     if(d.error){tShow(d.error);return;}
-    var r=d.request;
-    var fields=await poFieldsHtml(r);
+    var r=d.request; await poLoadRefs();
+    var fields=poFieldsHtml(r);
     var filesHtml=(d.files||[]).map(function(fl){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0"><a class="mlink" href="'+(fl.url||'#')+'" target="_blank">'+esc(fl.name)+'</a><span class="ro" style="font-size:11px">'+esc(fl.kind)+'</span></div>'; }).join('')||'<div class="ro">No files.</div>';
     var head='<div class="sub" style="margin-bottom:8px">'+poBadge(r.status)+'  ·  requested by '+esc(r.requestor_name||'—')+(r.approval_required?'  ·  <b>needs approval (≥£2k)</b>':'')+(r.approved_at?('  ·  approved '+esc(new Date(r.approved_at).toLocaleDateString("en-GB"))):'')+'</div>';
     var statusCtl='<div class="groupt">STATUS</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 2px 12px">';
     if(r.status==='in_review'&&d.canApprove){ statusCtl+='<button class="save" id="poApprove" style="background:#16a34a">Approve</button><button class="cancel" id="poReject" style="color:#c0392b;border-color:#f0c2bb">Reject</button>'; }
     statusCtl+='<select id="po_setstatus" class="tinput"><option value="">Set status…</option><option value="po_sent">PO sent</option><option value="supplier_confirmed">Supplier confirmed</option><option value="part_delivered">Part delivered</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option></select><button class="cancel" id="poSetBtn">Apply</button></div>';
     var addFiles='<div class="groupt">DOCUMENTS</div><div style="padding:4px 2px">'+filesHtml
-      +'<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><select id="po_filekind" class="tinput"><option value="quote">Quote</option><option value="po">PO</option><option value="order_ack">Order ack</option><option value="delivery">Delivery</option><option value="budget">Budget</option><option value="other">Other</option></select><input id="po_addfile" type="file" multiple><button class="cancel" id="poAddFileBtn">Upload</button></div></div>';
+      +'<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><select id="po_filekind" class="tinput"><option value="quote">Quote</option><option value="budget">Budget</option><option value="po">PO</option><option value="order_ack">Order ack</option><option value="delivery">Delivery</option><option value="other">Other</option></select><input id="po_addfile" type="file" multiple><button class="cancel" id="poAddFileBtn">Upload</button></div></div>';
     openModal('PO request '+esc(r.number), head+fields+addFiles+statusCtl
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button><button class="save" id="poSaveEdit">Save changes</button></div>');
     document.getElementById('poSaveEdit').onclick=async function(){ var r2=await api('/api/po-requests/'+id,{method:'PUT',body:JSON.stringify(poBody())}); var dd=await r2.json(); if(r2.ok&&dd.ok){tShow('Saved');loadPoRequests();}else tShow(dd.error||'Failed'); };

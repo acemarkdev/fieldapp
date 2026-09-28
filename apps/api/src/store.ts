@@ -1113,7 +1113,7 @@ export const PO_APPROVAL_THRESHOLD_PENNIES = 200000; // £2000
 
 export async function listPoRequests(tenantId: string, filter?: { status?: string }): Promise<any[]> {
   let q = db().from('po_requests')
-    .select('*, cost_centres(code,label), suppliers(name)')
+    .select('*, cost_centres(code,label,type), suppliers(name), fitter_teams(name)')
     .eq('tenant_id', tenantId);
   if (filter?.status) q = q.eq('status', filter.status);
   const { data, error } = await q.order('created_at', { ascending: false });
@@ -1121,7 +1121,7 @@ export async function listPoRequests(tenantId: string, filter?: { status?: strin
   return data ?? [];
 }
 export async function getPoRequest(id: string, tenantId: string): Promise<any | null> {
-  const { data, error } = await db().from('po_requests').select('*, cost_centres(code,label), suppliers(name,contact,email,phone)').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
+  const { data, error } = await db().from('po_requests').select('*, cost_centres(code,label,type), suppliers(name,contact,email,phone), fitter_teams(name)').eq('id', id).eq('tenant_id', tenantId).maybeSingle();
   if (error) throw error; return data ?? null;
 }
 export async function nextPoRequestNumber(tenantId: string): Promise<string> {
