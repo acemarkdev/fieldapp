@@ -71,10 +71,11 @@ export async function notifyPoSubmitted(req: any, approverEmails: string[], cost
 }
 
 // A PO request was approved/rejected → tell the requestor.
-export async function notifyPoDecision(req: any, decision: 'approved' | 'rejected', decidedBy: string | null, requestorEmail: string | null): Promise<void> {
+export async function notifyPoDecision(req: any, decision: 'approved' | 'rejected', decidedBy: string | null, requestorEmail: string | null, comment: string | null = null): Promise<void> {
   const link = poLink(await baseUrl(), req.id);
   const word = decision === 'approved' ? 'APPROVED' : 'REJECTED';
   const lines = [`Number: ${req.number}`, `Title: ${req.title}`, `Amount: ${money(req.amount_pennies, req.currency)}`, `Decision: ${word}`, `By: ${decidedBy || '—'}`];
+  if (comment) lines.push(`${decision === 'rejected' ? 'Reason' : 'Comment'}: ${comment}`);
   await Promise.all([
     sendTeams(`PO ${req.number} ${word}`, lines, link),
     requestorEmail ? sendEmail([requestorEmail], `Your PO request ${req.number} was ${decision}`,

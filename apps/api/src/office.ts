@@ -1090,13 +1090,16 @@ const server = createServer(async (req, res) => {
       const APPROVE = ['approved', 'rejected'];
       if (!['in_review','approved','rejected','po_sent','supplier_confirmed','part_delivered','delivered','cancelled'].includes(status)) { send(res, 400, { error: 'Unknown status.' }); return; }
       if (APPROVE.includes(status) && !can(ctx.role, 'purchasing.manage')) { send(res, 403, { error: 'Only a purchasing manager can approve or reject.' }); return; }
+      const comment = String(b.comment ?? '').trim().slice(0, 2000);
+      if (status === 'rejected' && !comment) { send(res, 400, { error: 'A comment is required to reject a request.' }); return; }
       const patch: any = { status };
       if (status === 'approved') { patch.approved_by = ctx.id; patch.approved_at = new Date().toISOString(); }
+      if (APPROVE.includes(status)) { patch.decided_by_name = ctx.name; patch.decided_at = new Date().toISOString(); patch.decision_comment = comment || null; }
       if (status === 'po_sent' && b.po_number !== undefined) patch.po_number = (b.po_number ?? '').toString().trim() || null;
       await updatePoRequest(id, ctx.tenant_id, patch);
-      audit(ctx, 'po.status', 'po_request', id, `${cur.number} → ${status}`);
+      audit(ctx, 'po.status', 'po_request', id, `${cur.number} → ${status}` + (comment && APPROVE.includes(status) ? ` — ${comment}` : ''));
       if ((status === 'approved' || status === 'rejected') && cur.status !== status) {
-        (async () => { try { const email = await getAppUserEmail(cur.requestor_id); await notifyPoDecision(cur, status as any, ctx.name, email); } catch (e) { console.error('PO decision notify failed', e); } })();
+        (async () => { try { const email = await getAppUserEmail(cur.requestor_id); await notifyPoDecision(cur, status as any, ctx.name, email, comment || null); } catch (e) { console.error('PO decision notify failed', e); } })();
       }
       send(res, 200, { ok: true });
       return;
@@ -2594,6 +2597,36 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .mfpop input[type=checkbox]{width:14px;height:14px;accent-color:var(--magenta);flex:0 0 auto}
   .mfclear{font-size:11px;font-weight:700;color:var(--magenta);cursor:pointer;padding:5px 7px;border-top:1px solid var(--line);margin-top:4px}
   .mfclear:hover{text-decoration:underline}
+  .pohead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:16px 22px 0;font-size:13px;color:var(--muted)}
+  .pohead b{color:var(--ink)}
+  .podecide{margin:14px 22px 0;padding:12px 14px;border-radius:12px;border:1px solid #f5d9a8;background:#fff8eb;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .podecide .msg{flex:1;min-width:200px;font-size:13px;color:var(--ink)}
+  .podecide .msg small{display:block;color:var(--muted);font-size:12px;margin-top:2px;white-space:pre-wrap}
+  .podecide.ok{border-color:#bfe6cb;background:#effaf2}
+  .podecide.bad{border-color:#f0c2bb;background:#fdf0ee}
+  .pobtn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:10px;padding:9px 16px;font-weight:700;font-size:13px;font-family:inherit;cursor:pointer;line-height:1.2}
+  .pobtn:hover{border-color:#cfcbe0}
+  .pobtn.ok{background:#16a34a;border-color:#16a34a;color:#fff}
+  .pobtn.bad{color:#c0392b;border-color:#f0c2bb}
+  .pobtn.bad.solid{background:#c0392b;border-color:#c0392b;color:#fff}
+  .pobtn:disabled{opacity:.45;cursor:not-allowed}
+  .posec{padding:2px 22px 16px}
+  .posec .groupt{margin:4px 0 8px}
+  .pofiles{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .pofile{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid #f2f0f8;font-size:13px}
+  .pofile:first-child{border-top:none}
+  .pofiles .empty{padding:12px;color:var(--muted);font-size:13px}
+  .pokind{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:#f4f3f9;border-radius:6px;padding:3px 7px}
+  .porow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .porow .tinput{padding:8px 10px}
+  .pofname{font-size:12px;color:var(--muted);flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pomini{position:fixed;inset:0;background:rgba(31,26,61,.35);display:grid;place-items:center;z-index:30;padding:20px}
+  .pomini .box{background:#fff;border-radius:16px;width:min(440px,100%);box-shadow:0 20px 50px rgba(31,26,61,.25);overflow:hidden}
+  .pomini h4{margin:0;padding:16px 20px 4px;font-size:16px;color:var(--ink)}
+  .pomini p{margin:0;padding:0 20px 10px;font-size:13px;color:var(--muted)}
+  .pomini textarea{display:block;width:calc(100% - 40px);margin:0 20px;min-height:96px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical}
+  .pomini textarea:focus{outline:none;border-color:#c0392b}
+  .pomini .btns{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px 18px}
   .tabbadge{display:inline-block;min-width:16px;padding:0 5px;height:16px;line-height:16px;border-radius:8px;background:var(--magenta);color:#fff;font-size:10px;font-weight:800;text-align:center}
   td{padding:9px 12px;border-top:1px solid #f2f0f8;vertical-align:middle}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -5703,19 +5736,54 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var r=d.request; await poLoadRefs();
     var fields=poFieldsHtml(r);
     var filesHtml=(d.files||[]).map(function(fl){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0"><a class="mlink" href="'+(fl.url||'#')+'" target="_blank">'+esc(fl.name)+'</a><span class="ro" style="font-size:11px">'+esc(fl.kind)+'</span></div>'; }).join('')||'<div class="ro">No files.</div>';
-    var head='<div class="sub" style="margin-bottom:8px">'+poBadge(r.status)+'  ·  requested by '+esc(r.requestor_name||'—')+(r.approval_required?'  ·  <b>needs approval (≥£2k)</b>':'')+(r.approved_at?('  ·  approved '+esc(new Date(r.approved_at).toLocaleDateString("en-GB"))):'')+'</div>';
-    var statusCtl='<div class="groupt">STATUS</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 2px 12px">';
-    if(r.status==='in_review'&&d.canApprove){ statusCtl+='<button class="save" id="poApprove" style="background:#16a34a">Approve</button><button class="cancel" id="poReject" style="color:#c0392b;border-color:#f0c2bb">Reject</button>'; }
-    statusCtl+='<select id="po_setstatus" class="tinput"><option value="">Set status…</option><option value="po_sent">PO sent</option><option value="supplier_confirmed">Supplier confirmed</option><option value="part_delivered">Part delivered</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option></select><button class="cancel" id="poSetBtn">Apply</button></div>';
-    var addFiles='<div class="groupt">DOCUMENTS</div><div style="padding:4px 2px">'+filesHtml
-      +'<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><select id="po_filekind" class="tinput"><option value="quote">Quote</option><option value="budget">Budget</option><option value="po">PO</option><option value="order_ack">Order ack</option><option value="delivery">Delivery</option><option value="other">Other</option></select><input id="po_addfile" type="file" multiple><button class="cancel" id="poAddFileBtn">Upload</button></div></div>';
-    openModal('PO request '+esc(r.number), head+fields+addFiles+statusCtl
+    var money=(r.currency==='GBP'?'£':(r.currency||'')+' ')+((r.amount_pennies||0)/100).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+    var when=function(t){ return t?new Date(t).toLocaleDateString('en-GB'):''; };
+    var head='<div class="pohead">'+poBadge(r.status)+'<span>·</span><b>'+esc(money)+'</b><span>·</span><span>requested by <b>'+esc(r.requestor_name||'—')+'</b></span>'+(r.po_number?'<span>·</span><span>PO <b>'+esc(r.po_number)+'</b></span>':'')+'</div>';
+    var decide='';
+    if(r.status==='in_review'){
+      var why=r.approval_required?'This request is £2,000 or more and needs a purchasing manager\u2019s approval.':'Under £2,000 \u2014 approval is optional.';
+      decide='<div class="podecide"><div class="msg"><b>Awaiting approval</b><small>'+why+'</small></div>'
+        +(d.canApprove?'<button class="pobtn bad" id="poReject">Reject</button><button class="pobtn ok" id="poApprove">Approve</button>':'')+'</div>';
+    } else if(r.status==='rejected'){
+      decide='<div class="podecide bad"><div class="msg"><b>Rejected</b>'+(r.decided_by_name?' by '+esc(r.decided_by_name):'')+(r.decided_at?' on '+esc(when(r.decided_at)):'')
+        +(r.decision_comment?'<small>\u201c'+esc(r.decision_comment)+'\u201d</small>':'')+'</div></div>';
+    } else if(r.approved_at){
+      decide='<div class="podecide ok"><div class="msg"><b>Approved</b>'+(r.decided_by_name?' by '+esc(r.decided_by_name):'')+' on '+esc(when(r.approved_at))
+        +(r.decision_comment?'<small>'+esc(r.decision_comment)+'</small>':'')+'</div></div>';
+    }
+    var filesHtml=(d.files||[]).map(function(fl){ return '<div class="pofile"><a class="mlink" href="'+(fl.url||'#')+'" target="_blank">'+esc(fl.name)+'</a><span class="pokind">'+esc(fl.kind)+'</span></div>'; }).join('')||'<div class="empty">No documents yet.</div>';
+    var addFiles='<div class="posec"><div class="groupt">DOCUMENTS</div><div class="pofiles">'+filesHtml+'</div>'
+      +'<div class="porow"><select id="po_filekind" class="tinput"><option value="quote">Quote</option><option value="budget">Budget</option><option value="po">PO</option><option value="order_ack">Order ack</option><option value="delivery">Delivery</option><option value="other">Other</option></select>'
+      +'<label class="pobtn" for="po_addfile">Choose files\u2026</label><input id="po_addfile" type="file" multiple style="display:none"><span class="pofname" id="po_fname">No file chosen</span>'
+      +'<button class="pobtn" id="poAddFileBtn">Upload</button></div></div>';
+    var progress='<div class="posec"><div class="groupt">PROGRESS</div><div class="porow" style="margin-top:0">'
+      +'<select id="po_setstatus" class="tinput"><option value="">Move to\u2026</option><option value="po_sent">PO sent</option><option value="supplier_confirmed">Supplier confirmed</option><option value="part_delivered">Part delivered</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option></select>'
+      +'<button class="pobtn" id="poSetBtn">Update status</button></div></div>';
+    openModal('PO request '+esc(r.number), head+decide+fields+addFiles+progress
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button><button class="save" id="poSaveEdit">Save changes</button></div>');
+    var fin=document.getElementById('po_addfile'); fin.onchange=function(){ var n=fin.files.length; document.getElementById('po_fname').textContent=n?(n===1?fin.files[0].name:n+' files selected'):'No file chosen'; };
     document.getElementById('poSaveEdit').onclick=async function(){ var r2=await api('/api/po-requests/'+id,{method:'PUT',body:JSON.stringify(poBody())}); var dd=await r2.json(); if(r2.ok&&dd.ok){tShow('Saved');loadPoRequests();}else tShow(dd.error||'Failed'); };
     var ap=document.getElementById('poApprove'); if(ap)ap.onclick=function(){ poSetStatus(id,'approved'); };
-    var rj=document.getElementById('poReject'); if(rj)rj.onclick=function(){ if(confirm('Reject this request?'))poSetStatus(id,'rejected'); };
+    var rj=document.getElementById('poReject'); if(rj)rj.onclick=function(){ poRejectPrompt(id, r.number); };
     document.getElementById('poSetBtn').onclick=function(){ var v=document.getElementById('po_setstatus').value; if(!v)return; var extra={}; if(v==='po_sent'){ var pon=prompt('PO number (from Xero, optional):',''); if(pon)extra.po_number=pon; } poSetStatus(id,v,extra); };
     document.getElementById('poAddFileBtn').onclick=async function(){ var files=await readFilesAsDataUrls(document.getElementById('po_addfile')); if(!files.length){tShow('Pick a file');return;} var kind=document.getElementById('po_filekind').value; files=files.map(function(fl){fl.kind=kind;return fl;}); var rr=await api('/api/po-requests/'+id+'/files',{method:'POST',body:JSON.stringify({files:files})}); var dd=await rr.json(); if(rr.ok&&dd.ok){tShow(dd.saved+' file(s) added');openPoReq(id);}else tShow(dd.error||'Upload failed'); };
+  }
+  // Reject needs a reason: small dialog over the PO modal; the Reject button stays disabled until a comment is typed.
+  function poRejectPrompt(id, number){
+    var w=document.createElement('div'); w.className='pomini';
+    w.innerHTML='<div class="box"><h4>Reject '+esc(number||'request')+'?</h4><p>Tell the requestor why. This comment is required and is sent to them.</p>'
+      +'<textarea id="po_rejmsg" placeholder="Reason for rejecting\u2026"></textarea>'
+      +'<div class="btns"><button class="pobtn" id="po_rejcancel">Cancel</button><button class="pobtn bad solid" id="po_rejgo" disabled>Reject request</button></div></div>';
+    document.body.appendChild(w);
+    var ta=w.querySelector('#po_rejmsg'), go=w.querySelector('#po_rejgo');
+    var close=function(){ w.remove(); document.removeEventListener('keydown',onKey); };
+    var onKey=function(e){ if(e.key==='Escape')close(); };
+    document.addEventListener('keydown',onKey);
+    w.addEventListener('click',function(e){ if(e.target===w)close(); });
+    w.querySelector('#po_rejcancel').onclick=close;
+    ta.oninput=function(){ go.disabled=!ta.value.trim(); };
+    go.onclick=async function(){ var c=ta.value.trim(); if(!c){ ta.focus(); return; } go.disabled=true; var ok=await poSetStatus(id,'rejected',{comment:c}); if(ok)close(); else go.disabled=false; };
+    ta.focus();
   }
   function poShowAwaiting(){ var sf=document.getElementById('poStatusFilter'); if(sf){sf.value='in_review';} loadPoRequests(); }
   async function refreshPoApprovalsBadge(){
@@ -5741,7 +5809,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function poSetStatus(id,status,extra){
     var body=Object.assign({status:status},extra||{});
     var r=await api('/api/po-requests/'+id+'/status',{method:'POST',body:JSON.stringify(body)}); var d=await r.json();
-    if(r.ok&&d.ok){closeModal();tShow('Updated');loadPoRequests();}else tShow(d.error||'Failed');
+    if(r.ok&&d.ok){closeModal();tShow('Updated');loadPoRequests();return true;}
+    tShow(d.error||'Failed'); return false;
   }
 
   // ---- Cost centres (Admin) ----

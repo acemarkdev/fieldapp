@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.0.2';
+export const APP_VERSION = '1.0.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.0.3', date: '2026-09-30', changes: [
+    'PO request window redesigned. Approve / Reject now sit at the top in an \u201cAwaiting approval\u201d banner; once decided, the banner shows who approved or rejected it, when, and the comment. Documents are a tidy list with a styled Choose files / Upload row, and status changes live in a Progress section. Rejecting now opens a dialog that requires a comment \u2014 the Reject button stays disabled until one is typed, and the server refuses a rejection without it. The reason is saved on the request, written to the audit log, and included in the requestor\u2019s email / Teams notification. Requires migration 0051_po_decision_comment.sql.',
+  ] },
   { version: '1.0.2', date: '2026-09-30', changes: [
     'PO notifications link straight to the PO. \u201cOpen in ACE Office\u201d (Teams card and email) now opens that PO request\u2019s detail, not just the app \u2014 also after signing in first (password or Microsoft SSO). Links look like /?po=<id>. No migration.',
   ] },
