@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.1.1';
+export const APP_VERSION = '1.1.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.1.2', date: '2026-09-30', changes: [
+    'New-password / new-login window: separate Copy buttons for the email and the password (the old single Copy put \u201cemail  password\u201d on the clipboard, so pasting it into the password box failed). \u201cCopy both (for sharing)\u201d copies them on two labelled lines. Also, a password reset no longer signs that user out of their other sessions. No migration.',
+  ] },
   { version: '1.1.1', date: '2026-09-30', changes: [
     'Fix: Admin \u25b8 Users \u25b8 Reset password could show a new password that then failed with \u201cInvalid email or password\u201d. The reset now only trusts a user\u2019s linked login if it has the same email (a stale link \u2014 e.g. a row copied from another environment \u2014 used to change the wrong login), confirms the login\u2019s email (unconfirmed logins can\u2019t sign in), relinks the user, and finally does a real test sign-in with the new password \u2014 if that fails you get an error with the reason instead of a password that doesn\u2019t work. Login now ignores stray spaces / capitals in the email and says so when an email isn\u2019t confirmed; failed logins are logged with the reason. Generated passwords avoid look-alike characters (l/1, O/0) and use a secure random source. No migration.',
   ] },

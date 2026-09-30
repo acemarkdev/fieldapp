@@ -105,5 +105,5 @@ export async function resetUserPassword(appUserId: string, email: string, passwo
   const c = anonClient();
   const { data: s, error: e } = await c.auth.signInWithPassword({ email: target, password });
   if (e || !s?.session) throw new Error('Password was set, but a test sign-in failed: ' + (e?.message ?? 'no session'));
-  await c.auth.signOut().catch(() => {});
+  await c.auth.signOut({ scope: 'local' }).catch(() => {}); // end only this test session, not the user's real ones
 }

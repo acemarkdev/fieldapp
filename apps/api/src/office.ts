@@ -5033,14 +5033,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function toggleUserActive(id,active){var d=await (await api('/api/users/'+id,{method:'PUT',body:JSON.stringify({active:active})})).json();if(d.ok){tShow(active?'Reactivated':'Deactivated');loadUsers();}else tShow(d.error||'Failed');}
   async function resetPw(id){if(!confirm('Reset this user\\'s password?'))return;var d=await (await api('/api/users/'+id+'/reset',{method:'POST'})).json();if(d.ok)showCreds(d.email,d.password,true);else alert('Password reset failed: '+(d.error||'unknown error'));}
   function showCreds(email,password,isReset){
+    var row=function(label,val,bold){ return '<div class="drow" style="align-items:center"><dt>'+label+'</dt><dd class="mono" style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span style="user-select:all">'+(bold?'<b>'+esc(val)+'</b>':esc(val))+'</span><button class="pobtn" style="padding:5px 11px;font-size:12px" data-copy="'+av(val)+'">Copy</button></dd></div>'; };
     var html='<div style="padding:20px 22px">'
       +'<p style="font-size:13px;color:var(--muted);margin-bottom:14px">'+(isReset?'Password reset. ':'Login created. ')+'Share these securely — the password is shown only once.</p>'
-      +'<div class="drow"><dt>Email</dt><dd class="mono">'+esc(email)+'</dd></div>'
-      +'<div class="drow"><dt>Password</dt><dd class="mono"><b>'+esc(password)+'</b></dd></div></div>'
-      +'<div class="foot"><button class="cancel" onclick="copyCreds(\\''+esc(email)+'\\',\\''+esc(password)+'\\')">Copy</button><button class="save" onclick="closeModal()">Done</button></div>';
+      +row('Email',email,false)+row('Password',password,true)+'</div>'
+      +'<div class="foot"><button class="cancel" id="credsCopyBoth">Copy both (for sharing)</button><button class="save" onclick="closeModal()">Done</button></div>';
     openModal(isReset?'New password':'Login created',html);
+    document.querySelectorAll('#modalBody [data-copy]').forEach(function(bt){ bt.onclick=function(){ copyText(bt.getAttribute('data-copy'), bt.parentNode.parentNode.querySelector('dt').textContent+' copied'); }; });
+    document.getElementById('credsCopyBoth').onclick=function(){ copyText('Email: '+email+'\\nPassword: '+password,'Email and password copied'); };
   }
-  function copyCreds(email,password){if(navigator.clipboard)navigator.clipboard.writeText(email+'  '+password);tShow('Copied');}
+  function copyText(t,msg){ if(navigator.clipboard)navigator.clipboard.writeText(t); tShow(msg||'Copied'); }
 
   // ---- modal, create item, item detail ----
   function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
