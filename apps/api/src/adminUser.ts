@@ -1,6 +1,6 @@
 // Create (or update) a Supabase Auth login and link it to the matching app_users row.
 // Uses the service-role admin API — server-side only. Run once via create-admin.ts.
-import { db } from './supabase';
+import { db, anonClient } from './supabase';
 
 export async function createOrLinkUser(email: string, password: string): Promise<{ id: string; created: boolean; linked: boolean }> {
   const admin = db().auth.admin;
@@ -68,25 +68,42 @@ async function findAuthUserIdByEmail(email: string): Promise<string | null> {
   return null;
 }
 
-// Reset a user's login password (admin API). Throws if the password could NOT be applied,
+// Reset a user's login password (admin API). Throws unless the new password demonstrably works,
 // so the caller never hands out a password that isn't actually live.
-// `authUserId` is the app_users.auth_user_id when known — the reliable way to target the login.
-export async function resetUserPassword(email: string, password: string, authUserId?: string | null): Promise<void> {
+// `authUserId` (app_users.auth_user_id) is only trusted if that login has the same email — a stale
+// link (e.g. a row copied from another Supabase project) would otherwise change the wrong login.
+export async function resetUserPassword(appUserId: string, email: string, password: string, authUserId?: string | null): Promise<void> {
   const admin = db().auth.admin;
+  const target = email.trim().toLowerCase();
 
-  // Prefer the linked auth id; fall back to searching by email across all pages.
   let userId = authUserId ?? null;
-  if (!userId) userId = await findAuthUserIdByEmail(email);
+  if (userId) {
+    try {
+      const { data } = await admin.getUserById(userId);
+      if ((data?.user?.email ?? '').toLowerCase() !== target) userId = null;
+    } catch { userId = null; } // malformed / unknown id → treat as stale
+  }
+  if (!userId) userId = await findAuthUserIdByEmail(target);
 
   if (userId) {
-    const { error } = await admin.updateUserById(userId, { password });
+    // email_confirm: an unconfirmed login can't sign in with a password at all.
+    const { error } = await admin.updateUserById(userId, { password, email_confirm: true });
     if (error) throw new Error('Could not set the new password: ' + error.message);
-    return;
+  } else {
+    // No auth login exists yet for this person — create one.
+    const { data, error } = await admin.createUser({ email: target, password, email_confirm: true });
+    if (error || !data?.user) throw new Error('Could not create a login: ' + (error?.message ?? 'unknown error'));
+    userId = data.user.id;
   }
 
-  // No auth login exists yet for this person — create one and link it to their app_users row.
-  const { data, error } = await admin.createUser({ email, password, email_confirm: true });
-  if (error || !data?.user) throw new Error('Could not create a login: ' + (error?.message ?? 'unknown error'));
-  const link = await db().from('app_users').update({ auth_user_id: data.user.id }).eq('email', email);
-  if (link.error) throw new Error('Password set but linking the account failed: ' + link.error.message);
+  if (userId !== authUserId) {
+    const link = await db().from('app_users').update({ auth_user_id: userId }).eq('id', appUserId);
+    if (link.error) throw new Error('Password set but linking the account failed: ' + link.error.message);
+  }
+
+  // Prove it: sign in with the new password exactly as the login screen will.
+  const c = anonClient();
+  const { data: s, error: e } = await c.auth.signInWithPassword({ email: target, password });
+  if (e || !s?.session) throw new Error('Password was set, but a test sign-in failed: ' + (e?.message ?? 'no session'));
+  await c.auth.signOut().catch(() => {});
 }

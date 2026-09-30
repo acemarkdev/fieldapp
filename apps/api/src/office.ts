@@ -7,6 +7,7 @@
 // Then open http://localhost:3000. Needs SUPABASE_URL, SUPABASE_ANON_KEY,
 // SUPABASE_SERVICE_ROLE_KEY, MONDAY_API_TOKEN in .env, and a login created via create-admin.
 
+import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -114,7 +115,8 @@ const STYLE_CATALOGUE = Object.keys(STYLE_META)
   .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b))
   .map((code) => ({ code, ...STYLE_META[code] }));
 
-const genPassword = () => 'ACE-' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
+const PW_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
+const genPassword = () => 'ACE-' + Array.from(randomBytes(8), (x) => PW_CHARS[x % PW_CHARS.length]).join('');
 import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG,
   CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL, can, type Capability } from '@ace/shared';
 
@@ -300,9 +302,15 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/login' && req.method === 'POST') {
-      const { email, password } = await readJson(req);
+      const b = await readJson(req);
+      const email = String(b.email ?? '').trim().toLowerCase(), password = String(b.password ?? '');
       const { data, error } = await authClient().auth.signInWithPassword({ email, password });
-      if (error || !data.session) { send(res, 401, { error: 'Invalid email or password' }); return; }
+      if (error || !data.session) {
+        console.warn('[login] failed for', email, '-', error?.message ?? 'no session');
+        const unconfirmed = /not confirmed/i.test(error?.message ?? '');
+        send(res, 401, { error: unconfirmed ? 'This login\'s email isn\'t confirmed yet \u2014 ask an admin to reset your password.' : 'Invalid email or password' });
+        return;
+      }
       const { data: u } = await db().from('app_users').select('name,role,client_code,team_id').eq('auth_user_id', data.user.id).maybeSingle();
       send(res, 200, { token: data.session.access_token, name: u?.name ?? email, role: u?.role ?? 'user', client_code: u?.client_code ?? null, team_id: (u as any)?.team_id ?? null });
       return;
@@ -2343,7 +2351,7 @@ const server = createServer(async (req, res) => {
       const u = await getAppUser(id);
       if (!u || u.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const password = genPassword();
-      await resetUserPassword(u.email, password, u.auth_user_id);
+      await resetUserPassword(u.id, u.email, password, u.auth_user_id);
       send(res, 200, { ok: true, email: u.email, password });
       return;
     }
@@ -5023,7 +5031,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function saveUserField(id,field,value){var b={};b[field]=value;var d=await (await api('/api/users/'+id,{method:'PUT',body:JSON.stringify(b)})).json();if(d.ok){tShow('Saved');if(field==='role')loadUsers();}else{tShow(d.error||'Update failed');loadUsers();}}
   async function toggleUserActive(id,active){var d=await (await api('/api/users/'+id,{method:'PUT',body:JSON.stringify({active:active})})).json();if(d.ok){tShow(active?'Reactivated':'Deactivated');loadUsers();}else tShow(d.error||'Failed');}
-  async function resetPw(id){if(!confirm('Reset this user\\'s password?'))return;var d=await (await api('/api/users/'+id+'/reset',{method:'POST'})).json();if(d.ok)showCreds(d.email,d.password,true);else tShow(d.error||'Failed');}
+  async function resetPw(id){if(!confirm('Reset this user\\'s password?'))return;var d=await (await api('/api/users/'+id+'/reset',{method:'POST'})).json();if(d.ok)showCreds(d.email,d.password,true);else alert('Password reset failed: '+(d.error||'unknown error'));}
   function showCreds(email,password,isReset){
     var html='<div style="padding:20px 22px">'
       +'<p style="font-size:13px;color:var(--muted);margin-bottom:14px">'+(isReset?'Password reset. ':'Login created. ')+'Share these securely — the password is shown only once.</p>'

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.1.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.1.1', date: '2026-09-30', changes: [
+    'Fix: Admin \u25b8 Users \u25b8 Reset password could show a new password that then failed with \u201cInvalid email or password\u201d. The reset now only trusts a user\u2019s linked login if it has the same email (a stale link \u2014 e.g. a row copied from another environment \u2014 used to change the wrong login), confirms the login\u2019s email (unconfirmed logins can\u2019t sign in), relinks the user, and finally does a real test sign-in with the new password \u2014 if that fails you get an error with the reason instead of a password that doesn\u2019t work. Login now ignores stray spaces / capitals in the email and says so when an email isn\u2019t confirmed; failed logins are logged with the reason. Generated passwords avoid look-alike characters (l/1, O/0) and use a secure random source. No migration.',
+  ] },
   { version: '1.1.0', date: '2026-09-30', changes: [
     'Teams personal messages for PO approvals. Besides the channel post, each approver now gets a 1:1 Teams chat (from the Workflows bot) when a £2000+ request is raised, and the requestor gets one when it is approved or rejected (with the reason). Matched by the user\u2019s email in the app = their Microsoft sign-in. Enable by setting TEAMS_PO_DM_WEBHOOK to a Teams Workflow URL \u2014 setup in docs/teams-po-notifications.md. No migration.',
   ] },

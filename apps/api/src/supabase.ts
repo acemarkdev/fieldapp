@@ -15,5 +15,12 @@ export function db(): SupabaseClient {
   return client;
 }
 
+// Anon-key client for acting *as a user* (password sign-in). Fresh per call, no stored session.
+export function anonClient(): SupabaseClient {
+  const url = process.env.SUPABASE_URL, anon = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anon) throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY must be set.');
+  return createClient(url, anon, { auth: { persistSession: false } });
+}
+
 // ACE = tenant #1 (matches supabase/seed.sql).
 export const ACE_TENANT = '00000000-0000-0000-0000-0000000000ac';
