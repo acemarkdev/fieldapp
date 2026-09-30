@@ -31,7 +31,8 @@ export type Capability =
   | 'purchasing.request' // raise / edit PO requests (internal staff)
   | 'finance.view'     // see the budget / customer pricing module (admin, invoice_manager only)
   | 'finance.manage'   // edit pricing rules, assign to jobs, set variations
-  | 'labels.print';    // Logistics ▸ Labels: turn an Archimede PDF into a sheet of window/door labels
+  | 'labels.print'     // Logistics ▸ Labels: turn an Archimede PDF into a sheet of window/door labels
+  | 'confirmations.manage'; // share report-confirmation links, track approvals, download the signed PDF
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -55,12 +56,13 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'finance.view', label: 'View finance', desc: 'Budget & customer pricing (admin / invoice manager)' },
   { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
   { key: 'labels.print', label: 'Print labels', desc: 'Window/door labels from an Archimede PDF' },
+  { key: 'confirmations.manage', label: 'Report confirmations', desc: 'Share reports for sign-off, track approvals' },
 ];
 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
 export const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: CAPABILITIES.map((c) => c.key), // everything
-  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request'],
+  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request', 'confirmations.manage'],
   surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
   scanner: ['calendar.view', 'items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
   fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add', 'purchasing.request'],

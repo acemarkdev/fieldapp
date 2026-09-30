@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.3.0', date: '2026-09-30', changes: [
+    'Operations \u25b8 Confirmations: share a report for sign-off by link. Upload a \u201craport do potwierdzenia\u201d (HTML), copy the link and send it; the recipient marks decisions, signs and clicks Approve, which locks the report and notifies you (email / Teams DM). The table shows every shared report with Pending approval / Approved, the approver and date, plus Copy link, Open, PDF (decisions + answers + signature) and Filled report (the page exactly as the customer filled it in, to print or save as PDF). Works with any report structure: items/questions are read per file; reports with the autosave hook save every decision as it is made, others are captured on Approve with a name + signature box. The report runs sandboxed so it can\u2019t touch office logins. Admin and office roles. Requires migration 0054_confirmations.sql.',
+  ] },
   { version: '1.2.0', date: '2026-09-30', changes: [
     'Logistics \u25b8 Labels + new logistics role. Upload an Archimede production printout (WYDRUK PRODUKCYJNY PDF) and download an A4 sheet of window/door labels in the WEM format \u2014 8 per page (2 \u00d7 4, 105 \u00d7 74 mm), one label per piece: \u201cWymiar Okna: P/N W\u2026 x H\u2026\u201d (outer frame size) and the job line with the window/door reference in bold (taken from the note, e.g. W02.1, W03.1). The PDF is read directly (no AI, nothing stored); every row is editable before printing, with WEM logo / company details tick boxes and \u201cskip first N labels\u201d for part-used sheets. New role logistics sees only this tab (server allow-list + database policies). Requires migrations 0052_logistics_role.sql then 0053_logistics_scope.sql (only to assign the role; admins can use Labels without them).',
   ] },

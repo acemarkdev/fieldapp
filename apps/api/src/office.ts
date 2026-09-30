@@ -43,8 +43,10 @@ import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
 import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
-import { notifyPoSubmitted, notifyPoDecision } from './notify';
+import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
+import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
+  mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
@@ -302,6 +304,43 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- Public report-confirmation links: /c/<token>[/state|/approve|/filled] (no login; the token is the key) ----
+    const cm = p.match(/^\/c\/([A-Za-z0-9_-]{20,64})(?:\/(state|approve|filled|page))?\/?$/);
+    if (cm) {
+      const row = await getConfirmationByToken(cm[1]);
+      const sub = cm[2] ?? '';
+      const json = (code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+      if (!row) { if (sub) json(404, { error: 'Link nieaktywny. / Link not found.' }); else { res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><p style="font:16px system-ui;padding:40px">Ten link jest nieaktywny. / This link is no longer active.</p>'); } return; }
+      if (!sub && req.method === 'GET') {
+        res.writeHead(200, WRAPPER_HEADERS); res.end(renderWrapper(row, url.searchParams.get('print') === '1')); return;
+      }
+      if (sub === 'page' && req.method === 'GET') {
+        const html = await loadConfirmationHtml(row.storage_path);
+        res.writeHead(200, REPORT_HEADERS); res.end(renderReportPage(html, row, url.searchParams.get('print') === '1')); return;
+      }
+      if (sub === 'filled' && req.method === 'GET') {
+        if (!row.filled_path) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('Not available.'); return; }
+        const html = await loadConfirmationHtml(row.filled_path);
+        res.writeHead(200, REPORT_HEADERS); res.end(renderFilledPage(html, url.searchParams.get('print') === '1')); return;
+      }
+      if (sub === 'state' && req.method === 'GET') { json(200, { state: row.state ?? null, status: row.status }); return; }
+      if (sub === 'state' && req.method === 'PUT') {
+        if (row.status !== 'pending') { json(409, { error: 'Raport jest już zatwierdzony. / Already approved.' }); return; }
+        const b = await readJson(req);
+        const next = mergeState(row.state, b.mode === 'set' ? 'set' : 'update', b.data);
+        if (JSON.stringify(next).length > 5 * 1024 * 1024) { json(413, { error: 'Too large.' }); return; }
+        await saveState(row, next); json(200, { ok: true }); return;
+      }
+      if (sub === 'approve' && req.method === 'POST') {
+        if (row.status !== 'pending') { json(409, { error: 'Raport jest już zatwierdzony. / Already approved.' }); return; }
+        const r = await approveConfirmation(row, await readJson(req));
+        if (!r.ok) { json(400, { error: r.error }); return; }
+        (async () => { try { await notifyConfirmationApproved(r.row, await getAppUserEmail(r.row.created_by)); } catch (e) { console.error('confirmation notify failed', e); } })();
+        json(200, { ok: true }); return;
+      }
+      json(405, { error: 'Method not allowed.' }); return;
+    }
+
     if (p === '/api/login' && req.method === 'POST') {
       const b = await readJson(req);
       const email = String(b.email ?? '').trim().toLowerCase(), password = String(b.password ?? '');
@@ -373,6 +412,42 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' });
       res.end(pdf);
       return;
+    }
+    // ---- Report confirmations (office): upload a report → shareable link; track approvals ----
+    if (p === '/api/confirmations' && req.method === 'GET') {
+      if (!allow('confirmations.manage')) return;
+      send(res, 200, { confirmations: await listConfirmations(ctx.tenant_id) }); return;
+    }
+    if (p === '/api/confirmations' && req.method === 'POST') {
+      if (!allow('confirmations.manage')) return;
+      const b = await readJson(req);
+      const html = String(b.html ?? '');
+      if (!html) { send(res, 400, { error: 'No file received.' }); return; }
+      if (html.length > 40 * 1024 * 1024) { send(res, 400, { error: 'File is too large (max 40 MB).' }); return; }
+      const rep = readReport(html);
+      if (!rep.ok) { send(res, 400, { error: rep.error }); return; }
+      const fileName = String(b.fileName ?? '').slice(0, 250) || 'report.html';
+      const title = (String(b.title ?? '').trim() || rep.title || fileName.replace(/\.html?$/i, '')).slice(0, 250);
+      const row = await createConfirmation(ctx.tenant_id, { id: ctx.id, name: ctx.name }, fileName, html, title, rep.meta);
+      audit(ctx, 'confirmation.create', 'confirmation', row.id, `Shared report “${title}”`);
+      send(res, 200, { ok: true, id: row.id, token: row.token, autosave: rep.meta.autosave, items: rep.meta.items.length }); return;
+    }
+    if (p.startsWith('/api/confirmations/') && p.endsWith('/pdf') && req.method === 'GET') {
+      if (!allow('confirmations.manage')) return;
+      const row = await getConfirmation(p.split('/')[3] ?? '', ctx.tenant_id);
+      if (!row) { send(res, 404, { error: 'Not found.' }); return; }
+      const pdf = await buildConfirmationPdf(row);
+      const fname = (row.title || 'report').replace(/[^\w .-]/g, '_').slice(0, 120);
+      res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname} - ${row.status === 'approved' ? 'zatwierdzony' : 'w toku'}.pdf"`, 'cache-control': 'no-store' });
+      res.end(pdf); return;
+    }
+    if (p.startsWith('/api/confirmations/') && req.method === 'DELETE') {
+      if (!allow('confirmations.manage')) return;
+      const row = await getConfirmation(p.split('/')[3] ?? '', ctx.tenant_id);
+      if (!row) { send(res, 404, { error: 'Not found.' }); return; }
+      await deleteConfirmation(row);
+      audit(ctx, 'confirmation.delete', 'confirmation', row.id, `Deleted shared report “${row.title}”`);
+      send(res, 200, { ok: true }); return;
     }
     if (p === '/api/customer/jobs' && req.method === 'GET') {
       if (ctx.role !== 'customer' || !ctx.client_code) { send(res, 403, { error: 'forbidden' }); return; }
@@ -2493,6 +2568,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .syncall[disabled]{background:#cfcde0;cursor:not-allowed}
   #dashView main{padding:22px 26px}
   .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px}
+  .statgrid .stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .statgrid .stat .v{font-size:26px;font-weight:800;line-height:1.1;color:var(--ink)}
+  .statgrid .stat .l{font-size:12px;font-weight:600;color:var(--muted);margin-top:4px}
   .statcard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 16px}
   .statval{font-size:26px;font-weight:800;color:var(--purple);line-height:1}
   .statlabel{font-size:12px;color:var(--muted);font-weight:600;margin-top:6px}
@@ -2778,6 +2856,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
         <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
         <button id="tabSignoff" class="tab" style="display:none" onclick="showTab('signoff')">Sign-off</button>
+        <button id="tabConfirm" class="tab" style="display:none" onclick="showTab('confirm')">Confirmations</button>
       </div></div>
       <div class="grp" id="grp_sales"><button class="grpbtn" onclick="toggleGrp('sales')">Sales \u25be</button><div class="grpmenu" id="menu_sales">
         <button id="tabLeads" class="tab" style="display:none" onclick="showTab('leads')">Leads</button>
@@ -3086,6 +3165,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="confirmView" style="display:none">
+    <main style="max-width:1180px">
+      <div class="titlerow"><div><h2>Report confirmations</h2><div class="sub">Upload a report to confirm (HTML), copy the link and send it to the customer. They mark their decisions, sign and click <b>Approve</b> &mdash; you then download the signed PDF here.</div></div></div>
+      <div class="card2" style="padding:16px 18px;margin-top:14px">
+        <div class="porow" style="margin-top:0"><label class="pobtn" for="cf_file">Choose report (.html)&hellip;</label><input id="cf_file" type="file" accept=".html,.htm,text/html" style="display:none"><span class="pofname" id="cf_fname">No file chosen</span></div>
+        <div class="porow"><input id="cf_title" class="tinput" placeholder="Title (optional &mdash; taken from the report)" style="flex:1;min-width:240px"><button class="newbtn" id="cf_create">Create link</button></div>
+        <div id="cf_new" style="display:none;margin-top:12px"></div>
+      </div>
+      <div class="statgrid" id="cf_summary" style="margin:14px 0"></div>
+      <div class="card2"><table><thead><tr><th>REPORT</th><th>SHARED BY</th><th>CREATED</th><th>LAST ACTIVITY</th><th>STATUS</th><th>APPROVED</th><th></th></tr></thead><tbody id="cf_rows"></tbody></table></div>
+    </main>
+  </div>
   <div id="labelsView" style="display:none">
     <main style="max-width:1080px">
       <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of window/door labels &mdash; 8 per page (2 &times; 4, 105 &times; 74 mm), one label per piece. Nothing is stored.</div></div></div>
@@ -3402,7 +3493,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // Deep link from a PO notification: /?po=<id>. Stash it so it survives login (incl. the SSO
   // round-trip), strip it from the address bar, and open it once the app is up.
   (function(){ var q=new URLSearchParams(window.location.search); var po=q.get('po');
-    if(po){ sessionStorage.setItem('ace_open_po',po); history.replaceState(null,'',window.location.pathname+window.location.hash); } })();
+    if(po){ sessionStorage.setItem('ace_open_po',po); history.replaceState(null,'',window.location.pathname+window.location.hash); }
+    if(q.get('confirmations')){ sessionStorage.setItem('ace_tab','confirm'); history.replaceState(null,'',window.location.pathname+window.location.hash); } })();
   function openPendingPo(){
     var po=sessionStorage.getItem('ace_open_po'); if(!po)return;
     sessionStorage.removeItem('ace_open_po');
@@ -3411,7 +3503,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
-    var need={labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    var need={confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3466,7 +3558,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4521,6 +4613,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('poreqView').style.display=name==='poreq'?'block':'none';
     document.getElementById('suppliersView').style.display=name==='suppliers'?'block':'none';
     document.getElementById('labelsView').style.display=name==='labels'?'block':'none';
+    document.getElementById('confirmView').style.display=name==='confirm'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4564,6 +4657,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='poreq')loadPoRequests();
     if(name==='suppliers')loadSuppliers();
     if(name==='labels')initLabels();
+    if(name==='confirm')loadConfirmations();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4574,8 +4668,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabConfirm'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4695,6 +4789,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var isLogistics=(myRole==='logistics');
     show('tabItems',!isCustomer&&!isLogistics);
     show('tabLabels',canCap('labels.print'));
+    show('tabConfirm',canCap('confirmations.manage'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -5861,6 +5956,64 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     ta.oninput=function(){ go.disabled=!ta.value.trim(); };
     go.onclick=async function(){ var c=ta.value.trim(); if(!c){ ta.focus(); return; } go.disabled=true; var ok=await poSetStatus(id,'rejected',{comment:c}); if(ok)close(); else go.disabled=false; };
     ta.focus();
+  }
+  // ---- Operations ▸ Confirmations: shareable report sign-off links ----
+  var CF_ROWS=[];
+  function cfLink(t){ return location.origin+'/c/'+t; }
+  function cfWhen(t){ return t?new Date(t).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014'; }
+  async function loadConfirmations(){
+    var fin=document.getElementById('cf_file');
+    if(!fin.dataset.ready){ fin.dataset.ready='1';
+      fin.onchange=function(){ document.getElementById('cf_fname').textContent=fin.files[0]?fin.files[0].name:'No file chosen'; };
+      document.getElementById('cf_create').onclick=cfCreate; }
+    var d; try{ d=await (await api('/api/confirmations')).json(); }catch(e){ d={confirmations:[]}; }
+    CF_ROWS=d.confirmations||[];
+    var pend=CF_ROWS.filter(function(r){return r.status==='pending';}).length;
+    document.getElementById('cf_summary').innerHTML='<div class="stat"><div class="v">'+CF_ROWS.length+'</div><div class="l">Shared</div></div><div class="stat"><div class="v">'+pend+'</div><div class="l">Pending approval</div></div><div class="stat"><div class="v">'+(CF_ROWS.length-pend)+'</div><div class="l">Approved</div></div>';
+    var tb=document.getElementById('cf_rows');
+    tb.innerHTML=CF_ROWS.length?CF_ROWS.map(function(r){
+      var ok=r.status==='approved';
+      var pill='<span class="pill" style="background:'+(ok?'#dcfce7;color:#15803d':'#fff1e0;color:#b45309')+'">'+(ok?'Approved':'Pending approval')+'</span>';
+      var appr=ok?(esc(cfWhen(r.approved_at))+'<div class="sub" style="margin:0">'+esc(r.approved_by_name||'')+(r.approved_by_role?' ('+esc(r.approved_by_role)+')':'')+'</div>'):'\u2014';
+      var acts='<button class="pobtn" style="padding:5px 10px;font-size:12px" data-cf="copy" data-t="'+av(r.token)+'">Copy link</button> '
+        +'<a class="pobtn" style="padding:5px 10px;font-size:12px;text-decoration:none;display:inline-block" target="_blank" rel="noopener" href="'+av(cfLink(r.token))+'">Open</a> '
+        +'<button class="pobtn'+(ok?' ok':'')+'" style="padding:5px 10px;font-size:12px" data-cf="pdf" data-id="'+av(r.id)+'">PDF</button> '
+        +(ok?'<a class="pobtn" style="padding:5px 10px;font-size:12px;text-decoration:none;display:inline-block" target="_blank" rel="noopener" title="The report exactly as the customer filled it in (print or save as PDF)" href="'+av(cfLink(r.token)+'/filled?print=1')+'">Filled report</a> ':'')
+        +'<button class="pobtn bad" style="padding:5px 10px;font-size:12px" data-cf="del" data-id="'+av(r.id)+'">Delete</button>';
+      return '<tr><td><b>'+esc(r.title)+'</b><div class="sub" style="margin:0">'+esc(r.file_name||'')+'</div></td><td>'+esc(r.created_by_name||'\u2014')+'</td><td>'+esc(cfWhen(r.created_at))+'</td><td>'+esc(cfWhen(r.last_activity_at))+'</td><td>'+pill+'</td><td>'+appr+'</td><td style="white-space:nowrap">'+acts+'</td></tr>';
+    }).join(''):'<tr><td colspan="7" class="sub" style="padding:18px">No reports shared yet.</td></tr>';
+    tb.querySelectorAll('[data-cf]').forEach(function(bt){ bt.onclick=function(){ var k=bt.getAttribute('data-cf');
+      if(k==='copy') copyText(cfLink(bt.getAttribute('data-t')),'Link copied');
+      if(k==='pdf') cfPdf(bt.getAttribute('data-id'));
+      if(k==='del') cfDelete(bt.getAttribute('data-id')); }; });
+  }
+  async function cfCreate(){
+    var f=document.getElementById('cf_file').files[0]; if(!f){tShow('Choose a report file first');return;}
+    var btn=document.getElementById('cf_create'); btn.disabled=true;
+    try{
+      var html=await new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=rej; r.readAsText(f); });
+      var r=await api('/api/confirmations',{method:'POST',body:JSON.stringify({fileName:f.name,title:document.getElementById('cf_title').value,html:html})}); var d=await r.json();
+      if(!r.ok||!d.ok){ tShow(d.error||'Could not create the link'); return; }
+      var link=cfLink(d.token);
+      var box=document.getElementById('cf_new'); box.style.display='block';
+      box.innerHTML='<div class="podecide ok" style="margin:0"><div class="msg"><b>Link created</b> \u2014 send it to the person who should confirm the report.<small style="font-family:ui-monospace,Menlo,monospace;user-select:all;word-break:break-all">'+esc(link)+'</small>'
+        +(d.autosave?'':'<small>This report has no autosave: the recipient\u2019s choices are captured when they click Approve.</small>')+'</div><button class="pobtn ok" id="cf_copynew">Copy link</button></div>';
+      document.getElementById('cf_copynew').onclick=function(){ copyText(link,'Link copied'); };
+      document.getElementById('cf_file').value=''; document.getElementById('cf_fname').textContent='No file chosen'; document.getElementById('cf_title').value='';
+      loadConfirmations();
+    } finally { btn.disabled=false; }
+  }
+  async function cfPdf(id){
+    var r=await fetch('/api/confirmations/'+encodeURIComponent(id)+'/pdf',{headers:{Authorization:'Bearer '+token}});
+    if(!r.ok){ tShow('Could not build the PDF'); return; }
+    var cd=r.headers.get('content-disposition')||''; var m=cd.match(/filename="([^"]+)"/);
+    var blob=await r.blob(); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=m?m[1]:'report.pdf'; document.body.appendChild(a); a.click(); a.remove();
+  }
+  async function cfDelete(id){
+    var row=CF_ROWS.filter(function(r){return r.id===id;})[0]; if(!row)return;
+    if(!confirm('Delete \u201c'+row.title+'\u201d? The link stops working and its decisions are removed.'))return;
+    var r=await api('/api/confirmations/'+encodeURIComponent(id),{method:'DELETE'}); var d=await r.json();
+    if(r.ok&&d.ok){ tShow('Deleted'); loadConfirmations(); } else tShow(d.error||'Could not delete');
   }
   // ---- Logistics ▸ Labels: Archimede PDF → A4 label sheet ----
   var LBL=null, LBL_ROWS=[];

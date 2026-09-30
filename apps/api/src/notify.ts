@@ -103,3 +103,16 @@ export async function notifyPoDecision(req: any, decision: 'approved' | 'rejecte
       `<p>Your purchase-order request has been <b>${word}</b>.</p>${listHtml(lines)}${link ? `<p><a href="${link}">Open in ACE Office</a></p>` : ''}`) : Promise.resolve(),
   ]);
 }
+
+// A shared report was approved by its recipient → tell the person who shared it.
+export async function notifyConfirmationApproved(row: any, creatorEmail: string | null): Promise<void> {
+  if (!creatorEmail) return;
+  const base = await baseUrl();
+  const link = base ? `${base}/?confirmations=1` : undefined;
+  const who = row.approved_by_name + (row.approved_by_role ? ` (${row.approved_by_role})` : '');
+  const lines = [`Report: ${row.title}`, `Approved by: ${who}`, `Approved: ${new Date(row.approved_at).toLocaleString('en-GB', { timeZone: 'Europe/London' })}`];
+  await Promise.all([
+    sendTeamsDm([creatorEmail], 'Report approved: ' + row.title, lines, link),
+    sendEmail([creatorEmail], `Report approved: ${row.title}`, `<p>Your shared report has been approved.</p>${listHtml(lines)}${link ? `<p><a href="${link}">Open Confirmations in ACE Office</a></p>` : ''}`),
+  ]);
+}
