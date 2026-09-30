@@ -28,15 +28,22 @@ export async function sendEmail(to: string[], subject: string, html: string): Pr
 export async function sendTeams(title: string, lines: string[], linkUrl?: string): Promise<void> {
   const url = process.env.TEAMS_PO_WEBHOOK;
   if (!url) return;
-  const facts = lines.map((l) => { const i = l.indexOf(':'); return i > 0 ? { name: l.slice(0, i).trim(), value: l.slice(i + 1).trim() } : { name: '', value: l }; });
-  const card: any = {
-    '@type': 'MessageCard', '@context': 'https://schema.org/extensions', themeColor: '3a2b72',
-    summary: title, sections: [{ activityTitle: title, facts, markdown: true }],
+  // Adaptive Card wrapped in a message — accepted by both Teams Workflows webhooks (the
+  // current way) and legacy Incoming Webhook connectors. The old MessageCard format only
+  // works with the legacy connectors, which Microsoft is retiring.
+  const facts = lines.map((l) => { const i = l.indexOf(':'); return i > 0 ? { title: l.slice(0, i).trim(), value: l.slice(i + 1).trim() } : { title: '', value: l }; });
+  const content: any = {
+    $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
+    body: [
+      { type: 'TextBlock', text: title, weight: 'Bolder', size: 'Medium', wrap: true },
+      { type: 'FactSet', facts },
+    ],
   };
-  if (linkUrl) card.potentialAction = [{ '@type': 'OpenUri', name: 'Open in ACE Office', targets: [{ os: 'default', uri: linkUrl }] }];
+  if (linkUrl) content.actions = [{ type: 'Action.OpenUrl', title: 'Open in ACE Office', url: linkUrl }];
+  const card = { type: 'message', attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content }] };
   try {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(card) });
-    if (!r.ok) console.error('Teams webhook failed:', r.status);
+    if (!r.ok) console.error('Teams webhook failed:', r.status, await r.text().catch(() => ''));
   } catch (e) { console.error('Teams webhook error:', e); }
 }
 
