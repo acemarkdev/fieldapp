@@ -3296,6 +3296,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function mfToggle(hostId,e){ if(e)e.stopPropagation(); var pop=document.getElementById('pop_'+hostId); if(!pop)return; var open=pop.classList.contains('open'); document.querySelectorAll('.mfpop.open').forEach(function(p){p.classList.remove('open');}); if(!open)pop.classList.add('open'); }
   function mfMatch(hostId,val){ var m=MF[hostId]; if(!m||!m.state.length)return true; var v=(val==null||val==='')?'__none':String(val); return m.state.indexOf(v)>=0; }
   document.addEventListener('click',function(){ document.querySelectorAll('.mfpop.open').forEach(function(p){p.classList.remove('open');}); });
+  // Deep link from a PO notification: /?po=<id>. Stash it so it survives login (incl. the SSO
+  // round-trip), strip it from the address bar, and open it once the app is up.
+  (function(){ var q=new URLSearchParams(window.location.search); var po=q.get('po');
+    if(po){ sessionStorage.setItem('ace_open_po',po); history.replaceState(null,'',window.location.pathname+window.location.hash); } })();
+  function openPendingPo(){
+    var po=sessionStorage.getItem('ace_open_po'); if(!po)return;
+    sessionStorage.removeItem('ace_open_po');
+    if(!canCap('purchasing.request')){ tShow('You don\\u2019t have access to PO requests.'); return; }
+    showTab('poreq'); openPoReq(po);
+  }
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
@@ -3349,7 +3359,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
-    await loadJobs();await loadItems();showTab(restoreTab());
+    await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
     ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
@@ -6296,7 +6306,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token');
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab(restoreTab());}).catch(logout);}
+  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----

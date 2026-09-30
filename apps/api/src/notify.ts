@@ -50,11 +50,14 @@ export async function sendTeams(title: string, lines: string[], linkUrl?: string
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c]);
 const listHtml = (lines: string[]) => '<ul>' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>';
 
+// Deep link straight to the PO — the office page opens /?po=<id> after sign-in.
+const poLink = (base: string, id: string) => (base && id ? `${base}/?po=${encodeURIComponent(id)}` : undefined);
+
 const money = (p: number, cur: string) => (({ GBP: '£', PLN: 'zł', EUR: '€', USD: '$' } as any)[cur] || '') + ((p || 0) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // A new PO request needs approval → tell the approvers.
 export async function notifyPoSubmitted(req: any, approverEmails: string[], costCentre: string | null, supplier: string | null): Promise<void> {
-  const link = (await baseUrl()) ? `${await baseUrl()}/#poreq` : undefined;
+  const link = poLink(await baseUrl(), req.id);
   const lines = [
     `Number: ${req.number}`, `Title: ${req.title}`, `Amount: ${money(req.amount_pennies, req.currency)}`,
     `Cost centre: ${costCentre || '—'}`, `Supplier: ${supplier || '—'}`, `Requested by: ${req.requestor_name || '—'}`,
@@ -69,7 +72,7 @@ export async function notifyPoSubmitted(req: any, approverEmails: string[], cost
 
 // A PO request was approved/rejected → tell the requestor.
 export async function notifyPoDecision(req: any, decision: 'approved' | 'rejected', decidedBy: string | null, requestorEmail: string | null): Promise<void> {
-  const link = (await baseUrl()) ? `${await baseUrl()}/#poreq` : undefined;
+  const link = poLink(await baseUrl(), req.id);
   const word = decision === 'approved' ? 'APPROVED' : 'REJECTED';
   const lines = [`Number: ${req.number}`, `Title: ${req.title}`, `Amount: ${money(req.amount_pennies, req.currency)}`, `Decision: ${word}`, `By: ${decidedBy || '—'}`];
   await Promise.all([

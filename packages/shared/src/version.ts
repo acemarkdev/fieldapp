@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.0.1';
+export const APP_VERSION = '1.0.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.0.2', date: '2026-09-30', changes: [
+    'PO notifications link straight to the PO. \u201cOpen in ACE Office\u201d (Teams card and email) now opens that PO request\u2019s detail, not just the app \u2014 also after signing in first (password or Microsoft SSO). Links look like /?po=<id>. No migration.',
+  ] },
   { version: '1.0.1', date: '2026-09-30', changes: [
     'Teams PO notifications now send an Adaptive Card, so TEAMS_PO_WEBHOOK works with a Teams Workflows webhook (\u201cSend webhook alerts to a channel\u201d) as well as a legacy Incoming Webhook connector, which Microsoft is retiring. No migration.',
   ] },
