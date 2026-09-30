@@ -44,6 +44,7 @@ import { buildJobPricePdf } from './pricingPdf';
 import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision } from './notify';
+import { parseLabelPdf, buildLabelsPdf } from './labels';
 import { buildJobPoPdf } from './poPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
@@ -338,6 +339,40 @@ const server = createServer(async (req, res) => {
         p === '/api/customer/jobs' ||
         (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET');
       if (!allowedForCustomer) { send(res, 403, { error: 'Not allowed.' }); return; }
+    }
+    // ---- Logistics: label printing only; everything else is refused ----
+    if (ctx.role === 'logistics' && !(p === '/api/me' || p.startsWith('/api/labels/'))) {
+      send(res, 403, { error: 'Not allowed.' }); return;
+    }
+    // Read an Archimede production PDF → positions for the label sheet (nothing is stored).
+    if (p === '/api/labels/parse' && req.method === 'POST') {
+      if (!allow('labels.print')) return;
+      const b = await readJson(req);
+      const b64 = String(b.pdf ?? '').replace(/^data:[^,]*,/, '');
+      const bytes = Buffer.from(b64, 'base64');
+      if (!bytes.length) { send(res, 400, { error: 'No PDF received.' }); return; }
+      if (bytes.length > 25 * 1024 * 1024) { send(res, 400, { error: 'PDF is too large (max 25 MB).' }); return; }
+      if (bytes.subarray(0, 5).toString() !== '%PDF-') { send(res, 400, { error: 'That file is not a PDF.' }); return; }
+      try { send(res, 200, await parseLabelPdf(new Uint8Array(bytes))); }
+      catch (e: any) { send(res, 400, { error: 'Could not read the PDF: ' + (e?.message ?? String(e)) }); }
+      return;
+    }
+    // Build the A4 label sheet (2 × 4 per page) from the reviewed rows.
+    if (p === '/api/labels/pdf' && req.method === 'POST') {
+      if (!allow('labels.print')) return;
+      const b = await readJson(req);
+      const rows = Array.isArray(b.labels) ? b.labels : [];
+      if (!rows.length) { send(res, 400, { error: 'No labels selected.' }); return; }
+      if (rows.length > 2000) { send(res, 400, { error: 'Too many labels (max 2000).' }); return; }
+      const dim = (v: unknown) => String(v ?? '').replace(/[^0-9.,]/g, '').slice(0, 7);
+      const labels = rows.map((r: any) => ({ w: dim(r?.w), h: dim(r?.h), ref: String(r?.ref ?? '').trim().slice(0, 40) }));
+      const title = String(b.title ?? '').trim().slice(0, 200);
+      const pdf = await buildLabelsPdf({ title, labels, logo: b.logo !== false, company: b.company !== false, skip: Number(b.skip) || 0 });
+      audit(ctx, 'labels.print', null, null, `Printed ${labels.length} label(s) — ${title}`);
+      const fname = ('Etykiety ' + (String(b.order ?? '').trim() || 'labels')).replace(/[^\w .-]/g, '_');
+      res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' });
+      res.end(pdf);
+      return;
     }
     if (p === '/api/customer/jobs' && req.method === 'GET') {
       if (ctx.role !== 'customer' || !ctx.client_code) { send(res, 403, { error: 'forbidden' }); return; }
@@ -2759,6 +2794,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabSuppliers" class="tab" style="display:none" onclick="showTab('suppliers')">Suppliers</button>
         <button id="tabCostCentres" class="tab" style="display:none" onclick="showTab('costcentres')">Cost centres</button>
       </div></div>
+      <div class="grp" id="grp_logistics"><button class="grpbtn" onclick="toggleGrp('logistics')">Logistics \u25be</button><div class="grpmenu" id="menu_logistics">
+        <button id="tabLabels" class="tab" style="display:none" onclick="showTab('labels')">Labels</button>
+      </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
         <button id="tabCustAdmin" class="tab" style="display:none" onclick="showTab('custadmin')">Customers</button>
@@ -3048,6 +3086,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="labelsView" style="display:none">
+    <main style="max-width:1080px">
+      <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of window/door labels &mdash; 8 per page (2 &times; 4, 105 &times; 74 mm), one label per piece. Nothing is stored.</div></div></div>
+      <div class="card2" style="padding:16px 18px;margin-top:14px">
+        <div class="porow" style="margin-top:0"><label class="pobtn" for="lbl_file">Choose PDF&hellip;</label><input id="lbl_file" type="file" accept="application/pdf,.pdf" style="display:none"><span class="pofname" id="lbl_fname">No file chosen</span></div>
+        <div id="lbl_status" class="sub" style="margin:10px 0 0"></div>
+      </div>
+      <div id="lbl_result" style="display:none">
+        <div id="lbl_warn"></div>
+        <div class="card2" style="padding:16px 18px;margin-top:14px">
+          <div class="fgrid" style="padding:0">
+            <div class="field full"><label>Job line (printed under the size, before the reference)</label><input id="lbl_title" class="tinput"></div>
+          </div>
+          <div class="porow" style="gap:18px">
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="lbl_logo" checked> WEM logo</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="lbl_company" checked> Company details</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px">Skip first <input type="number" id="lbl_skip" class="tinput" min="0" max="7" value="0" style="width:64px"> labels on the sheet</label>
+          </div>
+        </div>
+        <div class="card2" style="margin-top:14px"><table><thead><tr><th style="width:34px"><input type="checkbox" id="lbl_all" checked></th><th>POZ.</th><th>CONFIGURATION</th><th>W</th><th>H</th><th>REFERENCE</th></tr></thead><tbody id="lbl_rows"></tbody></table></div>
+        <div style="display:flex;justify-content:flex-end;margin:14px 0 30px"><button class="newbtn" id="lbl_go">Download labels PDF</button></div>
+      </div>
+    </main>
+  </div>
   <div id="suppliersView" style="display:none">
     <main style="max-width:900px">
       <div class="titlerow">
@@ -3349,7 +3411,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
-    var need={dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    var need={labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3399,11 +3461,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
+    if(myRole==='logistics'){showTab('labels');return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4457,6 +4520,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('costcentresView').style.display=name==='costcentres'?'block':'none';
     document.getElementById('poreqView').style.display=name==='poreq'?'block':'none';
     document.getElementById('suppliersView').style.display=name==='suppliers'?'block':'none';
+    document.getElementById('labelsView').style.display=name==='labels'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4499,6 +4563,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='costcentres')loadCostCentres();
     if(name==='poreq')loadPoRequests();
     if(name==='suppliers')loadSuppliers();
+    if(name==='labels')initLabels();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4509,8 +4574,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4627,7 +4692,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
-    show('tabItems',!isCustomer);
+    var isLogistics=(myRole==='logistics');
+    show('tabItems',!isCustomer&&!isLogistics);
+    show('tabLabels',canCap('labels.print'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -5795,6 +5862,56 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     go.onclick=async function(){ var c=ta.value.trim(); if(!c){ ta.focus(); return; } go.disabled=true; var ok=await poSetStatus(id,'rejected',{comment:c}); if(ok)close(); else go.disabled=false; };
     ta.focus();
   }
+  // ---- Logistics ▸ Labels: Archimede PDF → A4 label sheet ----
+  var LBL=null, LBL_ROWS=[];
+  function initLabels(){
+    var fin=document.getElementById('lbl_file'); if(fin.dataset.ready)return; fin.dataset.ready='1';
+    fin.onchange=labelsRead;
+    document.getElementById('lbl_all').onchange=function(){ var on=this.checked; LBL_ROWS.forEach(function(r){r.on=on;}); renderLabelRows(); };
+    document.getElementById('lbl_go').onclick=labelsDownload;
+  }
+  async function labelsRead(){
+    var fin=document.getElementById('lbl_file'), f=fin.files[0], st=document.getElementById('lbl_status');
+    if(!f)return;
+    document.getElementById('lbl_fname').textContent=f.name; st.textContent='Reading PDF…'; document.getElementById('lbl_result').style.display='none';
+    var d; try{ var dataUrl=await fileToDataUrl(f); var r=await api('/api/labels/parse',{method:'POST',body:JSON.stringify({pdf:dataUrl})}); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not read the PDF'); }
+    catch(e){ st.innerHTML='<span style="color:#c0392b">'+esc(e.message||'Could not read the PDF')+'</span>'; fin.value=''; return; }
+    LBL=d; LBL_ROWS=[];
+    (d.positions||[]).forEach(function(p){ for(var i=0;i<p.qty;i++) LBL_ROWS.push({poz:p.poz,config:p.config,w:p.w==null?'':p.w,h:p.h==null?'':p.h,ref:p.refs[i]||'',on:true}); });
+    document.getElementById('lbl_title').value=[d.order,d.job].filter(Boolean).join(' - ');
+    st.innerHTML='<b>'+esc(d.order||'Order')+'</b>'+(d.date?' · '+esc(d.date):'')+(d.client?' · '+esc(d.client):'')+' · '+(d.positions||[]).length+' position(s) · <b>'+LBL_ROWS.length+'</b> label(s)';
+    document.getElementById('lbl_warn').innerHTML=(d.warnings||[]).length?'<div class="podecide" style="margin:14px 0 0"><div class="msg"><b>Please check</b>'+d.warnings.map(function(w){return '<small>'+esc(w)+'</small>';}).join('')+'</div></div>':'';
+    document.getElementById('lbl_all').checked=true;
+    renderLabelRows(); document.getElementById('lbl_result').style.display='block';
+    if(!LBL_ROWS.length) document.getElementById('lbl_result').style.display='none';
+  }
+  function renderLabelRows(){
+    var tb=document.getElementById('lbl_rows');
+    tb.innerHTML=LBL_ROWS.map(function(r,i){
+      var miss=!String(r.ref).trim()||!String(r.w).trim()||!String(r.h).trim();
+      return '<tr'+(miss?' style="background:#fff8eb"':'')+'><td><input type="checkbox" data-i="'+i+'" data-k="on"'+(r.on?' checked':'')+'></td><td>'+r.poz+'</td><td style="font-size:12px;color:var(--muted)">'+esc(r.config||'')+'</td>'
+        +'<td><input class="tinput" style="width:80px;padding:6px 8px" data-i="'+i+'" data-k="w" value="'+av(r.w)+'"></td>'
+        +'<td><input class="tinput" style="width:80px;padding:6px 8px" data-i="'+i+'" data-k="h" value="'+av(r.h)+'"></td>'
+        +'<td><input class="tinput" style="width:130px;padding:6px 8px" data-i="'+i+'" data-k="ref" value="'+av(r.ref)+'" placeholder="e.g. W01.1"></td></tr>';
+    }).join('');
+    tb.querySelectorAll('[data-k]').forEach(function(el){
+      var ev=el.type==='checkbox'?'onchange':'oninput';
+      el[ev]=function(){ var r=LBL_ROWS[+el.getAttribute('data-i')]; var k=el.getAttribute('data-k'); r[k]=el.type==='checkbox'?el.checked:el.value; if(k==='on')updateLabelCount(); };
+    });
+    updateLabelCount();
+  }
+  function updateLabelCount(){ var n=LBL_ROWS.filter(function(r){return r.on;}).length; document.getElementById('lbl_go').textContent='Download labels PDF ('+n+' label'+(n===1?'':'s')+')'; }
+  async function labelsDownload(){
+    var rows=LBL_ROWS.filter(function(r){return r.on;}); if(!rows.length){tShow('Select at least one label');return;}
+    var bad=rows.filter(function(r){return !String(r.w).trim()||!String(r.h).trim();}); if(bad.length){ alert('Enter W and H for every selected label (Poz. '+bad.map(function(r){return r.poz;}).join(', ')+').'); return; }
+    var body={order:(LBL&&LBL.order)||'',title:document.getElementById('lbl_title').value,logo:document.getElementById('lbl_logo').checked,company:document.getElementById('lbl_company').checked,skip:+document.getElementById('lbl_skip').value||0,labels:rows.map(function(r){return {w:r.w,h:r.h,ref:r.ref};})};
+    var btn=document.getElementById('lbl_go'); btn.disabled=true;
+    try{
+      var r=await fetch('/api/labels/pdf',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});
+      if(!r.ok){ var e=await r.json().catch(function(){return {};}); tShow(e.error||'Could not build the PDF'); return; }
+      var blob=await r.blob(); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='Etykiety '+(body.order||'labels')+'.pdf'; document.body.appendChild(a); a.click(); a.remove();
+    } finally { btn.disabled=false; }
+  }
   function poShowAwaiting(){ var sf=document.getElementById('poStatusFilter'); if(sf){sf.value='in_review';} loadPoRequests(); }
   async function refreshPoApprovalsBadge(){
     if(!canCap('purchasing.request')){ return; }
@@ -6385,7 +6502,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token');
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}
+  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'){showTab('labels');}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----

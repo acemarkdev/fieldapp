@@ -13,6 +13,7 @@
 - **surveyor** — field: create & edit items, raise snags, add photos. Cannot add jobs.
 - **scanner** — field: create items (scan) + photos only.
 - **fitter** — field: fit items (set install status), raise snags, add photos. Sees **only items ready to fit**.
+- **logistics** — office app **Logistics ▸ Labels** only: upload an Archimede production PDF, download an A4 sheet of window/door labels. No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have Labels.
 
 ## Capability matrix
 

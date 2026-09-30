@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics',
 };
 
 export type Capability =
@@ -30,7 +30,8 @@ export type Capability =
   | 'purchasing.manage' // manage cost centres, suppliers, approve PO requests (admin)
   | 'purchasing.request' // raise / edit PO requests (internal staff)
   | 'finance.view'     // see the budget / customer pricing module (admin, invoice_manager only)
-  | 'finance.manage';  // edit pricing rules, assign to jobs, set variations
+  | 'finance.manage'   // edit pricing rules, assign to jobs, set variations
+  | 'labels.print';    // Logistics ▸ Labels: turn an Archimede PDF into a sheet of window/door labels
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -53,6 +54,7 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'purchasing.request', label: 'Raise PO requests', desc: 'Create & edit purchase-order requests' },
   { key: 'finance.view', label: 'View finance', desc: 'Budget & customer pricing (admin / invoice manager)' },
   { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
+  { key: 'labels.print', label: 'Print labels', desc: 'Window/door labels from an Archimede PDF' },
 ];
 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
@@ -66,6 +68,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   invoice_manager: ['calendar.view', 'finance.view', 'finance.manage'],
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
   customer: [],
+  // Label printing only — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
+  logistics: ['labels.print'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone
