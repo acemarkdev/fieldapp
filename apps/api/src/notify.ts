@@ -25,12 +25,10 @@ export async function sendEmail(to: string[], subject: string, html: string): Pr
   } catch (e) { console.error('Resend email error:', e); }
 }
 
-export async function sendTeams(title: string, lines: string[], linkUrl?: string): Promise<void> {
-  const url = process.env.TEAMS_PO_WEBHOOK;
-  if (!url) return;
-  // Adaptive Card wrapped in a message — accepted by both Teams Workflows webhooks (the
-  // current way) and legacy Incoming Webhook connectors. The old MessageCard format only
-  // works with the legacy connectors, which Microsoft is retiring.
+// Adaptive Card wrapped in a message — accepted by both Teams Workflows webhooks (the
+// current way) and legacy Incoming Webhook connectors. The old MessageCard format only
+// works with the legacy connectors, which Microsoft is retiring.
+function teamsMessage(title: string, lines: string[], linkUrl?: string) {
   const facts = lines.map((l) => { const i = l.indexOf(':'); return i > 0 ? { title: l.slice(0, i).trim(), value: l.slice(i + 1).trim() } : { title: '', value: l }; });
   const content: any = {
     $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
@@ -40,11 +38,32 @@ export async function sendTeams(title: string, lines: string[], linkUrl?: string
     ],
   };
   if (linkUrl) content.actions = [{ type: 'Action.OpenUrl', title: 'Open in ACE Office', url: linkUrl }];
-  const card = { type: 'message', attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content }] };
+  return { type: 'message', attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', contentUrl: null, content }] };
+}
+
+async function postTeams(url: string, payload: unknown, label: string): Promise<void> {
   try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(card) });
-    if (!r.ok) console.error('Teams webhook failed:', r.status, await r.text().catch(() => ''));
-  } catch (e) { console.error('Teams webhook error:', e); }
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!r.ok) console.error(`${label} failed:`, r.status, await r.text().catch(() => ''));
+  } catch (e) { console.error(`${label} error:`, e); }
+}
+
+// Channel post — env TEAMS_PO_WEBHOOK.
+export async function sendTeams(title: string, lines: string[], linkUrl?: string): Promise<void> {
+  const url = process.env.TEAMS_PO_WEBHOOK;
+  if (!url) return;
+  await postTeams(url, teamsMessage(title, lines, linkUrl), 'Teams webhook');
+}
+
+// Personal message — env TEAMS_PO_DM_WEBHOOK, a Teams Workflow that posts the card as the
+// Flow bot in a 1:1 chat with `recipient` (their Microsoft sign-in email). One POST per person.
+// Setup: docs/teams-po-notifications.md.
+export async function sendTeamsDm(emails: string[], title: string, lines: string[], linkUrl?: string): Promise<void> {
+  const url = process.env.TEAMS_PO_DM_WEBHOOK;
+  const recipients = [...new Set(emails.map((e) => (e || '').trim().toLowerCase()).filter(Boolean))];
+  if (!url || !recipients.length) return;
+  const msg = teamsMessage(title, lines, linkUrl);
+  await Promise.all(recipients.map((recipient) => postTeams(url, { ...msg, recipient }, `Teams DM to ${recipient}`)));
 }
 
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c]);
@@ -64,6 +83,7 @@ export async function notifyPoSubmitted(req: any, approverEmails: string[], cost
   ];
   await Promise.all([
     sendTeams('PO request needs approval (≥£2k): ' + req.number, lines, link),
+    sendTeamsDm(approverEmails, 'PO request needs your approval (≥£2k): ' + req.number, lines, link),
     sendEmail(approverEmails,
       `PO approval needed: ${req.number} — ${money(req.amount_pennies, req.currency)}`,
       `<p>A purchase-order request needs approval.</p>${listHtml(lines)}${link ? `<p><a href="${link}">Open in ACE Office</a></p>` : ''}`),
@@ -78,6 +98,7 @@ export async function notifyPoDecision(req: any, decision: 'approved' | 'rejecte
   if (comment) lines.push(`${decision === 'rejected' ? 'Reason' : 'Comment'}: ${comment}`);
   await Promise.all([
     sendTeams(`PO ${req.number} ${word}`, lines, link),
+    requestorEmail ? sendTeamsDm([requestorEmail], `Your PO request ${req.number} was ${decision}`, lines, link) : Promise.resolve(),
     requestorEmail ? sendEmail([requestorEmail], `Your PO request ${req.number} was ${decision}`,
       `<p>Your purchase-order request has been <b>${word}</b>.</p>${listHtml(lines)}${link ? `<p><a href="${link}">Open in ACE Office</a></p>` : ''}`) : Promise.resolve(),
   ]);

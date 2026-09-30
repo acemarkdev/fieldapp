@@ -1010,7 +1010,7 @@ const server = createServer(async (req, res) => {
     // TEAMS_PO_WEBHOOK) live in the server env, never app_config, which is anon-readable.
     if (p === '/api/po-settings' && req.method === 'GET') {
       if (!allow('purchasing.manage')) return;
-      send(res, 200, { teams_configured: !!process.env.TEAMS_PO_WEBHOOK, po_email_from: (await getConfig('po_email_from')) || '', app_base_url: (await getConfig('app_base_url')) || '', email_configured: !!process.env.RESEND_API_KEY });
+      send(res, 200, { teams_configured: !!process.env.TEAMS_PO_WEBHOOK, teams_dm_configured: !!process.env.TEAMS_PO_DM_WEBHOOK, po_email_from: (await getConfig('po_email_from')) || '', app_base_url: (await getConfig('app_base_url')) || '', email_configured: !!process.env.RESEND_API_KEY });
       return;
     }
     if (p === '/api/po-settings' && req.method === 'PUT') {
@@ -5797,7 +5797,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var html='<div class="fgrid">'
       +'<div class="field full"><label>Notification “from” email</label><input id="pos_from" class="tinput" value="'+av(d.po_email_from||'')+'" placeholder="ACE Office &lt;noreply@yourdomain&gt;"></div>'
       +'<div class="field full"><label>App base URL (for links in messages)</label><input id="pos_url" class="tinput" value="'+av(d.app_base_url||'')+'" placeholder="https://office.acemark.com.pl"></div>'
-      +'<div class="sub full" style="margin:2px 0 0">Email sending '+(d.email_configured?'is enabled (RESEND_API_KEY set).':'is OFF — set RESEND_API_KEY in the server environment to enable email.')+' Teams posting '+(d.teams_configured?'is enabled (TEAMS_PO_WEBHOOK set).':'is OFF — set TEAMS_PO_WEBHOOK (the channel’s Incoming Webhook URL) in the server environment.')+' Under-£2k requests don’t need approval and send no notification.</div>'
+      +'<div class="sub full" style="margin:2px 0 0">Email sending '+(d.email_configured?'is enabled (RESEND_API_KEY set).':'is OFF — set RESEND_API_KEY in the server environment to enable email.')+' Teams posting '+(d.teams_configured?'is enabled (TEAMS_PO_WEBHOOK set).':'is OFF — set TEAMS_PO_WEBHOOK (the channel’s Incoming Webhook URL) in the server environment.')+' Teams personal messages '+(d.teams_dm_configured?'are enabled (TEAMS_PO_DM_WEBHOOK set) \u2014 approvers and the requestor get a 1:1 chat from the Workflows bot.':'are OFF \u2014 set TEAMS_PO_DM_WEBHOOK (see docs/teams-po-notifications.md).')+' Under-£2k requests don’t need approval and send no notification.</div>'
       +'</div><div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="posSave">Save</button></div>';
     openModal('PO approval notifications', html);
     document.getElementById('posSave').onclick=async function(){

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.1.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.1.0', date: '2026-09-30', changes: [
+    'Teams personal messages for PO approvals. Besides the channel post, each approver now gets a 1:1 Teams chat (from the Workflows bot) when a £2000+ request is raised, and the requestor gets one when it is approved or rejected (with the reason). Matched by the user\u2019s email in the app = their Microsoft sign-in. Enable by setting TEAMS_PO_DM_WEBHOOK to a Teams Workflow URL \u2014 setup in docs/teams-po-notifications.md. No migration.',
+  ] },
   { version: '1.0.3', date: '2026-09-30', changes: [
     'PO request window redesigned. Approve / Reject now sit at the top in an \u201cAwaiting approval\u201d banner; once decided, the banner shows who approved or rejected it, when, and the comment. Documents are a tidy list with a styled Choose files / Upload row, and status changes live in a Progress section. Rejecting now opens a dialog that requires a comment \u2014 the Reject button stays disabled until one is typed, and the server refuses a rejection without it. The reason is saved on the request, written to the audit log, and included in the requestor\u2019s email / Teams notification. Requires migration 0051_po_decision_comment.sql.',
   ] },

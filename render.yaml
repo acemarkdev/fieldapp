@@ -41,6 +41,8 @@ services:
         sync: false
       - key: TEAMS_PO_WEBHOOK      # optional — Teams channel Incoming Webhook for PO approvals
         sync: false
+      - key: TEAMS_PO_DM_WEBHOOK   # optional — Teams Workflow that DMs approvers / requestor
+        sync: false
 
   - type: web
     name: ace-office-prod
@@ -73,4 +75,6 @@ services:
       - key: RESEND_API_KEY        # optional — enables PO approval emails
         sync: false
       - key: TEAMS_PO_WEBHOOK      # optional — Teams channel Incoming Webhook for PO approvals
+        sync: false
+      - key: TEAMS_PO_DM_WEBHOOK   # optional — Teams Workflow that DMs approvers / requestor
         sync: false
