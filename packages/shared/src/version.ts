@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '0.99.0';
+export const APP_VERSION = '1.0.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.0.0', date: '2026-09-30', changes: [
+    'PO approvals & notifications. Requests of £2000+ notify the approver pool (all admins) and, on a decision, notify the requestor \u2014 across three channels: an in-app badge on the PO requests tab showing how many are in review (plus an “Awaiting approval” quick filter), Microsoft Teams (set TEAMS_PO_WEBHOOK to the channel\u2019s Incoming Webhook URL in the server environment), and email (set RESEND_API_KEY in the server environment; the from-address and app link are set in the new Notifications settings). Emails are HTML-escaped, and re-saving the same decision doesn\u2019t re-notify. Channels light up as configured; in-app works immediately. No migration.',
+  ] },
   { version: '0.99.0', date: '2026-09-28', changes: [
     'Suppliers: Import from Monday. On Purchasing \u25b8 Suppliers, admins can pull the Approved Suppliers monday board into the app \u2014 it adds new suppliers and refreshes contact / email / phone on existing ones (matched by name). No migration.',
   ] },

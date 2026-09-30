@@ -36,12 +36,13 @@ import { listCustomerCards, getCustomerCard, getCustomerByCode, createCustomerCa
   listRequirementTypes, createRequirementType, updateRequirementType, deleteRequirementType,
   listCustomerRequirementIds, setCustomerRequirements, requirementNamesForClientCode } from './store';
 import { listCostCentres, getCostCentre, createCostCentre, updateCostCentre, deleteCostCentre, parseEnquiryCostCentre, upsertEnquiryCostCentres } from './store';
-import { listSuppliers, createSupplier, updateSupplier, deleteSupplier, listPoRequests, getPoRequest, nextPoRequestNumber, createPoRequest, updatePoRequest, deletePoRequest, poSpendByCostCentre, PO_APPROVAL_THRESHOLD_PENNIES, ensurePoFileBucket, uploadPoFile, signedPoFileUrl, insertPoFile, listPoFiles, getPoFile, deletePoFile, upsertSuppliersFromImport } from './store';
+import { listSuppliers, createSupplier, updateSupplier, deleteSupplier, listPoRequests, getPoRequest, nextPoRequestNumber, createPoRequest, updatePoRequest, deletePoRequest, poSpendByCostCentre, PO_APPROVAL_THRESHOLD_PENNIES, ensurePoFileBucket, uploadPoFile, signedPoFileUrl, insertPoFile, listPoFiles, getPoFile, deletePoFile, upsertSuppliersFromImport, listApproverEmails, getAppUserEmail } from './store';
 import { rollupFlats, QA_CHECKLIST_DEFAULT } from '@ace/shared';
 import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
 import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
+import { notifyPoSubmitted, notifyPoDecision } from './notify';
 import { buildJobPoPdf } from './poPdf';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
@@ -1005,6 +1006,27 @@ const server = createServer(async (req, res) => {
       await deleteSupplier(p.split('/')[3] ?? '', ctx.tenant_id); send(res, 200, { ok: true }); return;
     }
 
+    // Purchasing notification settings (email from, base url) — admin only. Secrets (RESEND_API_KEY,
+    // TEAMS_PO_WEBHOOK) live in the server env, never app_config, which is anon-readable.
+    if (p === '/api/po-settings' && req.method === 'GET') {
+      if (!allow('purchasing.manage')) return;
+      send(res, 200, { teams_configured: !!process.env.TEAMS_PO_WEBHOOK, po_email_from: (await getConfig('po_email_from')) || '', app_base_url: (await getConfig('app_base_url')) || '', email_configured: !!process.env.RESEND_API_KEY });
+      return;
+    }
+    if (p === '/api/po-settings' && req.method === 'PUT') {
+      if (!allow('purchasing.manage')) return;
+      const b = await readJson(req);
+      if (b.po_email_from !== undefined) await setConfig('po_email_from', String(b.po_email_from ?? '').trim());
+      if (b.app_base_url !== undefined) await setConfig('app_base_url', String(b.app_base_url ?? '').trim());
+      send(res, 200, { ok: true });
+      return;
+    }
+    if (p === '/api/po-approvals-count' && req.method === 'GET') {
+      if (!allow('purchasing.request')) return;
+      const rows = await listPoRequests(ctx.tenant_id, { status: 'in_review' });
+      send(res, 200, { awaiting: rows.length, canApprove: can(ctx.role, 'purchasing.manage') });
+      return;
+    }
     // ---- PO requests ----
     if (p === '/api/po-requests' && req.method === 'GET') {
       if (!allow('purchasing.request')) return;
@@ -1043,6 +1065,17 @@ const server = createServer(async (req, res) => {
           approval_required: amount_pennies >= PO_APPROVAL_THRESHOLD_PENNIES, created_by: ctx.name,
         });
         audit(ctx, 'po.create', 'po_request', created.id, `Raised ${number} — ${title} (${(amount_pennies/100).toFixed(2)} ${currency})`);
+        if (amount_pennies >= PO_APPROVAL_THRESHOLD_PENNIES) {
+          (async () => {
+            try {
+              const full = await getPoRequest(created.id, ctx.tenant_id);
+              const emails = await listApproverEmails(ctx.tenant_id);
+              const cc = full?.cost_centres ? (full.cost_centres.code + (full.cost_centres.label ? ' — ' + full.cost_centres.label : '')) : null;
+              const sup = (full?.suppliers && full.suppliers.name) || full?.new_supplier || null;
+              await notifyPoSubmitted(full, emails, cc, sup);
+            } catch (e) { console.error('PO submit notify failed', e); }
+          })();
+        }
         send(res, 200, { ok: true, id: created.id, number, approval_required: amount_pennies >= PO_APPROVAL_THRESHOLD_PENNIES });
       } catch (err: any) { send(res, 500, { error: err?.message ?? String(err) }); }
       return;
@@ -1062,6 +1095,9 @@ const server = createServer(async (req, res) => {
       if (status === 'po_sent' && b.po_number !== undefined) patch.po_number = (b.po_number ?? '').toString().trim() || null;
       await updatePoRequest(id, ctx.tenant_id, patch);
       audit(ctx, 'po.status', 'po_request', id, `${cur.number} → ${status}`);
+      if ((status === 'approved' || status === 'rejected') && cur.status !== status) {
+        (async () => { try { const email = await getAppUserEmail(cur.requestor_id); await notifyPoDecision(cur, status as any, ctx.name, email); } catch (e) { console.error('PO decision notify failed', e); } })();
+      }
       send(res, 200, { ok: true });
       return;
     }
@@ -2558,6 +2594,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .mfpop input[type=checkbox]{width:14px;height:14px;accent-color:var(--magenta);flex:0 0 auto}
   .mfclear{font-size:11px;font-weight:700;color:var(--magenta);cursor:pointer;padding:5px 7px;border-top:1px solid var(--line);margin-top:4px}
   .mfclear:hover{text-decoration:underline}
+  .tabbadge{display:inline-block;min-width:16px;padding:0 5px;height:16px;line-height:16px;border-radius:8px;background:var(--magenta);color:#fff;font-size:10px;font-weight:800;text-align:center}
   td{padding:9px 12px;border-top:1px solid #f2f0f8;vertical-align:middle}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
   .pill{font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px}
@@ -2677,7 +2714,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabInvoices" class="tab" style="display:none" onclick="showTab('invoices')">Invoices</button>
       </div></div>
       <div class="grp" id="grp_purchasing"><button class="grpbtn" onclick="toggleGrp('purchasing')">Purchasing \u25be</button><div class="grpmenu" id="menu_purchasing">
-        <button id="tabPoReq" class="tab" style="display:none" onclick="showTab('poreq')">PO requests</button>
+        <button id="tabPoReq" class="tab" style="display:none" onclick="showTab('poreq')">PO requests <span id="poBadge" class="tabbadge" style="display:none"></span></button>
         <button id="tabSuppliers" class="tab" style="display:none" onclick="showTab('suppliers')">Suppliers</button>
         <button id="tabCostCentres" class="tab" style="display:none" onclick="showTab('costcentres')">Cost centres</button>
       </div></div>
@@ -2950,7 +2987,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:1080px">
       <div class="titlerow">
         <div><h2>PO requests</h2><div class="sub">Raise purchase-order requests, tag them to a cost centre, attach the quote, and track approval. Requests of £2000+ need a purchasing manager to approve.</div></div>
-        <button class="newbtn" id="newPoBtn" onclick="openNewPoReq()">+ New request</button>
+        <div style="display:flex;gap:8px;align-self:center"><button class="add" id="poNotifyBtn" style="display:none" onclick="openPoSettings()">Notifications</button><button class="newbtn" id="newPoBtn" onclick="openNewPoReq()">+ New request</button></div>
       </div>
       <div class="statgrid" id="poSummary" style="margin:14px 0"></div>
       <div class="chips" style="align-items:center;margin-bottom:6px">
@@ -2962,6 +2999,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         </select>
         <input id="poSearch" class="tinput" placeholder="Search number, title, supplier, cost centre" oninput="renderPoRows()" style="min-width:260px">
         <span id="poShown" class="itemcount"></span>
+        <a class="codelink" onclick="poShowAwaiting()" style="margin-left:auto">Awaiting approval →</a>
       </div>
       <div class="card2"><table><thead><tr>
         <th>NUMBER</th><th>TITLE</th><th>COST CENTRE</th><th>SUPPLIER</th><th>AMOUNT</th><th>REQUESTOR</th><th>STATUS</th><th></th>
@@ -4558,6 +4596,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabCostCentres',canCap('purchasing.manage'));
     show('tabPoReq',canCap('purchasing.request'));
     show('tabSuppliers',canCap('purchasing.request'));
+    if(canCap('purchasing.request'))refreshPoApprovalsBadge();
     show('tabBilling',myRole==='admin');
     var njb=document.getElementById('newJobBtn'); if(njb)njb.style.display=canCap('jobs.manage')?'inline':'none';
     var nb=document.getElementById('newBtn');if(nb)nb.style.display=canCap('items.create')?'':'none';
@@ -5550,6 +5589,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var st=(document.getElementById('poStatusFilter')||{}).value||'';
     var d; try{ d=await (await api('/api/po-requests'+(st?('?status='+encodeURIComponent(st)):''))).json(); }catch(e){ d={requests:[],summary:{}}; }
     PO_CANAPPROVE=!!d.canApprove; PO_ROWS=d.requests||[];
+    var nbtn=document.getElementById('poNotifyBtn'); if(nbtn)nbtn.style.display=PO_CANAPPROVE?'inline-block':'none';
+    refreshPoApprovalsBadge();
     var sm=d.summary||{};
     document.getElementById('poSummary').innerHTML=
       '<div class="stat"><div class="v">'+(sm.count||0)+'</div><div class="l">Requests</div></div>'
@@ -5665,6 +5706,27 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var rj=document.getElementById('poReject'); if(rj)rj.onclick=function(){ if(confirm('Reject this request?'))poSetStatus(id,'rejected'); };
     document.getElementById('poSetBtn').onclick=function(){ var v=document.getElementById('po_setstatus').value; if(!v)return; var extra={}; if(v==='po_sent'){ var pon=prompt('PO number (from Xero, optional):',''); if(pon)extra.po_number=pon; } poSetStatus(id,v,extra); };
     document.getElementById('poAddFileBtn').onclick=async function(){ var files=await readFilesAsDataUrls(document.getElementById('po_addfile')); if(!files.length){tShow('Pick a file');return;} var kind=document.getElementById('po_filekind').value; files=files.map(function(fl){fl.kind=kind;return fl;}); var rr=await api('/api/po-requests/'+id+'/files',{method:'POST',body:JSON.stringify({files:files})}); var dd=await rr.json(); if(rr.ok&&dd.ok){tShow(dd.saved+' file(s) added');openPoReq(id);}else tShow(dd.error||'Upload failed'); };
+  }
+  function poShowAwaiting(){ var sf=document.getElementById('poStatusFilter'); if(sf){sf.value='in_review';} loadPoRequests(); }
+  async function refreshPoApprovalsBadge(){
+    if(!canCap('purchasing.request')){ return; }
+    try{ var d=await (await api('/api/po-approvals-count')).json(); var b=document.getElementById('poBadge');
+      if(b){ if(d.awaiting>0){ b.textContent=d.awaiting; b.style.display='inline-block'; b.title=d.awaiting+' PO request(s) in review'; } else { b.style.display='none'; } }
+    }catch(e){}
+  }
+  async function openPoSettings(){
+    var d; try{ d=await (await api('/api/po-settings')).json(); }catch(e){ d={}; }
+    var html='<div class="fgrid">'
+      +'<div class="field full"><label>Notification “from” email</label><input id="pos_from" class="tinput" value="'+av(d.po_email_from||'')+'" placeholder="ACE Office &lt;noreply@yourdomain&gt;"></div>'
+      +'<div class="field full"><label>App base URL (for links in messages)</label><input id="pos_url" class="tinput" value="'+av(d.app_base_url||'')+'" placeholder="https://office.acemark.com.pl"></div>'
+      +'<div class="sub full" style="margin:2px 0 0">Email sending '+(d.email_configured?'is enabled (RESEND_API_KEY set).':'is OFF — set RESEND_API_KEY in the server environment to enable email.')+' Teams posting '+(d.teams_configured?'is enabled (TEAMS_PO_WEBHOOK set).':'is OFF — set TEAMS_PO_WEBHOOK (the channel’s Incoming Webhook URL) in the server environment.')+' Under-£2k requests don’t need approval and send no notification.</div>'
+      +'</div><div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="posSave">Save</button></div>';
+    openModal('PO approval notifications', html);
+    document.getElementById('posSave').onclick=async function(){
+      var body={po_email_from:document.getElementById('pos_from').value,app_base_url:document.getElementById('pos_url').value};
+      var r=await api('/api/po-settings',{method:'PUT',body:JSON.stringify(body)}); var dd=await r.json();
+      if(r.ok&&dd.ok){closeModal();tShow('Notification settings saved');}else tShow(dd.error||'Could not save');
+    };
   }
   async function poSetStatus(id,status,extra){
     var body=Object.assign({status:status},extra||{});

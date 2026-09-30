@@ -1205,3 +1205,16 @@ export async function upsertSuppliersFromImport(tenantId: string, rows: { name: 
   }
   return { added, updated };
 }
+
+// Emails of active purchasing managers (admins) — the shared approver pool.
+export async function listApproverEmails(tenantId: string): Promise<string[]> {
+  const { data, error } = await db().from('app_users').select('email,role,active').eq('tenant_id', tenantId).eq('role', 'admin').eq('active', true);
+  if (error) throw error;
+  return (data ?? []).map((r: any) => r.email).filter(Boolean);
+}
+export async function getAppUserEmail(id: string): Promise<string | null> {
+  if (!id) return null;
+  const { data, error } = await db().from('app_users').select('email').eq('id', id).maybeSingle();
+  if (error) return null;
+  return (data as any)?.email ?? null;
+}

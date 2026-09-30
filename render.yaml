@@ -37,6 +37,10 @@ services:
         value: "false"
       - key: LIVE_KEY
         sync: false
+      - key: RESEND_API_KEY        # optional — enables PO approval emails
+        sync: false
+      - key: TEAMS_PO_WEBHOOK      # optional — Teams channel Incoming Webhook for PO approvals
+        sync: false
 
   - type: web
     name: ace-office-prod
@@ -65,4 +69,8 @@ services:
       - key: AZURE_SSO_ENABLED
         value: "false"
       - key: LIVE_KEY
+        sync: false
+      - key: RESEND_API_KEY        # optional — enables PO approval emails
+        sync: false
+      - key: TEAMS_PO_WEBHOOK      # optional — Teams channel Incoming Webhook for PO approvals
         sync: false
