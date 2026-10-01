@@ -96,8 +96,10 @@ export async function parseLabelPdf(bytes: Uint8Array): Promise<LabelSpec> {
 }
 
 // ---- labels → A4 PDF --------------------------------------------------------------------------
-export interface LabelItem { w: number | string; h: number | string; ref: string; }
-export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: boolean; company: boolean; skip?: number; }
+export interface LabelItem { w: number | string; h: number | string; ref: string; kind?: 'hardware'; }
+// Each label is printed twice, side by side: the label in the left column and its copy in the right,
+// so one sheet row = one piece. `skipRows` leaves already-used rows at the top of the sheet empty.
+export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: boolean; company: boolean; skipRows?: number; }
 
 const MM = 72 / 25.4;
 const PAGE_W = 210 * MM, PAGE_H = 297 * MM;
@@ -116,8 +118,8 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
     doc.registerFont('B', join(ASSETS, 'LiberationSerif-Bold.ttf'));
     const logo = opts.logo ? readFileSync(join(ASSETS, 'wem-logo.jpg')) : null;
 
-    const skip = Math.max(0, Math.min(COLS * ROWS - 1, Math.floor(opts.skip ?? 0)));
-    const slots = [...Array(skip).fill(null), ...opts.labels];
+    const skipRows = Math.max(0, Math.min(ROWS - 1, Math.floor(opts.skipRows ?? 0)));
+    const slots: (LabelItem | null)[] = [...Array(skipRows * COLS).fill(null), ...opts.labels.flatMap((l) => Array(COLS).fill(l))];
     slots.forEach((lab, i) => {
       const k = i % (COLS * ROWS);
       if (k === 0) doc.addPage();
@@ -134,6 +136,11 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
 
       const w = CELL_W - 2 * PAD, x = x0 + PAD;
       let y = y0 + (header ? 33 : 23) * MM;
+      if (lab.kind === 'hardware') {
+        doc.font('B').fontSize(30).fillColor('#000').text('HARDWARE', x, y + 2 * MM, { width: w, align: 'center', lineBreak: false });
+        jobLine(doc, (opts.title || '').trim(), '', x, y + 16.5 * MM, w, y0 + CELL_H - 2 * MM);
+        return;
+      }
       doc.font('R').fontSize(15).fillColor('#000').text('Wymiar Okna:', x, y, { width: w, align: 'center' });
       y += 7 * MM;
       doc.font('B').fontSize(20).text(`P/N W${lab.w} x H${lab.h}`, x, y, { width: w, align: 'center', lineBreak: false });

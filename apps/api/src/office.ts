@@ -404,10 +404,10 @@ const server = createServer(async (req, res) => {
       if (!rows.length) { send(res, 400, { error: 'No labels selected.' }); return; }
       if (rows.length > 2000) { send(res, 400, { error: 'Too many labels (max 2000).' }); return; }
       const dim = (v: unknown) => String(v ?? '').replace(/[^0-9.,]/g, '').slice(0, 7);
-      const labels = rows.map((r: any) => ({ w: dim(r?.w), h: dim(r?.h), ref: String(r?.ref ?? '').trim().slice(0, 40) }));
+      const labels = rows.map((r: any) => (r?.kind === 'hardware' ? { w: '', h: '', ref: '', kind: 'hardware' as const } : { w: dim(r?.w), h: dim(r?.h), ref: String(r?.ref ?? '').trim().slice(0, 40) }));
       const title = String(b.title ?? '').trim().slice(0, 200);
-      const pdf = await buildLabelsPdf({ title, labels, logo: b.logo !== false, company: b.company !== false, skip: Number(b.skip) || 0 });
-      audit(ctx, 'labels.print', null, null, `Printed ${labels.length} label(s) — ${title}`);
+      const pdf = await buildLabelsPdf({ title, labels, logo: b.logo !== false, company: b.company !== false, skipRows: Number(b.skipRows) || 0 });
+      audit(ctx, 'labels.print', null, null, `Printed ${labels.length * 2} label(s) (${labels.length} × 2) — ${title}`);
       const fname = ('Etykiety ' + (String(b.order ?? '').trim() || 'labels')).replace(/[^\w .-]/g, '_');
       res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' });
       res.end(pdf);
@@ -3179,7 +3179,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
   <div id="labelsView" style="display:none">
     <main style="max-width:1080px">
-      <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of window/door labels &mdash; 8 per page (2 &times; 4, 105 &times; 74 mm), one label per piece. Nothing is stored.</div></div></div>
+      <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of labels (2 &times; 4, 105 &times; 74 mm). Each piece gets <b>two labels side by side</b> &mdash; the label on the left and its copy on the right &mdash; so one sheet holds 4 pieces. Nothing is stored.</div></div></div>
       <div class="card2" style="padding:16px 18px;margin-top:14px">
         <div class="porow" style="margin-top:0"><label class="pobtn" for="lbl_file">Choose PDF&hellip;</label><input id="lbl_file" type="file" accept="application/pdf,.pdf" style="display:none"><span class="pofname" id="lbl_fname">No file chosen</span></div>
         <div id="lbl_status" class="sub" style="margin:10px 0 0"></div>
@@ -3193,11 +3193,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div class="porow" style="gap:18px">
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="lbl_logo" checked> WEM logo</label>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="lbl_company" checked> Company details</label>
-            <label style="display:flex;gap:6px;align-items:center;font-size:13px">Skip first <input type="number" id="lbl_skip" class="tinput" min="0" max="7" value="0" style="width:64px"> labels on the sheet</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px">Skip first <input type="number" id="lbl_skip" class="tinput" min="0" max="3" value="0" style="width:64px"> rows on the sheet</label>
           </div>
         </div>
         <div class="card2" style="margin-top:14px"><table><thead><tr><th style="width:34px"><input type="checkbox" id="lbl_all" checked></th><th>POZ.</th><th>CONFIGURATION</th><th>W</th><th>H</th><th>REFERENCE</th></tr></thead><tbody id="lbl_rows"></tbody></table></div>
-        <div style="display:flex;justify-content:flex-end;margin:14px 0 30px"><button class="newbtn" id="lbl_go">Download labels PDF</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0 30px"><button class="pobtn" id="lbl_hw" title="Adds one more row at the end: two labels that say HARDWARE">+ Add HARDWARE labels</button><button class="newbtn" id="lbl_go">Download labels PDF</button></div>
       </div>
     </main>
   </div>
@@ -6023,6 +6023,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fin.onchange=labelsRead;
     document.getElementById('lbl_all').onchange=function(){ var on=this.checked; LBL_ROWS.forEach(function(r){r.on=on;}); renderLabelRows(); };
     document.getElementById('lbl_go').onclick=labelsDownload;
+    document.getElementById('lbl_skip').oninput=updateLabelCount;
+    document.getElementById('lbl_hw').onclick=function(){ LBL_ROWS.push({kind:'hardware',poz:'',config:'HARDWARE',w:'',h:'',ref:'',on:true}); renderLabelRows(); };
   }
   async function labelsRead(){
     var fin=document.getElementById('lbl_file'), f=fin.files[0], st=document.getElementById('lbl_status');
@@ -6033,7 +6035,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     LBL=d; LBL_ROWS=[];
     (d.positions||[]).forEach(function(p){ for(var i=0;i<p.qty;i++) LBL_ROWS.push({poz:p.poz,config:p.config,w:p.w==null?'':p.w,h:p.h==null?'':p.h,ref:p.refs[i]||'',on:true}); });
     document.getElementById('lbl_title').value=[d.order,d.job].filter(Boolean).join(' - ');
-    st.innerHTML='<b>'+esc(d.order||'Order')+'</b>'+(d.date?' · '+esc(d.date):'')+(d.client?' · '+esc(d.client):'')+' · '+(d.positions||[]).length+' position(s) · <b>'+LBL_ROWS.length+'</b> label(s)';
+    st.innerHTML='<b>'+esc(d.order||'Order')+'</b>'+(d.date?' · '+esc(d.date):'')+(d.client?' · '+esc(d.client):'')+' · '+(d.positions||[]).length+' position(s) · <b>'+LBL_ROWS.length+'</b> piece(s) → <b>'+(LBL_ROWS.length*2)+'</b> labels';
     document.getElementById('lbl_warn').innerHTML=(d.warnings||[]).length?'<div class="podecide" style="margin:14px 0 0"><div class="msg"><b>Please check</b>'+d.warnings.map(function(w){return '<small>'+esc(w)+'</small>';}).join('')+'</div></div>':'';
     document.getElementById('lbl_all').checked=true;
     renderLabelRows(); document.getElementById('lbl_result').style.display='block';
@@ -6042,6 +6044,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function renderLabelRows(){
     var tb=document.getElementById('lbl_rows');
     tb.innerHTML=LBL_ROWS.map(function(r,i){
+      if(r.kind==='hardware') return '<tr><td><input type="checkbox" data-i="'+i+'" data-k="on"'+(r.on?' checked':'')+'></td><td></td><td colspan="4"><b>HARDWARE</b> <span class="sub" style="margin:0">— two labels with the word HARDWARE and the job line</span></td></tr>';
       var miss=!String(r.ref).trim()||!String(r.w).trim()||!String(r.h).trim();
       return '<tr'+(miss?' style="background:#fff8eb"':'')+'><td><input type="checkbox" data-i="'+i+'" data-k="on"'+(r.on?' checked':'')+'></td><td>'+r.poz+'</td><td style="font-size:12px;color:var(--muted)">'+esc(r.config||'')+'</td>'
         +'<td><input class="tinput" style="width:80px;padding:6px 8px" data-i="'+i+'" data-k="w" value="'+av(r.w)+'"></td>'
@@ -6054,11 +6057,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     });
     updateLabelCount();
   }
-  function updateLabelCount(){ var n=LBL_ROWS.filter(function(r){return r.on;}).length; document.getElementById('lbl_go').textContent='Download labels PDF ('+n+' label'+(n===1?'':'s')+')'; }
+  function updateLabelCount(){ var n=LBL_ROWS.filter(function(r){return r.on;}).length; document.getElementById('lbl_go').textContent='Download labels PDF ('+(n*2)+' labels · '+Math.ceil((n+(+document.getElementById('lbl_skip').value||0))/4)+' sheet(s))'; }
   async function labelsDownload(){
     var rows=LBL_ROWS.filter(function(r){return r.on;}); if(!rows.length){tShow('Select at least one label');return;}
-    var bad=rows.filter(function(r){return !String(r.w).trim()||!String(r.h).trim();}); if(bad.length){ alert('Enter W and H for every selected label (Poz. '+bad.map(function(r){return r.poz;}).join(', ')+').'); return; }
-    var body={order:(LBL&&LBL.order)||'',title:document.getElementById('lbl_title').value,logo:document.getElementById('lbl_logo').checked,company:document.getElementById('lbl_company').checked,skip:+document.getElementById('lbl_skip').value||0,labels:rows.map(function(r){return {w:r.w,h:r.h,ref:r.ref};})};
+    var bad=rows.filter(function(r){return r.kind!=='hardware'&&(!String(r.w).trim()||!String(r.h).trim());}); if(bad.length){ alert('Enter W and H for every selected label (Poz. '+bad.map(function(r){return r.poz;}).join(', ')+').'); return; }
+    var body={order:(LBL&&LBL.order)||'',title:document.getElementById('lbl_title').value,logo:document.getElementById('lbl_logo').checked,company:document.getElementById('lbl_company').checked,skipRows:+document.getElementById('lbl_skip').value||0,labels:rows.map(function(r){return r.kind==='hardware'?{kind:'hardware'}:{w:r.w,h:r.h,ref:r.ref};})};
     var btn=document.getElementById('lbl_go'); btn.disabled=true;
     try{
       var r=await fetch('/api/labels/pdf',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});
