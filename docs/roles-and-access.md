@@ -13,8 +13,8 @@
 - **surveyor** — field: create & edit items, raise snags, add photos. Cannot add jobs.
 - **scanner** — field: create items (scan) + photos only.
 - **fitter** — field: fit items (set install status), raise snags, add photos. Sees **only items ready to fit**.
-- **Report confirmations** (Operations ▸ Confirmations, capability `confirmations.manage`) — admin and office. The shared link `/c/<token>` needs no login: the token is the key, the report runs in a sandboxed frame, and `confirmations` has RLS on with no policies (server-only access).
-- **logistics** — office app **Logistics ▸ Labels** only: upload an Archimede production PDF, download an A4 sheet of window/door labels. No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have Labels.
+- **Report confirmations** (Logistics ▸ Confirmations, capability `confirmations.manage`) — logistics and admin. The shared link `/c/<token>` needs no login: the token is the key, the report runs in a sandboxed frame, and `confirmations` has RLS on with no policies (server-only access).
+- **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
 
 ## Capability matrix
 

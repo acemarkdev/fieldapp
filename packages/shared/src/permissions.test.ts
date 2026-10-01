@@ -27,10 +27,12 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   ok(`${r} lacks finance.view`, can(r, 'finance.view') === false);
 }
 
-// --- logistics: label printing and nothing else ---
+// --- logistics: the Logistics menu (labels + confirmations) and nothing else ---
 {
   const { CAPABILITIES } = await import('./permissions');
-  for (const c of CAPABILITIES) ok(`logistics ${c.key} === ${c.key === 'labels.print'}`, can('logistics', c.key) === (c.key === 'labels.print'));
+  const LOGI = ['labels.print', 'confirmations.manage'];
+  for (const c of CAPABILITIES) ok(`logistics ${c.key} === ${LOGI.includes(c.key)}`, can('logistics', c.key) === LOGI.includes(c.key));
+  ok('office lacks confirmations.manage', can('office', 'confirmations.manage') === false);
   ok('admin has labels.print', can('admin', 'labels.print') === true);
   ok('office lacks labels.print', can('office', 'labels.print') === false);
 }

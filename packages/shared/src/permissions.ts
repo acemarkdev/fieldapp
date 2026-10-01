@@ -62,7 +62,7 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
 export const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: CAPABILITIES.map((c) => c.key), // everything
-  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request', 'confirmations.manage'],
+  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request'],
   surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
   scanner: ['calendar.view', 'items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
   fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add', 'purchasing.request'],
@@ -70,8 +70,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   invoice_manager: ['calendar.view', 'finance.view', 'finance.manage'],
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
   customer: [],
-  // Label printing only — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
-  logistics: ['labels.print'],
+  // Logistics menu only (Labels, Confirmations) — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
+  logistics: ['labels.print', 'confirmations.manage'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

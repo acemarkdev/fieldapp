@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.3.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.3.1', date: '2026-10-01', changes: [
+    'Confirmations moved to the Logistics menu (Logistics \u25b8 Labels, Confirmations) with the same access as Labels: the logistics role and admins. Office users no longer see it. No migration.',
+  ] },
   { version: '1.3.0', date: '2026-09-30', changes: [
     'Operations \u25b8 Confirmations: share a report for sign-off by link. Upload a \u201craport do potwierdzenia\u201d (HTML), copy the link and send it; the recipient marks decisions, signs and clicks Approve, which locks the report and notifies you (email / Teams DM). The table shows every shared report with Pending approval / Approved, the approver and date, plus Copy link, Open, PDF (decisions + answers + signature) and Filled report (the page exactly as the customer filled it in, to print or save as PDF). Works with any report structure: items/questions are read per file; reports with the autosave hook save every decision as it is made, others are captured on Approve with a name + signature box. The report runs sandboxed so it can\u2019t touch office logins. Admin and office roles. Requires migration 0054_confirmations.sql.',
   ] },

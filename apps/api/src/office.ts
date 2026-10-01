@@ -379,8 +379,8 @@ const server = createServer(async (req, res) => {
         (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET');
       if (!allowedForCustomer) { send(res, 403, { error: 'Not allowed.' }); return; }
     }
-    // ---- Logistics: label printing only; everything else is refused ----
-    if (ctx.role === 'logistics' && !(p === '/api/me' || p.startsWith('/api/labels/'))) {
+    // ---- Logistics: the Logistics menu only (labels, confirmations); everything else is refused ----
+    if (ctx.role === 'logistics' && !(p === '/api/me' || p.startsWith('/api/labels/') || p === '/api/confirmations' || p.startsWith('/api/confirmations/'))) {
       send(res, 403, { error: 'Not allowed.' }); return;
     }
     // Read an Archimede production PDF → positions for the label sheet (nothing is stored).
@@ -2856,7 +2856,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabPlans" class="tab" onclick="showTab('plans')">Plans</button>
         <button id="tabCal" class="tab" onclick="showTab('cal')">Calendar</button>
         <button id="tabSignoff" class="tab" style="display:none" onclick="showTab('signoff')">Sign-off</button>
-        <button id="tabConfirm" class="tab" style="display:none" onclick="showTab('confirm')">Confirmations</button>
       </div></div>
       <div class="grp" id="grp_sales"><button class="grpbtn" onclick="toggleGrp('sales')">Sales \u25be</button><div class="grpmenu" id="menu_sales">
         <button id="tabLeads" class="tab" style="display:none" onclick="showTab('leads')">Leads</button>
@@ -2875,6 +2874,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div></div>
       <div class="grp" id="grp_logistics"><button class="grpbtn" onclick="toggleGrp('logistics')">Logistics \u25be</button><div class="grpmenu" id="menu_logistics">
         <button id="tabLabels" class="tab" style="display:none" onclick="showTab('labels')">Labels</button>
+        <button id="tabConfirm" class="tab" style="display:none" onclick="showTab('confirm')">Confirmations</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
@@ -3503,6 +3503,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
+    if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
     var need={confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
@@ -3553,7 +3554,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
-    if(myRole==='logistics'){showTab('labels');return;}
+    if(myRole==='logistics'){showTab(restoreTab());return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
@@ -4668,8 +4669,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabConfirm'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'ops',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -6655,7 +6656,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token');
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'){showTab('labels');}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
+  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----
