@@ -334,7 +334,7 @@ const server = createServer(async (req, res) => {
       if (sub === 'approve' && req.method === 'POST') {
         if (row.status !== 'pending') { json(409, { error: 'Raport jest już zatwierdzony. / Already approved.' }); return; }
         const r = await approveConfirmation(row, await readJson(req));
-        if (!r.ok) { json(400, { error: r.error }); return; }
+        if (!r.ok) { json(400, { error: r.error, missing: r.missing ?? [] }); return; }
         (async () => { try { await notifyConfirmationApproved(r.row, await getAppUserEmail(r.row.created_by)); } catch (e) { console.error('confirmation notify failed', e); } })();
         json(200, { ok: true }); return;
       }

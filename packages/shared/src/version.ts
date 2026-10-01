@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.3.1';
+export const APP_VERSION = '1.3.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.3.2', date: '2026-10-01', changes: [
+    'Confirmations: a report can only be approved once every item has a decision (Akceptuję / Nie akceptuję), every rejected item says what is wrong, and every question is answered. Enforced on the server; the recipient is told what is missing and the page scrolls to the first gap. Applies to reports that save as they go (the Z.439 type). No migration.',
+  ] },
   { version: '1.3.1', date: '2026-10-01', changes: [
     'Confirmations moved to the Logistics menu (Logistics \u25b8 Labels, Confirmations) with the same access as Labels: the logistics role and admins. Office users no longer see it. No migration.',
   ] },

@@ -104,7 +104,30 @@ export async function saveState(row: any, state: any): Promise<void> {
 }
 // Approve. The approver is the report's own signature if it has one, otherwise the name / signature
 // entered in our Approve box. `snapshot` is the page exactly as filled in (any report structure).
-export async function approveConfirmation(row: any, body: any): Promise<{ ok: boolean; error?: string; row?: any }> {
+// What still blocks approval: every listed item needs a decision, every rejection a reason, every
+// question an answer. Only checkable when the report saves its state (autosave) and lists its items.
+export function missingDecisions(row: any): { ids: string[]; message: string } | null {
+  const meta = row.meta ?? {};
+  if (!meta.autosave) return null;
+  const items: Record<string, any> = row.state?.items ?? {}, answers: Record<string, any> = row.state?.answers ?? {};
+  const undecided = (meta.items ?? []).filter((id: string) => items[id]?.status !== 'ok' && items[id]?.status !== 'no');
+  const noReason = (meta.items ?? []).filter((id: string) => items[id]?.status === 'no' && !String(items[id]?.why ?? '').trim());
+  const unanswered = Object.keys(meta.questions ?? {}).filter((q) => !String(answers[q]?.text ?? '').trim());
+  if (!undecided.length && !noReason.length && !unanswered.length) return null;
+  const parts: string[] = [];
+  if (undecided.length) parts.push(`${undecided.length} element(ów) bez decyzji (Akceptuję / Nie akceptuję)`);
+  if (noReason.length) parts.push(`${noReason.length} odrzucony(ch) bez opisu „Co się nie zgadza”`);
+  if (unanswered.length) parts.push(`${unanswered.length} pytanie(a) bez odpowiedzi`);
+  const first = [...undecided, ...noReason].slice(0, 3).map((id) => meta.titles?.[id] ?? id);
+  return {
+    ids: [...undecided, ...noReason, ...unanswered.map((q) => 'q:' + q)],
+    message: `Nie można jeszcze zatwierdzić: ${parts.join('; ')}.` + (first.length ? ` Np.: ${first.join(' · ')}.` : ''),
+  };
+}
+
+export async function approveConfirmation(row: any, body: any): Promise<{ ok: boolean; error?: string; missing?: string[]; row?: any }> {
+  const gaps = missingDecisions(row);
+  if (gaps) return { ok: false, error: gaps.message, missing: gaps.ids };
   const own = row.state?.signature && String(row.state.signature.name ?? '').trim() ? row.state.signature : null;
   const typed = String(body?.name ?? '').trim();
   if (row.meta?.ownSignature && !own) return { ok: false, error: 'Najpierw wpisz imię i nazwisko, złóż podpis i kliknij „Zapisz akceptację” w sekcji Akceptacja. / Please sign in the Akceptacja section first.' };
@@ -160,7 +183,7 @@ const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pl-PL',
 const BRIDGE = `<script>(function(){
   var LOCKED=__LOCKED__, seq=0, wait={}, framed=window.parent!==window;
   window.addEventListener('message',function(e){ if(e.source!==window.parent) return; var d=e.data||{}; if(!d.__ace||!wait[d.id]) return;
-    var w=wait[d.id]; delete wait[d.id]; if(d.ok) w[0](d.body); else w[1](new Error((d.body&&d.body.error)||('HTTP '+d.status))); });
+    var w=wait[d.id]; delete wait[d.id]; if(d.ok) w[0](d.body); else { var er=new Error((d.body&&d.body.error)||('HTTP '+d.status)); er.body=d.body; w[1](er); } });
   window.aceRpc=function(op,payload){ return new Promise(function(res,rej){ if(!framed) return rej(new Error('not framed'));
     var id=++seq; wait[id]=[res,rej]; window.parent.postMessage({__ace:1,id:id,op:op,payload:payload},'*');
     setTimeout(function(){ if(wait[id]){ delete wait[id]; rej(new Error('timeout')); } },30000); }); };
@@ -304,7 +327,11 @@ const APPROVE_JS = `var OWN=__OWN__, b=document.getElementById('ace-approve-btn'
       b.disabled=true;
       try{ body.snapshot=snapshot(); }catch(e){}
       window.aceRpc('approve',body).then(function(){ return window.aceRpc('reload'); })
-        .catch(function(err){ m.textContent=(err&&err.message)||'Nie udało się zatwierdzić.'; b.disabled=false; });
+        .catch(function(err){ m.textContent=(err&&err.message)||'Nie udało się zatwierdzić.'; b.disabled=false;
+          var miss=(err&&err.body&&err.body.missing)||[];
+          for(var i=0;i<miss.length;i++){ var id=String(miss[i]), el=id.indexOf('q:')===0?document.getElementById('q-'+id.slice(2)):document.getElementById('row-'+id);
+            if(el){ el.scrollIntoView({behavior:'smooth',block:'center'}); el.style.transition='box-shadow .3s'; el.style.boxShadow='0 0 0 3px #f59e0b'; setTimeout(function(x){ return function(){ x.style.boxShadow=''; }; }(el),2500); break; } }
+        });
     });`;
 
 // ---- approval record PDF ---------------------------------------------------------------------
