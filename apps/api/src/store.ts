@@ -212,6 +212,12 @@ export async function insertAuditLog(e: AuditEntry): Promise<void> {
   const { error } = await db().from('audit_log').insert(e);
   if (error) throw error;
 }
+// How many times an action was logged for a tenant (e.g. 'labels.print' = label PDFs downloaded).
+export async function countAuditAction(tenantId: string, action: string): Promise<number> {
+  const { count, error } = await db().from('audit_log').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('action', action);
+  if (error) throw error;
+  return count ?? 0;
+}
 export async function listAuditLog(tenantId: string, limit = 300): Promise<any[]> {
   const { data, error } = await db().from('audit_log')
     .select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(limit);

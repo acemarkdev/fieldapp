@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.4.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.4.1', date: '2026-10-01', changes: [
+    'Labels: savings counter, visible to admins only \u2014 PDFs processed (one per label download), time saved (1 hour per PDF) and money saved (50 PLN per hour). Counts every download since the feature launched. No migration.',
+  ] },
   { version: '1.4.0', date: '2026-10-01', changes: [
     'Labels: every piece now prints as a pair \u2014 the label in the left column and its copy in the right \u2014 so one A4 sheet holds 4 pieces (8 labels). New \u201c+ Add HARDWARE labels\u201d button adds a row at the end with two labels that say HARDWARE plus the job line. \u201cSkip\u201d now counts sheet rows (0\u20133). No migration.',
   ] },

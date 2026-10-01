@@ -21,7 +21,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
 import { isRowComplete, missingRequired, FIELD_LABELS, toMm } from '@ace/shared';
 import { buildItemCode, levelSeg } from '@ace/shared';
-import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, listItemActivity, userNames, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
+import { createJob, updateJobDetails, JOB_DATE_FIELDS, getConfig, setConfig, bulkDeleteItems, countItemsForJob, deleteJob, roomCodeCounts, setJobMappingDate, bulkInsertSurveyItems, codeExists, insertAuditLog, listAuditLog, countAuditAction, listItemActivity, userNames, getImportDraft, saveImportDraft, deleteImportDraft, deleteImportedItems, listItemCodesForJob, jobItemCounts } from './store';
 import { ensureJobFileBucket, uploadJobFile, signedJobFileUrl, insertJobFile, listJobFiles, deleteJobFile, getJobFile, downloadJobFile } from './store';
 import { listJobs, getJob, getJobByCode, getJobByRef, listSurveyItems, listTeams, jobTeamIds, listScheduledItems, getSurveyItem,
   getTeam, createTeam, updateTeam, deleteTeam, countItemsUsingTeam, setJobBoard,
@@ -130,6 +130,8 @@ const ROLE_MATRIX = { caps: CAPABILITIES, roles: SHARED_ROLES, labels: ROLE_LABE
 const PHOTO_KIND_LABEL: Record<string, string> = { reference: 'Reference', survey: 'Survey', sketch: 'Sketch', install: 'Install', before: 'Picture Before', after: 'Picture After' };
 
 const PORT = Number(process.env.PORT ?? 3000);
+// Labels savings estimate shown to admins: each processed PDF replaces ~1 hour of manual work.
+const LABEL_HOURS_PER_PDF = 1, LABEL_PLN_PER_HOUR = 50;
 
 function authClient() {
   const url = process.env.SUPABASE_URL, anon = process.env.SUPABASE_ANON_KEY;
@@ -396,6 +398,13 @@ const server = createServer(async (req, res) => {
       catch (e: any) { send(res, 400, { error: 'Could not read the PDF: ' + (e?.message ?? String(e)) }); }
       return;
     }
+    // Savings counter (admin only): label PDFs downloaded so far; 1 PDF = 1 hour saved = 50 PLN.
+    if (p === '/api/labels/stats' && req.method === 'GET') {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
+      const count = await countAuditAction(ctx.tenant_id, 'labels.print');
+      send(res, 200, { count, hours: count * LABEL_HOURS_PER_PDF, money: count * LABEL_HOURS_PER_PDF * LABEL_PLN_PER_HOUR, currency: 'PLN', hoursPerPdf: LABEL_HOURS_PER_PDF, ratePerHour: LABEL_PLN_PER_HOUR });
+      return;
+    }
     // Build the A4 label sheet (2 × 4 per page) from the reviewed rows.
     if (p === '/api/labels/pdf' && req.method === 'POST') {
       if (!allow('labels.print')) return;
@@ -407,7 +416,8 @@ const server = createServer(async (req, res) => {
       const labels = rows.map((r: any) => (r?.kind === 'hardware' ? { w: '', h: '', ref: '', kind: 'hardware' as const } : { w: dim(r?.w), h: dim(r?.h), ref: String(r?.ref ?? '').trim().slice(0, 40) }));
       const title = String(b.title ?? '').trim().slice(0, 200);
       const pdf = await buildLabelsPdf({ title, labels, logo: b.logo !== false, company: b.company !== false, skipRows: Number(b.skipRows) || 0 });
-      audit(ctx, 'labels.print', null, null, `Printed ${labels.length * 2} label(s) (${labels.length} × 2) — ${title}`);
+      // Awaited (not fire-and-forget): this row is what the admin savings counter counts.
+      try { await insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action: 'labels.print', entity: null, entity_id: null, summary: `Printed ${labels.length * 2} label(s) (${labels.length} × 2) — ${title}`, details: null }); } catch (e: any) { console.warn('[audit]', e?.message ?? e); }
       const fname = ('Etykiety ' + (String(b.order ?? '').trim() || 'labels')).replace(/[^\w .-]/g, '_');
       res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' });
       res.end(pdf);
@@ -3180,6 +3190,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="labelsView" style="display:none">
     <main style="max-width:1080px">
       <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of labels (2 &times; 4, 105 &times; 74 mm). Each piece gets <b>two labels side by side</b> &mdash; the label on the left and its copy on the right &mdash; so one sheet holds 4 pieces. Nothing is stored.</div></div></div>
+      <div class="statgrid" id="lbl_stats" style="display:none;margin:14px 0 0"></div>
       <div class="card2" style="padding:16px 18px;margin-top:14px">
         <div class="porow" style="margin-top:0"><label class="pobtn" for="lbl_file">Choose PDF&hellip;</label><input id="lbl_file" type="file" accept="application/pdf,.pdf" style="display:none"><span class="pofname" id="lbl_fname">No file chosen</span></div>
         <div id="lbl_status" class="sub" style="margin:10px 0 0"></div>
@@ -6018,7 +6029,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   // ---- Logistics ▸ Labels: Archimede PDF → A4 label sheet ----
   var LBL=null, LBL_ROWS=[];
+  // Admin-only savings counter: PDFs processed, hours saved (1 h each), money saved (50 PLN / h).
+  async function loadLabelStats(){
+    var box=document.getElementById('lbl_stats'); if(myRole!=='admin'){ box.style.display='none'; return; }
+    var d; try{ var r=await api('/api/labels/stats'); d=await r.json(); if(!r.ok)throw 0; }catch(e){ box.style.display='none'; return; }
+    var n=function(v){ return Number(v||0).toLocaleString('en-GB'); };
+    box.innerHTML='<div class="stat"><div class="v">'+n(d.count)+'</div><div class="l">PDFs processed</div></div>'
+      +'<div class="stat"><div class="v">'+n(d.hours)+' h</div><div class="l">Time saved ('+n(d.hoursPerPdf)+' h per PDF)</div></div>'
+      +'<div class="stat"><div class="v">'+n(d.money)+' '+esc(d.currency)+'</div><div class="l">Money saved ('+n(d.ratePerHour)+' '+esc(d.currency)+' per hour)</div></div>';
+    box.style.display='grid';
+  }
   function initLabels(){
+    loadLabelStats();
     var fin=document.getElementById('lbl_file'); if(fin.dataset.ready)return; fin.dataset.ready='1';
     fin.onchange=labelsRead;
     document.getElementById('lbl_all').onchange=function(){ var on=this.checked; LBL_ROWS.forEach(function(r){r.on=on;}); renderLabelRows(); };
@@ -6067,6 +6089,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var r=await fetch('/api/labels/pdf',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});
       if(!r.ok){ var e=await r.json().catch(function(){return {};}); tShow(e.error||'Could not build the PDF'); return; }
       var blob=await r.blob(); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='Etykiety '+(body.order||'labels')+'.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      loadLabelStats();
     } finally { btn.disabled=false; }
   }
   function poShowAwaiting(){ var sf=document.getElementById('poStatusFilter'); if(sf){sf.value='in_review';} loadPoRequests(); }
