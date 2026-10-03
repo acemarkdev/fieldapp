@@ -7,6 +7,7 @@
 // number or net amount was edited after registration → the row is flagged `changed`.
 import { db } from './supabase';
 import { Monday, withMondayRetry } from './monday';
+import { getConfig, setConfig } from './store';
 
 // The invoices board per environment. Only PROD touches the real board "FAKTURY WSZYSTKIE"; test and
 // local development use its copy "FAKTURY WSZYSTKIE _TEST" (same column ids), so test syncs can never
@@ -208,4 +209,46 @@ export async function acceptCostChange(tenantId: string, id: string, boardId: st
   const upd = await db().from('fin_costs').update({ cost_id: costId, orig_supplier: r.supplier, orig_invoice_no: r.invoice_no, orig_net: net, changed: false, changed_at: null, monday_cost_id: costId }).eq('id', r.id);
   if (upd.error) throw upd.error;
   return { ok: true, costId };
+}
+
+// ---- automatic daily sync ----------------------------------------------------------------------
+// Settings live in app_config (not secret): on/off + the hour of day, in Poland time.
+export const AUTO_SYNC_TZ = 'Europe/Warsaw';
+export const AUTO_SYNC_BY = 'Automatic (daily)';
+export interface AutoSyncSettings { enabled: boolean; hour: number; tz: string }
+
+export async function getAutoSyncSettings(): Promise<AutoSyncSettings> {
+  const [en, hr] = await Promise.all([getConfig('fin_sync_enabled'), getConfig('fin_sync_hour')]);
+  const hour = Number(hr);
+  return { enabled: en !== 'false', hour: hr !== null && hr !== '' && Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 6, tz: AUTO_SYNC_TZ };
+}
+export async function setAutoSyncSettings(enabled: boolean, hour: number): Promise<void> {
+  await setConfig('fin_sync_enabled', enabled ? 'true' : 'false');
+  await setConfig('fin_sync_hour', String(hour));
+}
+
+/** Local calendar day ("2026-10-03") and hour (0–23) of an instant in the given time zone. */
+export function localDayHour(at: Date, tz: string): { day: string; hour: number } {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(at).map((x) => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+}
+/** Due when it's on, the hour has been reached today, and no automatic run has started yet today
+ *  (so a server restart after the hour still catches up, and it never runs twice in a day). */
+export function autoSyncDue(now: Date, s: AutoSyncSettings, lastAutoStartedAt: string | null): boolean {
+  if (!s.enabled) return false;
+  const n = localDayHour(now, s.tz);
+  if (n.hour < s.hour) return false;
+  return !lastAutoStartedAt || localDayHour(new Date(lastAutoStartedAt), s.tz).day !== n.day;
+}
+async function lastAutoRunStart(tenantId: string): Promise<string | null> {
+  const { data, error } = await db().from('fin_sync_runs').select('started_at').eq('tenant_id', tenantId).eq('started_by', AUTO_SYNC_BY).order('started_at', { ascending: false }).limit(1);
+  if (error) throw error; return data?.[0]?.started_at ?? null;
+}
+/** Called on a timer by the office server. Starts the daily sync when it is due. */
+export async function autoSyncTick(tenantId: string, boardId: string): Promise<boolean> {
+  if (syncProgress(tenantId)?.running) return false;
+  const s = await getAutoSyncSettings();
+  if (!s.enabled || localDayHour(new Date(), s.tz).hour < s.hour) return false;   // cheap exit before touching the runs table
+  if (!autoSyncDue(new Date(), s, await lastAutoRunStart(tenantId))) return false;
+  return startCostSync(tenantId, boardId, AUTO_SYNC_BY).started;
 }

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.6.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.6.1', date: '2026-10-03', changes: [
+    'Fin&Ops: automatic daily sync from Monday \u2014 on by default at 06:00 Poland time. Admins can change the hour or switch it off on the Costs tab (\u201cAutomatic sync \u2026 change\u201d). Runs once a day; if the server was restarting at that hour it runs as soon as it is back. Automatic runs appear in the last-sync line as \u201cAutomatic (daily)\u201d. No migration.',
+  ] },
   { version: '1.6.0', date: '2026-10-03', changes: [
     'Fin&Ops \u25b8 Performance (phase 2). The New Performance Sheet layout, calculated from the synced invoices: department (Office / Sales / Production) \u2192 Overheads \u2192 Fixed / Variable \u2192 cost line, with a column per month, a year total and the \u201cControl sum \u2014 Monday\u201d row. Click any number to open the invoices behind it on the Costs tab. Fixed / variable follows the sheet\u2019s category rule by default (or the board\u2019s Koszt column), and the page counts invoices where the two disagree. Year and company (Acemark / Ace Group / Poza bilans) selectors, collapsible blocks, CSV export. Salaries and payroll taxes are placeholders until the payroll source is connected. No migration.',
   ] },

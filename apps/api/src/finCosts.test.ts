@@ -1,5 +1,5 @@
 // Fin&Ops cost rules. Run: npx tsx apps/api/src/finCosts.test.ts
-import { buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf } from './finCosts';
+import { buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour } from './finCosts';
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) { fail++; console.error('✗ ' + label); } else console.log('✓ ' + label); };
@@ -52,6 +52,20 @@ ok('flag incomplete', flagsOf(blank, new Set()).includes('incomplete'));
 ok('flag konto mismatch', flagsOf(toCostRow(T, item({ konto: '473' }), 'cid', null, NOW), new Set()).includes('konto'));
 ok('no konto flag when matching (.V)', !flagsOf(toCostRow(T, item({ sub: '499.V Handel', konto: '499.V' }), 'cid', null, NOW), new Set()).includes('konto'));
 ok('clean row has no flags', flagsOf(first, new Set()).length === 0);
+
+// --- automatic daily sync (06:00 Poland time) ---
+const S = { enabled: true, hour: 6, tz: 'Europe/Warsaw' };
+ok('local day/hour in Warsaw (summer, UTC+2)', JSON.stringify(localDayHour(new Date('2026-07-01T04:30:00Z'), 'Europe/Warsaw')) === '{"day":"2026-07-01","hour":6}');
+ok('local day/hour in Warsaw (winter, UTC+1)', JSON.stringify(localDayHour(new Date('2026-12-01T05:30:00Z'), 'Europe/Warsaw')) === '{"day":"2026-12-01","hour":6}');
+ok('midnight is hour 0, not 24', localDayHour(new Date('2026-07-01T22:10:00Z'), 'Europe/Warsaw').hour === 0);
+ok('not due before 06:00', autoSyncDue(new Date('2026-10-05T03:59:00Z'), S, null) === false);            // 05:59 Warsaw
+ok('due at 06:00 when never run', autoSyncDue(new Date('2026-10-05T04:00:00Z'), S, null) === true);      // 06:00 Warsaw
+ok('due at 06:00 when last run was yesterday', autoSyncDue(new Date('2026-10-05T04:02:00Z'), S, '2026-10-04T04:00:10Z') === true);
+ok('not due again the same day', autoSyncDue(new Date('2026-10-05T09:00:00Z'), S, '2026-10-05T04:00:10Z') === false);
+ok('catch-up later the same day after downtime', autoSyncDue(new Date('2026-10-05T13:00:00Z'), S, '2026-10-04T04:00:10Z') === true);
+ok('a run just after local midnight counts for that new day', autoSyncDue(new Date('2026-10-05T04:00:00Z'), S, '2026-10-04T22:30:00Z') === false); // 00:30 Warsaw on the 5th
+ok('off → never due', autoSyncDue(new Date('2026-10-05T10:00:00Z'), { ...S, enabled: false }, null) === false);
+ok('other hour respected (22:00)', autoSyncDue(new Date('2026-10-05T19:59:00Z'), { ...S, hour: 22 }, null) === false && autoSyncDue(new Date('2026-10-05T20:00:00Z'), { ...S, hour: 22 }, null) === true);
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
 console.log('\nAll fin-cost rule tests passed.');

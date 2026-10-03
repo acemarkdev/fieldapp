@@ -45,7 +45,7 @@ import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
-import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange } from './finCosts';
+import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
@@ -433,7 +433,7 @@ const server = createServer(async (req, res) => {
       if (!allow('finops.view')) return;
       const [rows, run, slug] = await Promise.all([listCosts(ctx.tenant_id), lastSyncRun(ctx.tenant_id), getConfig('monday_account_slug')]);
       const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
-      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, isTestBoard: boardId !== FIN_BOARD_PROD, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage') });
+      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, isTestBoard: boardId !== FIN_BOARD_PROD, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage'), auto: await getAutoSyncSettings() });
       return;
     }
     if (p === '/api/finops/costs/sync' && req.method === 'POST') {
@@ -447,6 +447,17 @@ const server = createServer(async (req, res) => {
     if (p === '/api/finops/costs/sync' && req.method === 'GET') {
       if (!allow('finops.view')) return;
       send(res, 200, { sync: syncProgress(ctx.tenant_id), lastRun: await lastSyncRun(ctx.tenant_id) });
+      return;
+    }
+    // Automatic daily sync: on/off + hour (Poland time). Admin only.
+    if (p === '/api/finops/auto-sync' && req.method === 'PUT') {
+      if (!allow('finops.manage')) return;
+      const b = await readJson(req);
+      const hour = Number(b.hour);
+      if (!Number.isInteger(hour) || hour < 0 || hour > 23) { send(res, 400, { error: 'Hour must be 0–23.' }); return; }
+      await setAutoSyncSettings(b.enabled !== false, hour);
+      audit(ctx, 'finops.autosync', 'fin_costs', null, `Automatic cost sync ${b.enabled !== false ? 'on at ' + String(hour).padStart(2, '0') + ':00' : 'off'}`);
+      send(res, 200, { ok: true, auto: await getAutoSyncSettings() });
       return;
     }
     if (p.startsWith('/api/finops/costs/') && p.endsWith('/accept') && req.method === 'POST') {
@@ -2549,6 +2560,19 @@ server.listen(PORT, () => {
   console.log('  log in with the account you made via create-admin · Ctrl+C to stop\n');
 });
 
+// Fin&Ops automatic daily cost sync: check every 5 minutes whether today's run is due.
+// (A sleeping free-plan instance has no timers — the catch-up rule runs it when it next wakes.)
+if (process.env.SUPABASE_URL && process.env.MONDAY_API_TOKEN) {
+  const tick = async () => {
+    try {
+      const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
+      if (await autoSyncTick(ACE_TENANT, boardId)) console.log('[fin sync] automatic daily sync started');
+    } catch (e: any) { console.warn('[fin sync] auto tick failed:', e?.message ?? e); }
+  };
+  setTimeout(tick, 60_000).unref();
+  setInterval(tick, 5 * 60_000).unref();
+}
+
 const RATE = 'rate_override_pennies', ISTAT = 'install_status', TEAM = 'team_id';
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>ACE — Office</title>
@@ -3254,6 +3278,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b id="fc_board">FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
         <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fc_last" style="margin:0;text-align:right"></span><button class="newbtn" id="fc_sync">Sync from Monday</button></div>
       </div>
+      <div class="sub" id="fc_auto" style="margin:6px 0 0;text-align:right"></div>
       <div id="fc_progress" class="podecide" style="display:none;margin:14px 0 0"><div class="msg" id="fc_progress_msg"></div></div>
       <div class="statgrid" id="fc_stats" style="margin:14px 0"></div>
       <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -6100,8 +6125,25 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fcOpts('fc_status','All statuses',uniq('status'),!first);
     var bl=document.getElementById('fc_board'); if(bl)bl.innerHTML='<a class="codelink" target="_blank" rel="noopener" href="https://'+av(d.slug)+'.monday.com/boards/'+av(d.boardId)+'">FAKTURY WSZYSTKIE'+(d.isTestBoard?' _TEST':'')+' \u2197</a>';
     if(FC.preset){ var ps=FC.preset; FC.preset=null; ['year','month','company','dept','cat','kind'].forEach(function(k){ var el=document.getElementById('fc_'+k); el.value=ps[k]==null?'':String(ps[k]); }); document.getElementById('fc_status').value=''; document.getElementById('fc_flag').value=''; document.getElementById('fc_q').value=''; FC.limit=300; FC.extra=ps.extra||null; }
-    FC.lastRun=d.lastRun; FC.loaded=true;
+    FC.lastRun=d.lastRun; FC.loaded=true; FC.auto=d.auto; fcAutoLine();
     fcLast(d.lastRun); renderFinCosts(); fcProgress(d.sync);
+  }
+  function fcAutoLine(){
+    var a=FC.auto, el=document.getElementById('fc_auto'); if(!a){ el.textContent=''; return; }
+    var hh=(a.hour<10?'0':'')+a.hour+':00';
+    el.innerHTML='Automatic sync: '+(a.enabled?'<b>every day at '+hh+'</b> (Poland time)':'<b>off</b>')+(FC.canManage?' \u00b7 <a class="codelink" id="fc_auto_edit">change</a>':'');
+    var e=document.getElementById('fc_auto_edit'); if(e)e.onclick=fcAutoEdit;
+  }
+  function fcAutoEdit(){
+    var a=FC.auto||{enabled:true,hour:6}, opts=''; for(var h=0;h<24;h++)opts+='<option value="'+h+'"'+(h===a.hour?' selected':'')+'>'+(h<10?'0':'')+h+':00</option>';
+    openModal('Automatic sync','<div class="fgrid"><div class="field full"><label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink)"><input type="checkbox" id="fca_on"'+(a.enabled?' checked':'')+' style="width:16px;height:16px"> Sync from Monday automatically every day</label></div>'
+      +'<div class="field"><label>Time (Poland time)</label><select id="fca_hour">'+opts+'</select></div>'
+      +'<div class="sub full" style="margin:0">Runs once a day at the chosen hour. If the server was restarting at that moment, it runs as soon as it is back. You can still sync by hand at any time.</div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="fca_save">Save</button></div>');
+    document.getElementById('fca_save').onclick=async function(){
+      var r=await api('/api/finops/auto-sync',{method:'PUT',body:JSON.stringify({enabled:document.getElementById('fca_on').checked,hour:+document.getElementById('fca_hour').value})}); var d=await r.json();
+      if(r.ok&&d.ok){ FC.auto=d.auto; fcAutoLine(); closeModal(); tShow('Saved'); } else tShow(d.error||'Could not save');
+    };
   }
   function fcLast(run){
     var el=document.getElementById('fc_last');
