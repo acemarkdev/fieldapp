@@ -80,15 +80,9 @@ ok('KONTO with several values incl. the code → ok', !cls('Sales', '499.V Hande
 ok('KONTO different from category → konto', cls('Sales', '499.V Handel', '449.V').includes('konto'));
 ok('no KONTO → no konto flag', !cls('Office', '429 Office', null).includes('konto'));
 ok('Tax has no account code → no konto flag', !cls('Sales', 'Tax', '100').includes('konto'));
-ok('429 Office under Production → valid line (added on request)', !cls('Production', '429 Office', '429').includes('offsheet'));
-ok('445 Utilities under Production → offsheet', cls('Production', '445 Utilities', '445').includes('offsheet'));
-ok('463 Software under Production → offsheet (sheet has only 463.V there)', cls('Production', '463 Software', '463').includes('offsheet'));
-ok('463.V Software under Production → on the sheet', !cls('Production', '463.V Software', '463.V').includes('offsheet'));
-ok('473 Maintenance under Sales → offsheet', cls('Sales', '473 Maintenance', '473').includes('offsheet'));
-ok('473 Investments under Production → on the sheet', !cls('Production', '473 Investments', '473').includes('offsheet'));
+ok('any category is fine under any department (open list): 489.V Internet under Sales, 429 Office under Production', cls('Sales', '489.V Internet', '489.V').length === 0 && cls('Production', '429 Office', '429').length === 0 && cls('Sales', '473 Maintenance', '473').length === 0);
 ok('no department → unclassified', cls(null, '631 Materials', '631').includes('unclassified'));
 ok('no category → unclassified', cls('Office', null, null).includes('unclassified'));
-ok('unknown department is not judged against the sheet', !cls('Warehouse', '429 Office', '429').includes('offsheet'));
 
 // --- sync scope (last N months, by monday month group) ---
 const NOWS = new Date('2026-10-03T10:00:00Z');

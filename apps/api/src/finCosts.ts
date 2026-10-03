@@ -112,13 +112,6 @@ export function toCostRow(tenantId: string, it: MondayCostItem, costIdCol: strin
   };
 }
 
-// The cost lines each department has in the New Performance Sheet (by category code). An invoice in a
-// department/category pair that is not here has no line on the sheet → probably misclassified on the board.
-export const SHEET_LINES: Record<string, string[]> = {
-  Office: ['469', '401', '412', '457', '489', '463', '469.V', '401.V', '412.V', '457.V', '489.V', '463.V', '429', '445', '425', '449', 'TAX'],
-  Sales: ['469', '401', '412', '457', '464', '467', '469.V', '401.V', '412.V', '457.V', '429', '449', '425', '468', '500', '499.V', 'TAX'],
-  Production: ['469', '401', '412', '457', '469.V', '412.V', '457.V', '463.V', '429', '449', '425', '631', '473', '416'],
-};
 /** Category code: "631 Materials" → 631, "499.V Handel" → 499.V, "Tax" → TAX. */
 export function categoryCode(subcategory: unknown): string | null {
   const s = clean(subcategory).toUpperCase();
@@ -131,7 +124,8 @@ export function costKindOf(subcategory: unknown): 'fixed' | 'variable' {
 }
 
 /** Per-row warnings shown in the app. `dupIds` = cost ids held by more than one live row.
- *  konto / offsheet / unclassified / period are the "to fix on the board" set. */
+ *  konto / unclassified / period are the "to fix on the board" set. Which categories a department
+ *  uses is NOT checked: the Performance Sheet is an open list (e.g. Sales may have Internet costs). */
 export function flagsOf(r: any, dupIds: Set<string>): string[] {
   const f: string[] = [];
   if (r.changed) f.push('changed');
@@ -146,7 +140,6 @@ export function flagsOf(r: any, dupIds: Set<string>): string[] {
   // KONTO may hold several values ("499.V, 499"): fine if any of them is the category's code.
   const kontos = clean(r.konto).toUpperCase().split(',').map((k) => k.trim()).filter(Boolean);
   if (code && /^\d/.test(code) && kontos.length && !kontos.includes(code)) f.push('konto');
-  if (code && r.department && SHEET_LINES[r.department] && !SHEET_LINES[r.department].includes(code)) f.push('offsheet');
   return f;
 }
 

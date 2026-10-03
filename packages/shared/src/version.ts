@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.7.2';
+export const APP_VERSION = '1.7.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.7.3', date: '2026-10-04', changes: [
+    'Fin&Ops: the Performance Sheet is treated as an open list \u2014 a category under a department that did not have it before (e.g. Internet under Sales) is no longer reported; Performance simply shows it as a line. \u201cTo fix in monday\u201d now lists only KONTO not matching the category, a missing department / category, and an invoice date outside its month group. No migration, no sync needed.',
+  ] },
   { version: '1.7.2', date: '2026-10-03', changes: [
     'Fin&Ops sync scope. Under \u201cSync from Monday\u201d choose All, Last 12 months or Last 3 months \u2014 a scoped sync reads only those month groups, so it is much faster. The automatic daily sync now refreshes the last 12 months only. Older invoices are left exactly as they were; run \u201cAll\u201d when something older was changed on the board.',
     'Fin&Ops \u25b8 Costs: every invoice that needs fixing now has an \u201cOpen in monday to fix\u201d button right under its warning, and the supplier name on every row opens the invoice in monday. No migration.',
