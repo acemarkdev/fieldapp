@@ -3274,7 +3274,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="finCostsView" style="display:none">
     <main style="max-width:1400px">
       <div class="titlerow">
-        <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b id="fc_board">FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
+        <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b id="fc_board">FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced; the month it counts in is its monday group &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
         <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fc_last" style="margin:0;text-align:right"></span><button class="newbtn" id="fc_sync">Sync from Monday</button></div>
       </div>
       <div class="sub" id="fc_auto" style="margin:6px 0 0;text-align:right"></div>
@@ -3288,12 +3288,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <select id="fc_cat" class="tinput"></select>
         <select id="fc_kind" class="tinput"><option value="">Fixed + variable</option><option value="fixed">Fixed</option><option value="variable">Variable</option></select>
         <select id="fc_status" class="tinput"></select>
-        <select id="fc_flag" class="tinput"><option value="">All invoices</option><option value="any">Any warning</option><option value="changed">Changed after sync</option><option value="duplicate">Duplicate Cost ID</option><option value="incomplete">Incomplete (no ID)</option><option value="reclass">To reclassify (any reason)</option><option value="offsheet">\u2003Category not on the sheet for this department</option><option value="konto">\u2003KONTO \u2260 category</option><option value="unclassified">\u2003No department / category</option></select>
+        <select id="fc_flag" class="tinput"><option value="">All invoices</option><option value="any">Any warning</option><option value="changed">Changed after sync</option><option value="duplicate">Duplicate Cost ID</option><option value="incomplete">Incomplete (no supplier / amount)</option><option value="reclass">To fix in monday (any reason)</option><option value="offsheet">\u2003Category not on the sheet for this department</option><option value="konto">\u2003KONTO \u2260 category</option><option value="unclassified">\u2003No department / category</option><option value="period">\u2003Invoice date outside its month group</option><option value="noinvoice">No invoice number</option></select>
         <span id="fc_extra" class="pill" style="display:none;background:#efedf7;color:var(--purple);cursor:pointer" title="Click to remove this filter"></span>
         <input id="fc_q" class="tinput" placeholder="Search supplier, invoice no, order, description" style="min-width:260px;flex:1">
       </div>
       <div class="card2" style="overflow-x:auto"><table><thead><tr>
-        <th>DATE</th><th>SUPPLIER</th><th>INVOICE NO</th><th style="text-align:right">NET</th><th style="text-align:right">GROSS</th><th>CATEGORY</th><th>DEPT</th><th>STATUS</th><th>ORDER</th><th>COST ID</th><th></th>
+        <th title="Invoice date. The month an invoice is counted in is its monday group.">DATE</th><th>SUPPLIER</th><th>INVOICE NO</th><th style="text-align:right">NET</th><th style="text-align:right">GROSS</th><th>CATEGORY</th><th>DEPT</th><th>STATUS</th><th>ORDER</th><th>COST ID</th><th></th>
       </tr></thead><tbody id="fc_rows"></tbody></table></div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:10px 0 30px"><div id="fc_more" class="sub" style="margin:0"></div><button class="pobtn" id="fc_csv">Export this list (CSV)</button></div>
     </main>
@@ -6102,12 +6102,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- Fin&Ops ▸ Costs: invoices synced from monday, guarded by a Cost ID ----
   var FC={rows:[],canManage:false,slug:'',boardId:'',limit:300,timer:null};
   var FC_MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  var FC_FLAG={changed:['Changed','#fde2e0','#b42318'],duplicate:['Duplicate','#fff1e0','#b45309'],incomplete:['Incomplete','#eeedf3','#6b6786'],konto:['KONTO','#e0effa','#0b6ea8'],offsheet:['Not on sheet','#fff1e0','#b45309'],unclassified:['Unclassified','#fde2e0','#b42318']};
+  var FC_FLAG={changed:['Changed','#fde2e0','#b42318'],duplicate:['Duplicate','#fff1e0','#b45309'],incomplete:['Incomplete','#eeedf3','#6b6786'],konto:['KONTO','#e0effa','#0b6ea8'],offsheet:['Not on sheet','#fff1e0','#b45309'],unclassified:['Unclassified','#fde2e0','#b42318'],period:['Date \u2260 month','#fff1e0','#b45309'],noinvoice:['No invoice no','#eeedf3','#6b6786']};
   // Plain-language reasons an invoice should be reclassified on the board.
   function fcReasons(r){
     var out=[];
     if(r.flags.indexOf('unclassified')>=0) out.push(!r.department&&!r.subcategory?'No department and no category':(!r.department?'No department (Dzia\u0142)':'No category (Podrodzaj kosztu)'));
     if(r.flags.indexOf('offsheet')>=0) out.push('\u201c'+r.subcategory+'\u201d is not a '+r.department+' line in the Performance Sheet \u2014 change the category or the department');
+    if(r.flags.indexOf('period')>=0) out.push('Invoice date '+r.invoice_date+' is not in its monday group \u201c'+r.group_title+'\u201d \u2014 it is counted in '+FC_MONTHS[(r.period_month||1)-1]+'; correct the date or move the item');
     if(r.flags.indexOf('konto')>=0) out.push('KONTO '+r.konto+' does not match the category \u201c'+r.subcategory+'\u201d \u2014 one of them is wrong');
     return out;
   }
@@ -6181,7 +6182,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="stat"><div class="v">'+fcMoney(sum('net'))+' zł</div><div class="l">Net total</div></div>'
       +'<div class="stat"><div class="v">'+fcMoney(sum('gross',unpaid))+' zł</div><div class="l">Gross not yet paid</div></div>'
       +'<div class="stat"><div class="v" style="color:'+(chg?'#b42318':'inherit')+'">'+chg+'</div><div class="l">Changed after sync</div></div>'
-      +'<div class="stat"><div class="v" style="color:'+(rcl?'#b45309':'inherit')+'">'+rcl+'</div><div class="l">To reclassify in monday</div></div>'
+      +'<div class="stat"><div class="v" style="color:'+(rcl?'#b45309':'inherit')+'">'+rcl+'</div><div class="l">To fix in monday</div></div>'
       +'<div class="stat"><div class="v">'+warn+'</div><div class="l">With any warning</div></div>';
     var tb=document.getElementById('fc_rows'), shown=rows.slice(0,FC.limit);
     tb.innerHTML=shown.length?shown.map(function(r){
@@ -6242,7 +6243,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var c=String(r.subcategory||'').toUpperCase();
     return (/^(469|401|412|457|489|463|464|467)(?![.]V)/.test(c))?'fixed':'variable';
   }
-  var FC_RECLASS=['konto','offsheet','unclassified'];
+  var FC_RECLASS=['konto','offsheet','unclassified','period'];
   function fcNeedsReclass(r){ return r.flags.some(function(f){ return FC_RECLASS.indexOf(f)>=0; }); }
   function fpRank(cat){ var c=String(cat||'').toUpperCase(); for(var i=0;i<FP_ORDER.length;i++){ if(c.indexOf(FP_ORDER[i])===0)return i; } return 99; }
   async function loadFinPerf(){
@@ -6307,7 +6308,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tb.innerHTML=M.depts.length?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs for this year / company yet.</td></tr>';
     tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); fpDrill(td); }; });
     tb.querySelectorAll('tr.kind').forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'), hide=!tr.classList.contains('shut'); tr.classList.toggle('shut',hide); tr.querySelector('td').firstChild.textContent=(hide?'\u25b8 ':'\u25be ')+tr.querySelector('td').firstChild.textContent.slice(2); tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=hide?'none':''; }); }; });
-    document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.reclass?' \u00b7 <a class="codelink" id="fp_rcl" style="color:#b45309" title="Invoices whose category, department or KONTO looks wrong \u2014 open the list to fix them in monday">'+M.reclass+' to reclassify \u2192</a>':' \u00b7 nothing to reclassify')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
+    document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.reclass?' \u00b7 <a class="codelink" id="fp_rcl" style="color:#b45309" title="Invoices whose category, department or KONTO looks wrong \u2014 open the list to fix them in monday">'+M.reclass+' to fix in monday \u2192</a>':' \u00b7 nothing to fix')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
     var rc=document.getElementById('fp_rcl'); if(rc)rc.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:'',flag:'reclass'}; showTab('fincosts'); };
     var c=document.getElementById('fp_chg'); if(c)c.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:''}; showTab('fincosts'); setTimeout(function(){ document.getElementById('fc_flag').value='changed'; renderFinCosts(); },900); };
   }

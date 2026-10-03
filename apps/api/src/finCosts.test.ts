@@ -1,5 +1,5 @@
 // Fin&Ops cost rules. Run: npx tsx apps/api/src/finCosts.test.ts
-import { buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour, categoryCode, costKindOf } from './finCosts';
+import { groupPeriod, isNumberFilledIn, buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour, categoryCode, costKindOf } from './finCosts';
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) { fail++; console.error('✗ ' + label); } else console.log('✓ ' + label); };
@@ -14,14 +14,20 @@ ok('id = SUPPLIER#INVOICE#NET', buildCostId('Cortizo', '26/P14/000829', 3095.81)
 ok('id normalises spaces / case', buildCostId('  eko-okna ', ' fs/k2/26/09/ 0995', 24831.73) === 'EKO-OKNA#FS/K2/26/09/0995#24831.73');
 ok('id pads net to 2 decimals', buildCostId('Radiks', 'FK/264/2026', 350) === 'RADIKS#FK/264/2026#350.00');
 ok('same invoice no, different supplier → different id', buildCostId('A', '2026/22', 100) !== buildCostId('B', '2026/22', 100));
-ok('no id without invoice no', buildCostId('Cortizo', '', 10) === null);
+ok('no invoice number → id from the date', buildCostId('HLS', '', 30.9, { date: '2026-09-01', itemId: '77' }) === 'HLS#BRAK-FV-2026-09-01#30.90');
+ok('no invoice number, no date → id from the monday item', buildCostId('HLS', '', 30.9, { itemId: '77' }) === 'HLS#BRAK-FV-ITEM77#30.90');
+ok('no invoice number and nothing to fall back on → no id', buildCostId('Cortizo', '', 10) === null);
+ok('no supplier → no id', buildCostId('', 'X1', 10, { date: '2026-09-01' }) === null);
 ok('no id without net', buildCostId('Cortizo', 'X1', null) === null);
 ok('amount "1 234,50" → 1234.5', parseAmount('1 234,50') === 1234.5);
 ok('amount "" → null', parseAmount('') === null);
 ok('amount 0 is a value', parseAmount('0') === 0);
 
 // --- period / company ---
-ok('period from date', JSON.stringify(periodOf('2026-09-30', 'x')) === '{"year":2026,"month":9}');
+ok('period from date when the group names no month', JSON.stringify(periodOf('2026-09-30', 'x')) === '{"year":2026,"month":9}');
+ok('period follows the monday group, not the date (Mikstol: dated 15 Oct, filed in September)', JSON.stringify(periodOf('2026-10-15', 'Wrzesień 2026')) === '{"year":2026,"month":9}');
+ok('two-month group → falls back to the invoice date', JSON.stringify(periodOf('2022-11-03', 'Październik - Listopad - 2022')) === '{"year":2022,"month":11}');
+ok('group period', JSON.stringify(groupPeriod('Styczeń 2026')) === '{"year":2026,"month":1}');
 ok('period from group when no date', JSON.stringify(periodOf(null, 'Wrzesień 2026')) === '{"year":2026,"month":9}');
 ok('period: Październik ≠ Listopad mix-up', JSON.stringify(periodOf(null, 'Październik 2026')) === '{"year":2026,"month":10}');
 ok('period: two-month group → year only', JSON.stringify(periodOf(null, 'Październik - Listopad - 2022')) === '{"year":2022,"month":null}');
@@ -41,14 +47,20 @@ ok('edited supplier → changed', toCostRow(T, item({ name: 'Cortizo PL' }), 'ci
 ok('edited back → clean again', toCostRow(T, item({}), 'cid', edited, NOW).changed === false);
 ok('changed_at keeps first detection', toCostRow(T, item({ net: '1' }), 'cid', { ...edited, changed_at: '2026-10-01T00:00:00Z' }, NOW).changed_at === '2026-10-01T00:00:00Z');
 const blank = toCostRow(T, item({ no: '' }), 'cid', null, NOW);
-ok('incomplete invoice → no id, not changed', blank.cost_id === null && blank.changed === false);
+ok('no invoice number → still registered with a placeholder id', blank.cost_id === 'CORTIZO#BRAK-FV-2026-09-30#3095.81' && blank.changed === false);
+ok('placeholder row flagged noinvoice (not incomplete)', flagsOf(blank, new Set()).includes('noinvoice') && !flagsOf(blank, new Set()).includes('incomplete'));
 const filled = toCostRow(T, item({}), 'cid', blank, NOW);
-ok('completed later → id adopted, not flagged', filled.cost_id === first.cost_id && filled.changed === false);
+ok('invoice number filled in later → real id adopted, not flagged', filled.cost_id === first.cost_id && filled.changed === false && filled.orig_invoice_no === '26/P14/000829');
+ok('number filled in AND net edited → flagged', toCostRow(T, item({ net: '1.00' }), 'cid', blank, NOW).changed === true);
+ok('isNumberFilledIn only for placeholder → real, same supplier + net', isNumberFilledIn('A#BRAK-FV-2026-09-01#5.00', 'A#X1#5.00') && !isNumberFilledIn('A#X0#5.00', 'A#X1#5.00') && !isNumberFilledIn('A#BRAK-FV-2026-09-01#5.00', 'B#X1#5.00'));
+const noNet = toCostRow(T, item({ net: '' }), 'cid', null, NOW);
+ok('no net amount → no id (incomplete)', noNet.cost_id === null && flagsOf(noNet, new Set()).includes('incomplete'));
+ok('older row without id gets one on the next sync', toCostRow(T, item({ no: '' }), 'cid', { cost_id: null, first_synced_at: NOW }, NOW).cost_id === 'CORTIZO#BRAK-FV-2026-09-30#3095.81');
 ok('net amount removed later → changed', toCostRow(T, item({ net: '' }), 'cid', first, NOW).changed === true);
 
 // --- flags ---
 ok('flag duplicate', flagsOf(first, new Set([first.cost_id])).includes('duplicate'));
-ok('flag incomplete', flagsOf(blank, new Set()).includes('incomplete'));
+ok('date outside its group month → period flag', flagsOf(toCostRow(T, item({ date: '2026-10-15' }), 'cid', null, NOW), new Set()).includes('period') && !flagsOf(first, new Set()).includes('period'));
 ok('flag konto mismatch', flagsOf(toCostRow(T, item({ konto: '473' }), 'cid', null, NOW), new Set()).includes('konto'));
 ok('no konto flag when matching (.V)', !flagsOf(toCostRow(T, item({ sub: '499.V Handel', konto: '499.V' }), 'cid', null, NOW), new Set()).includes('konto'));
 ok('clean row has no flags', flagsOf(first, new Set()).length === 0);
@@ -68,7 +80,8 @@ ok('KONTO with several values incl. the code → ok', !cls('Sales', '499.V Hande
 ok('KONTO different from category → konto', cls('Sales', '499.V Handel', '449.V').includes('konto'));
 ok('no KONTO → no konto flag', !cls('Office', '429 Office', null).includes('konto'));
 ok('Tax has no account code → no konto flag', !cls('Sales', 'Tax', '100').includes('konto'));
-ok('429 Office under Production → offsheet', cls('Production', '429 Office', '429').includes('offsheet'));
+ok('429 Office under Production → valid line (added on request)', !cls('Production', '429 Office', '429').includes('offsheet'));
+ok('445 Utilities under Production → offsheet', cls('Production', '445 Utilities', '445').includes('offsheet'));
 ok('463 Software under Production → offsheet (sheet has only 463.V there)', cls('Production', '463 Software', '463').includes('offsheet'));
 ok('463.V Software under Production → on the sheet', !cls('Production', '463.V Software', '463.V').includes('offsheet'));
 ok('473 Maintenance under Sales → offsheet', cls('Sales', '473 Maintenance', '473').includes('offsheet'));

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.7.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.7.1', date: '2026-10-03', changes: [
+    'Fin&Ops: an invoice is now counted in the month of its monday group (not its invoice date), so monthly totals match the board exactly \u2014 e.g. September 2026 = 461,311.90. Invoices dated outside their group\u2019s month are listed under \u201cTo fix in monday\u201d. Entries without an invoice number are now registered too: their Cost ID uses BRAK-FV-<date> in place of the number, and filling the number in later updates the ID without raising a Changed flag. \u201c429 Office\u201d is accepted as a Production line. Takes effect after the next sync. No migration.',
+  ] },
   { version: '1.7.0', date: '2026-10-03', changes: [
     'Fin&Ops: the board\u2019s Koszt (sta\u0142y / zmienny) column is no longer used \u2014 fixed or variable is always decided by the category, as in the sheet. New \u201cTo reclassify\u201d worklist: invoices whose category is not a line for their department in the Performance Sheet (e.g. 429 Office under Production), whose KONTO does not match the category, or that have no department / category. Performance shows the count with a link; the Costs tab lists them with the reason in plain words, a monday link to fix each one, a new filter (any reason or one reason) and \u201cExport this list (CSV)\u201d. After fixing in monday, the next sync clears them. No migration.',
   ] },

@@ -32,21 +32,42 @@ export function parseAmount(v: unknown): number | null {
   const n = Number(s);
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 }
-/** SUPPLIER#INVOICE NO#NET — null until all three are present. */
-export function buildCostId(supplier: unknown, invoiceNo: unknown, net: number | null): string | null {
-  const s = clean(supplier).toUpperCase(), i = clean(invoiceNo).replace(/\s/g, '').toUpperCase();
-  if (!s || !i || net === null) return null;
+/** SUPPLIER#INVOICE NO#NET. An entry with no invoice number (a fee, a declaration…) is still
+ *  registered: its middle part becomes BRAK-FV-<invoice date> (or the monday item id when there is
+ *  no date either). Null only when the supplier or the net amount is missing. */
+export const NO_INVOICE = 'BRAK-FV-';
+export function buildCostId(supplier: unknown, invoiceNo: unknown, net: number | null, fallback: { date?: string | null; itemId?: string } = {}): string | null {
+  const s = clean(supplier).toUpperCase();
+  let i = clean(invoiceNo).replace(/\s/g, '').toUpperCase();
+  if (!s || net === null) return null;
+  if (!i) { const tail = clean(fallback.date) || (fallback.itemId ? 'ITEM' + fallback.itemId : ''); if (!tail) return null; i = NO_INVOICE + tail; }
   return `${s}#${i}#${net.toFixed(2)}`;
+}
+const idParts = (id: string) => { const a = id.lastIndexOf('#'), b = id.indexOf('#'); return { supplier: id.slice(0, b), inv: id.slice(b + 1, a), net: id.slice(a + 1) }; };
+/** True when `next` is the same entry as placeholder id `prev`, now with its real invoice number filled in. */
+export function isNumberFilledIn(prev: string, next: string | null): boolean {
+  if (!next) return false;
+  const p = idParts(prev), n = idParts(next);
+  return p.inv.startsWith(NO_INVOICE) && !n.inv.startsWith(NO_INVOICE) && p.supplier === n.supplier && p.net === n.net;
 }
 
 const PL_MONTHS = ['stycze', 'lut', 'marzec', 'kwiecie', 'maj', 'czerwiec', 'lipiec', 'sierpie', 'wrzesie', 'październik', 'listopad', 'grudzie'];
-export function periodOf(date: string | null, groupTitle: string | null): { year: number | null; month: number | null } {
-  const d = /^(\d{4})-(\d{2})-\d{2}$/.exec(date ?? '');
-  if (d) return { year: +d[1], month: +d[2] };
+/** Month named by a monday group title ("Wrzesień 2026"); month is null when the title names none or several. */
+export function groupPeriod(groupTitle: string | null): { year: number | null; month: number | null } {
   const g = (groupTitle ?? '').toLowerCase();
   const year = +(g.match(/(20\d{2})/)?.[1] ?? 0) || null;
   const hits = PL_MONTHS.map((m, i) => (g.includes(m) ? i + 1 : 0)).filter(Boolean);
   return { year, month: hits.length === 1 ? hits[0] : null };
+}
+/** The accounting month of an invoice = the monday group it is filed in (that is what the board's own
+ *  totals and the sheet's "Control sum – Monday" add up). The invoice date is only the fallback for a
+ *  group that doesn't name a single month. */
+export function periodOf(date: string | null, groupTitle: string | null): { year: number | null; month: number | null } {
+  const g = groupPeriod(groupTitle);
+  if (g.year && g.month) return g;
+  const d = /^(\d{4})-(\d{2})-\d{2}$/.exec(date ?? '');
+  if (d) return { year: +d[1], month: +d[2] };
+  return g;
 }
 export function companyOf(subcategory: string | null): 'acemark' | 'ace_group' | 'off_balance' {
   const s = clean(subcategory).toUpperCase();
@@ -60,15 +81,17 @@ export interface MondayCostItem { id: string; name: string; group: string | null
 /** monday item (+ what we already hold for it) → the row to store. */
 export function toCostRow(tenantId: string, it: MondayCostItem, costIdCol: string, ex: any | null, now: string): Record<string, any> {
   const supplier = clean(it.name) || null, invoiceNo = clean(it.cols[C.invoiceNo]) || null, net = parseAmount(it.cols[C.net]);
-  const computed = buildCostId(supplier, invoiceNo, net);
   const date = clean(it.cols[C.date]) || null, due = clean(it.cols[C.due]) || null;
+  const computed = buildCostId(supplier, invoiceNo, net, { date, itemId: it.id });
   const period = periodOf(date, it.group);
   const subcategory = clean(it.cols[C.subcategory]) || null;
 
-  // Trusted id: keep what we hold; adopt the computed one only when we hold none yet.
-  const costId: string | null = ex?.cost_id ?? computed;
-  const adopted = !ex?.cost_id && !!computed;
-  const changed = !!ex?.cost_id && computed !== ex.cost_id;
+  // Trusted id: keep what we hold. Adopt the computed one when we hold none yet, or when the only
+  // difference is that a missing invoice number has now been filled in (not an edit worth flagging).
+  const upgrade = !!ex?.cost_id && isNumberFilledIn(ex.cost_id, computed);
+  const adopted = (!ex?.cost_id && !!computed) || upgrade;
+  const costId: string | null = adopted ? computed : (ex?.cost_id ?? null);
+  const changed = !!ex?.cost_id && !upgrade && computed !== ex.cost_id;
 
   return {
     tenant_id: tenantId, monday_item_id: it.id,
@@ -94,7 +117,7 @@ export function toCostRow(tenantId: string, it: MondayCostItem, costIdCol: strin
 export const SHEET_LINES: Record<string, string[]> = {
   Office: ['469', '401', '412', '457', '489', '463', '469.V', '401.V', '412.V', '457.V', '489.V', '463.V', '429', '445', '425', '449', 'TAX'],
   Sales: ['469', '401', '412', '457', '464', '467', '469.V', '401.V', '412.V', '457.V', '429', '449', '425', '468', '500', '499.V', 'TAX'],
-  Production: ['469', '401', '412', '457', '469.V', '412.V', '457.V', '463.V', '449', '425', '631', '473', '416'],
+  Production: ['469', '401', '412', '457', '469.V', '412.V', '457.V', '463.V', '429', '449', '425', '631', '473', '416'],
 };
 /** Category code: "631 Materials" → 631, "499.V Handel" → 499.V, "Tax" → TAX. */
 export function categoryCode(subcategory: unknown): string | null {
@@ -108,12 +131,16 @@ export function costKindOf(subcategory: unknown): 'fixed' | 'variable' {
 }
 
 /** Per-row warnings shown in the app. `dupIds` = cost ids held by more than one live row.
- *  konto / offsheet / unclassified are the "to reclassify on the board" set. */
+ *  konto / offsheet / unclassified / period are the "to fix on the board" set. */
 export function flagsOf(r: any, dupIds: Set<string>): string[] {
   const f: string[] = [];
   if (r.changed) f.push('changed');
   if (r.cost_id && dupIds.has(r.cost_id)) f.push('duplicate');
   if (!r.cost_id) f.push('incomplete');
+  else if (idParts(r.cost_id).inv.startsWith(NO_INVOICE)) f.push('noinvoice');
+  // Filed in one month's group but dated in another month → the date (or the group) is wrong.
+  const g = groupPeriod(r.group_title), d = /^(\d{4})-(\d{2})-/.exec(r.invoice_date ?? '');
+  if (g.year && g.month && d && (+d[1] !== g.year || +d[2] !== g.month)) f.push('period');
   const code = categoryCode(r.subcategory);
   if (!r.department || !code) f.push('unclassified');
   // KONTO may hold several values ("499.V, 499"): fine if any of them is the category's code.
@@ -220,12 +247,12 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
 
 /** Admin accepts an edit: the current monday values become the trusted ones (new Cost ID, written to the board). */
 export async function acceptCostChange(tenantId: string, id: string, boardId: string): Promise<{ ok: boolean; error?: string; costId?: string }> {
-  const { data: r, error } = await db().from('fin_costs').select('id,monday_item_id,supplier,invoice_no,net,changed').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
+  const { data: r, error } = await db().from('fin_costs').select('id,monday_item_id,supplier,invoice_no,invoice_date,net,changed').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
   if (error) throw error;
   if (!r) return { ok: false, error: 'Not found.' };
   const net = r.net === null ? null : Number(r.net);
-  const costId = buildCostId(r.supplier, r.invoice_no, net);
-  if (!costId) return { ok: false, error: 'This invoice is missing its supplier, invoice number or net amount in monday.' };
+  const costId = buildCostId(r.supplier, r.invoice_no, net, { date: r.invoice_date, itemId: r.monday_item_id });
+  if (!costId) return { ok: false, error: 'This invoice is missing its supplier or net amount in monday.' };
   const monday = new Monday();
   const col = await ensureCostIdColumn(monday, boardId);
   await monday.setTextColumnBatch(boardId, col, [{ itemId: r.monday_item_id, value: costId }]);
