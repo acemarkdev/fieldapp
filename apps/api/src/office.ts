@@ -2794,6 +2794,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .pomini textarea{display:block;width:calc(100% - 40px);margin:0 20px;min-height:96px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical}
   .pomini textarea:focus{outline:none;border-color:#c0392b}
   .pomini .btns{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px 18px}
+  .fp{font-size:12px;border-collapse:separate;border-spacing:0;width:100%}
+  .fp th{position:sticky;top:0;background:#fff;z-index:2;text-align:right;white-space:nowrap}
+  .fp th:first-child,.fp td:first-child{position:sticky;left:0;z-index:1;text-align:left;background:#fff;min-width:230px;max-width:280px}
+  .fp th:first-child{z-index:3}
+  .fp td{padding:5px 10px;border-top:1px solid #f2f0f8;white-space:nowrap}
+  .fp td.n{text-align:right;font-variant-numeric:tabular-nums;cursor:pointer}
+  .fp td.n:hover{background:#fde8f3!important}
+  .fp td.n.neg{color:#b42318}
+  .fp td.t{font-weight:700;border-left:1px solid var(--line)}
+  .fp tr.dept td{background:var(--purple)!important;color:#fff;font-weight:800;font-size:13px}
+  .fp tr.dept td.n:hover{background:#55449a!important}
+  .fp tr.sec td{background:#efedf7!important;font-weight:700}
+  .fp tr.kind td{background:#f8f7fc!important;font-weight:700;cursor:pointer}
+  .fp tr.line td:first-child{padding-left:30px}
+  .fp tr.ph td{color:#9a97ad;font-style:italic}
+  .fp tr.ctrl td{background:#fff8eb!important;font-weight:800;border-top:2px solid #f5d9a8}
   .tabbadge{display:inline-block;min-width:16px;padding:0 5px;height:16px;line-height:16px;border-radius:8px;background:var(--magenta);color:#fff;font-size:10px;font-weight:800;text-align:center}
   td{padding:9px 12px;border-top:1px solid #f2f0f8;vertical-align:middle}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -2923,6 +2939,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabConfirm" class="tab" style="display:none" onclick="showTab('confirm')">Confirmations</button>
       </div></div>
       <div class="grp" id="grp_finops"><button class="grpbtn" onclick="toggleGrp('finops')">Fin&amp;Ops \u25be</button><div class="grpmenu" id="menu_finops">
+        <button id="tabFinPerf" class="tab" style="display:none" onclick="showTab('finperf')">Performance</button>
         <button id="tabFinCosts" class="tab" style="display:none" onclick="showTab('fincosts')">Costs</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
@@ -3214,6 +3231,23 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="finPerfView" style="display:none">
+    <main style="max-width:1600px">
+      <div class="titlerow">
+        <div><h2>Performance</h2><div class="sub">Costs by department &rarr; fixed / variable &rarr; cost line, month by month &mdash; the structure of the <b>New Performance Sheet</b>, calculated from the synced monday invoices (net). Click any number to see the invoices behind it.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fp_last" style="margin:0;text-align:right"></span><button class="pobtn" id="fp_csv">Export CSV</button></div>
+      </div>
+      <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px">
+        <select id="fp_year" class="tinput"></select>
+        <select id="fp_company" class="tinput"><option value="acemark">Acemark</option><option value="ace_group">Ace Group</option><option value="off_balance">Poza bilans</option><option value="">All companies</option></select>
+        <select id="fp_mode" class="tinput" title="How an invoice is put under Fixed or Variable"><option value="rule">Fixed / variable: by category (as in the sheet)</option><option value="board">Fixed / variable: board&rsquo;s Koszt column</option></select>
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="fp_dec"> Show decimals</label>
+        <span class="sub" style="margin:0 0 0 auto" id="fp_note"></span>
+      </div>
+      <div class="card2" style="overflow:auto;max-height:calc(100vh - 230px)"><table class="fp"><thead id="fp_head"></thead><tbody id="fp_rows"></tbody></table></div>
+      <div class="sub" style="margin:10px 0 30px">The department comes from the board&rsquo;s <b>Dzia&#322;</b> column and the line from <b>Podrodzaj kosztu</b>. Fixed / variable follows the sheet by default: categories 469, 401, 412, 457, 489, 463, 464 and 467 are fixed; their <b>.V</b> variants and every other category are variable (switch above to use the board&rsquo;s <b>Koszt</b> column instead). Salaries and payroll taxes are not invoices on the board &mdash; those rows fill in once the payroll source is connected. Run <b>Sync from Monday</b> on the Costs tab to refresh.</div>
+    </main>
+  </div>
   <div id="finCostsView" style="display:none">
     <main style="max-width:1400px">
       <div class="titlerow">
@@ -3231,6 +3265,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <select id="fc_kind" class="tinput"><option value="">Fixed + variable</option><option value="koszt stały">Fixed (stały)</option><option value="koszt zmienny">Variable (zmienny)</option></select>
         <select id="fc_status" class="tinput"></select>
         <select id="fc_flag" class="tinput"><option value="">All invoices</option><option value="any">Any warning</option><option value="changed">Changed after sync</option><option value="duplicate">Duplicate Cost ID</option><option value="incomplete">Incomplete (no ID)</option><option value="konto">KONTO \u2260 category</option></select>
+        <span id="fc_extra" class="pill" style="display:none;background:#efedf7;color:var(--purple);cursor:pointer" title="Click to remove this filter"></span>
         <input id="fc_q" class="tinput" placeholder="Search supplier, invoice no, order, description" style="min-width:260px;flex:1">
       </div>
       <div class="card2" style="overflow-x:auto"><table><thead><tr>
@@ -3579,8 +3614,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
-    if(myRole==='acemark_finance') return 'fincosts';
-    var need={fincosts:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf')?t:'finperf';
+    var need={fincosts:'finops.view',finperf:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3635,7 +3670,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4692,6 +4727,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('labelsView').style.display=name==='labels'?'block':'none';
     document.getElementById('confirmView').style.display=name==='confirm'?'block':'none';
     document.getElementById('finCostsView').style.display=name==='fincosts'?'block':'none';
+    document.getElementById('finPerfView').style.display=name==='finperf'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4737,6 +4773,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='labels')initLabels();
     if(name==='confirm')loadConfirmations();
     if(name==='fincosts')loadFinCosts();
+    if(name==='finperf')loadFinPerf();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4747,8 +4784,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinCosts'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4870,6 +4907,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabLabels',canCap('labels.print'));
     show('tabConfirm',canCap('confirmations.manage'));
     show('tabFinCosts',canCap('finops.view'));
+    show('tabFinPerf',canCap('finops.view'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -6057,10 +6095,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(first&&years.length)document.getElementById('fc_year').value=String(years[0]);
     fcOpts('fc_month','All months',FC_MONTHS.map(function(m,i){return [i+1,m];}),!first);
     var uniq=function(k){ var o={}; FC.rows.forEach(function(r){ if(r[k])o[r[k]]=1; }); return Object.keys(o).sort().map(function(v){return [v,v];}); };
-    fcOpts('fc_dept','All departments',uniq('department'),!first);
-    fcOpts('fc_cat','All categories',uniq('subcategory'),!first);
+    fcOpts('fc_dept','All departments',uniq('department').concat([['__none','(no department)']]),!first);
+    fcOpts('fc_cat','All categories',uniq('subcategory').concat([['__none','(no category)']]),!first);
     fcOpts('fc_status','All statuses',uniq('status'),!first);
     var bl=document.getElementById('fc_board'); if(bl)bl.innerHTML='<a class="codelink" target="_blank" rel="noopener" href="https://'+av(d.slug)+'.monday.com/boards/'+av(d.boardId)+'">FAKTURY WSZYSTKIE'+(d.isTestBoard?' _TEST':'')+' \u2197</a>';
+    if(FC.preset){ var ps=FC.preset; FC.preset=null; ['year','month','company','dept','cat','kind'].forEach(function(k){ var el=document.getElementById('fc_'+k); el.value=ps[k]==null?'':String(ps[k]); }); document.getElementById('fc_status').value=''; document.getElementById('fc_flag').value=''; document.getElementById('fc_q').value=''; FC.limit=300; FC.extra=ps.extra||null; }
+    FC.lastRun=d.lastRun; FC.loaded=true;
     fcLast(d.lastRun); renderFinCosts(); fcProgress(d.sync);
   }
   function fcLast(run){
@@ -6074,14 +6114,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var y=g('fc_year'),m=g('fc_month'),co=g('fc_company'),de=g('fc_dept'),ca=g('fc_cat'),ki=g('fc_kind'),st=g('fc_status'),fl=g('fc_flag'),q=g('fc_q').trim().toLowerCase();
     return FC.rows.filter(function(r){
       if(y&&String(r.period_year)!==y)return false; if(m&&String(r.period_month)!==m)return false;
-      if(co&&r.company!==co)return false; if(de&&r.department!==de)return false; if(ca&&r.subcategory!==ca)return false;
-      if(ki&&r.cost_kind!==ki)return false; if(st&&r.status!==st)return false;
+      if(co&&r.company!==co)return false;
+      if(FC.extra&&FC.extra.cats.indexOf(r.subcategory||'(no category)')<0)return false;
+      if(de&&(de==='__none'?!!r.department:r.department!==de))return false; if(ca&&(ca==='__none'?!!r.subcategory:r.subcategory!==ca))return false;
+      if(ki&&(ki==='koszt stały'?r.cost_kind!==ki:r.cost_kind==='koszt stały'))return false; if(st&&r.status!==st)return false;
       if(fl==='any'&&!r.flags.length)return false; if(fl&&fl!=='any'&&r.flags.indexOf(fl)<0)return false;
       if(q&&[r.supplier,r.invoice_no,r.order_ref,r.description,r.cost_id].join(' ').toLowerCase().indexOf(q)<0)return false;
       return true;
     }).sort(function(a,b){ return String(b.invoice_date||'').localeCompare(String(a.invoice_date||''))||String(a.supplier||'').localeCompare(String(b.supplier||'')); });
   }
   function renderFinCosts(){
+    var ex=document.getElementById('fc_extra'); ex.style.display=FC.extra?'inline-block':'none'; if(FC.extra){ ex.textContent=FC.extra.label+' \u2715'; ex.onclick=function(){ FC.extra=null; renderFinCosts(); }; }
     var rows=fcFiltered(), sum=function(k,f){ return rows.reduce(function(s,r){ return s+((!f||f(r))?(r[k]||0):0); },0); };
     var unpaid=function(r){ return r.status!=='Opłacona'; }, warn=rows.filter(function(r){return r.flags.length;}).length, chg=rows.filter(function(r){return r.flags.indexOf('changed')>=0;}).length;
     document.getElementById('fc_stats').innerHTML='<div class="stat"><div class="v">'+rows.length.toLocaleString('en-GB')+'</div><div class="l">Invoices</div></div>'
@@ -6132,6 +6175,99 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       document.getElementById('fc_progress_msg').innerHTML='<b>Syncing\u2026</b><small>'+esc(s.phase)+(s.total?' '+s.done+' / '+s.total:(s.done?' '+s.done+' read':''))+' \u2014 you can leave this page; it keeps running.'+(/^Writing/.test(s.phase)?' The invoices below are already up to date; the Cost IDs are now being copied into monday (the first time takes a while).':'')+'</small>';
       FC.timer=setTimeout(async function(){ if(sessionStorage.getItem('ace_tab')!=='fincosts')return; try{ var d=await (await api('/api/finops/costs/sync')).json(); if(d.sync&&d.sync.running){ var w=/^Writing/.test(d.sync.phase); if(w&&!FC.shownSaved){ FC.shownSaved=true; loadFinCosts(); } else fcProgress(d.sync); } else { FC.shownSaved=false; loadFinCosts(); } }catch(e){} },2500);
     } else { btn.disabled=false; box.className='podecide bad'; document.getElementById('fc_progress_msg').innerHTML='<b>Last sync failed</b><small>'+esc(s.error)+'</small>'; }
+  }
+  // ---- Fin&Ops ▸ Performance: department → fixed/variable → cost line × month (New Performance Sheet layout) ----
+  var FP={model:null};
+  var FP_ORDER=['469','401','412','457','489','463','464','467','429','445','425','449','468','500','TAX','499','631','473','416'];
+  var FP_DEPTS=['Office','Sales','Production'];
+  // Sheet rule: these categories are fixed costs; their ".V" variants and everything else are variable.
+  function fpKind(r,mode){
+    if(mode==='board') return r.cost_kind==='koszt stały'?'fixed':'variable';
+    var c=String(r.subcategory||'').toUpperCase();
+    return (/^(469|401|412|457|489|463|464|467)(?![.]V)/.test(c))?'fixed':'variable';
+  }
+  function fpRank(cat){ var c=String(cat||'').toUpperCase(); for(var i=0;i<FP_ORDER.length;i++){ if(c.indexOf(FP_ORDER[i])===0)return i; } return 99; }
+  async function loadFinPerf(){
+    var first=!document.getElementById('fp_csv').dataset.ready;
+    if(first){ document.getElementById('fp_csv').dataset.ready='1';
+      document.getElementById('fp_csv').onclick=fpCsv;
+      ['fp_year','fp_company','fp_dec','fp_mode'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
+    var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fp_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
+    FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId; FC.lastRun=d.lastRun;
+    var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
+    var ys=document.getElementById('fp_year'), cur=ys.value; ys.innerHTML=years.map(function(y){return '<option value="'+y+'">'+y+'</option>';}).join(''); if(cur&&years.indexOf(+cur)>=0)ys.value=cur;
+    var run=d.lastRun; document.getElementById('fp_last').textContent=run?('Data as of last sync: '+cfWhen(run.finished_at||run.started_at)):'Never synced \u2014 run Sync from Monday on the Costs tab';
+    renderFinPerf();
+  }
+  function fpBuild(){
+    var year=+document.getElementById('fp_year').value, co=document.getElementById('fp_company').value;
+    var rows=FC.rows.filter(function(r){ return r.period_year===year&&(!co||r.company===co); });
+    var depts={}, noMonth=0, chg=0, mode=document.getElementById('fp_mode').value, differ=0;
+    rows.forEach(function(r){
+      if(!r.period_month){ noMonth++; return; }
+      if(r.flags&&r.flags.indexOf('changed')>=0)chg++;
+      var dn=r.department||'(no department)', kind=fpKind(r,mode), cat=r.subcategory||'(no category)';
+      if(r.cost_kind&&fpKind(r,'rule')!==fpKind(r,'board'))differ++;
+      var D=depts[dn]||(depts[dn]={fixed:{},variable:{}}); var L=D[kind][cat]||(D[kind][cat]=[0,0,0,0,0,0,0,0,0,0,0,0]);
+      L[r.period_month-1]+=(r.net||0);
+    });
+    var names=FP_DEPTS.filter(function(n){return depts[n];}).concat(Object.keys(depts).filter(function(n){return FP_DEPTS.indexOf(n)<0;}).sort());
+    var add=function(a,b){ return a.map(function(v,i){return v+b[i];}); }, zero=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; };
+    var out={year:year,company:co,mode:mode,differ:differ,depts:[],total:zero(),noMonth:noMonth,changed:chg,count:rows.length};
+    names.forEach(function(n){
+      var D={name:n,total:zero(),kinds:[]};
+      ['fixed','variable'].forEach(function(k){
+        var cats=Object.keys(depts[n][k]).sort(function(a,b){ return fpRank(a)-fpRank(b)||a.localeCompare(b); });
+        var K={kind:k,total:zero(),lines:cats.map(function(c){ return {cat:c,m:depts[n][k][c]}; })};
+        K.lines.forEach(function(l){ K.total=add(K.total,l.m); }); D.total=add(D.total,K.total); D.kinds.push(K);
+      });
+      out.total=add(out.total,D.total); out.depts.push(D);
+    });
+    return out;
+  }
+  function renderFinPerf(){
+    var M=FP.model=fpBuild(), dec=document.getElementById('fp_dec').checked;
+    var fmt=function(v){ if(!v||Math.abs(v)<0.005)return ''; return Number(v).toLocaleString('en-GB',{minimumFractionDigits:dec?2:0,maximumFractionDigits:dec?2:0}); };
+    var sum=function(a){ return a.reduce(function(s,v){return s+v;},0); };
+    var cells=function(m,ctx){ return m.map(function(v,i){ return '<td class="n'+(v<0?' neg':'')+'" data-m="'+(i+1)+'" '+ctx+' title="'+av(Number(v||0).toFixed(2))+'">'+fmt(v)+'</td>'; }).join('')+'<td class="n t'+(sum(m)<0?' neg':'')+'" data-m="" '+ctx+' title="'+av(sum(m).toFixed(2))+'">'+fmt(sum(m))+'</td>'; };
+    document.getElementById('fp_head').innerHTML='<tr><th>'+M.year+' \u00b7 net z\u0142</th>'+FC_MONTHS.map(function(m){return '<th>'+m.slice(0,3)+'</th>';}).join('')+'<th>Total</th></tr>';
+    var h='';
+    M.depts.forEach(function(D){
+      var dctx='data-d="'+av(D.name)+'"';
+      h+='<tr class="dept"><td>'+esc(D.name.toUpperCase())+'</td>'+cells(D.total,dctx)+'</tr>';
+      h+='<tr class="ph"><td style="padding-left:18px">Salaries</td><td colspan="13">from the payroll source \u2014 not connected yet</td></tr>';
+      h+='<tr class="ph"><td style="padding-left:18px">Taxes (payroll)</td><td colspan="13">from the payroll source \u2014 not connected yet</td></tr>';
+      h+='<tr class="sec"><td style="padding-left:18px">Overheads</td>'+cells(D.total,dctx)+'</tr>';
+      D.kinds.forEach(function(K){
+        var kctx=dctx+' data-k="'+K.kind+'"', gid=av(D.name+'|'+K.kind);
+        h+='<tr class="kind" data-g="'+gid+'"><td style="padding-left:24px">\u25be '+(K.kind==='fixed'?'Fixed / sta\u0142e':'Variable / zmienne')+' <span style="font-weight:500;color:var(--muted)">('+K.lines.length+')</span></td>'+cells(K.total,kctx)+'</tr>';
+        K.lines.forEach(function(l){ h+='<tr class="line" data-of="'+gid+'"><td>'+esc(l.cat)+'</td>'+cells(l.m,kctx+' data-c="'+av(l.cat)+'"')+'</tr>'; });
+      });
+    });
+    h+='<tr class="ctrl"><td>Control sum \u2014 Monday</td>'+cells(M.total,'')+'</tr>';
+    var tb=document.getElementById('fp_rows');
+    tb.innerHTML=M.depts.length?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs for this year / company yet.</td></tr>';
+    tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); fpDrill(td); }; });
+    tb.querySelectorAll('tr.kind').forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'), hide=!tr.classList.contains('shut'); tr.classList.toggle('shut',hide); tr.querySelector('td').firstChild.textContent=(hide?'\u25b8 ':'\u25be ')+tr.querySelector('td').firstChild.textContent.slice(2); tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=hide?'none':''; }); }; });
+    document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.differ?' \u00b7 <span title="Invoices whose Koszt (sta\u0142y / zmienny) on the board is different from what their category implies">'+M.differ+' where the board\u2019s Koszt disagrees with the category</span>':'')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
+    var c=document.getElementById('fp_chg'); if(c)c.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:''}; showTab('fincosts'); setTimeout(function(){ document.getElementById('fc_flag').value='changed'; renderFinCosts(); },900); };
+  }
+  function fpDrill(td){
+    var M=FP.model, d=td.getAttribute('data-d'), k=td.getAttribute('data-k'), c=td.getAttribute('data-c');
+    var extra=null, kindSel='';
+    if(k!=null&&c==null){
+      if(M.mode==='board') kindSel=(k==='fixed'?'koszt stały':'koszt zmienny');
+      else { var D=M.depts.filter(function(x){return x.name===d;})[0], K=D&&D.kinds.filter(function(x){return x.kind===k;})[0]; extra={label:(k==='fixed'?'Fixed':'Variable')+' lines only',cats:K?K.lines.map(function(l){return l.cat;}):[]}; }
+    } else if(k!=null&&c!=null&&M.mode==='board') kindSel=(k==='fixed'?'koszt stały':'koszt zmienny');
+    FC.preset={year:M.year,month:td.getAttribute('data-m')||'',company:M.company,dept:d==null?'':(d==='(no department)'?'__none':d),cat:c==null?'':(c==='(no category)'?'__none':c),kind:kindSel,extra:extra};
+    showTab('fincosts');
+  }
+  function fpCsv(){
+    var M=FP.model; if(!M)return; var q=function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }, n=function(a){ return a.map(function(v){return (v||0).toFixed(2);}).concat([a.reduce(function(s,v){return s+v;},0).toFixed(2)]).join(','); };
+    var L=[['Line'].concat(FC_MONTHS).concat(['Total']).map(q).join(',')];
+    M.depts.forEach(function(D){ L.push(q(D.name.toUpperCase())+','+n(D.total)); D.kinds.forEach(function(K){ L.push(q('  '+(K.kind==='fixed'?'Fixed':'Variable'))+','+n(K.total)); K.lines.forEach(function(l){ L.push(q('    '+l.cat)+','+n(l.m)); }); }); });
+    L.push(q('Control sum - Monday')+','+n(M.total));
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='Performance '+M.year+(M.company?' '+M.company:'')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
   // ---- Operations ▸ Confirmations: shareable report sign-off links ----
   var CF_ROWS=[];

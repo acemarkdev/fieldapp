@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.5.1';
+export const APP_VERSION = '1.6.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.6.0', date: '2026-10-03', changes: [
+    'Fin&Ops \u25b8 Performance (phase 2). The New Performance Sheet layout, calculated from the synced invoices: department (Office / Sales / Production) \u2192 Overheads \u2192 Fixed / Variable \u2192 cost line, with a column per month, a year total and the \u201cControl sum \u2014 Monday\u201d row. Click any number to open the invoices behind it on the Costs tab. Fixed / variable follows the sheet\u2019s category rule by default (or the board\u2019s Koszt column), and the page counts invoices where the two disagree. Year and company (Acemark / Ace Group / Poza bilans) selectors, collapsible blocks, CSV export. Salaries and payroll taxes are placeholders until the payroll source is connected. No migration.',
+  ] },
   { version: '1.5.1', date: '2026-10-03', changes: [
     'Fin&Ops \u25b8 Costs: the test site now syncs with the copy board \u201cFAKTURY WSZYSTKIE _TEST\u201d; only the live site reads and writes the real board. The Costs page links to the board it is using. No migration.',
   ] },
