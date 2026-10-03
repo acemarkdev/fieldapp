@@ -45,6 +45,7 @@ import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
+import { FIN_BOARD_DEFAULT, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
@@ -421,6 +422,41 @@ const server = createServer(async (req, res) => {
       const fname = ('Etykiety ' + (String(b.order ?? '').trim() || 'labels')).replace(/[^\w .-]/g, '_');
       res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' });
       res.end(pdf);
+      return;
+    }
+    // ---- Acemark Finance: the Fin&Ops menu only; everything else is refused ----
+    if (ctx.role === 'acemark_finance' && !(p === '/api/me' || p.startsWith('/api/finops/'))) {
+      send(res, 403, { error: 'Not allowed.' }); return;
+    }
+    // ---- Fin&Ops ▸ Costs: purchase invoices synced from the monday board ----
+    if (p === '/api/finops/costs' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      const [rows, run, slug] = await Promise.all([listCosts(ctx.tenant_id), lastSyncRun(ctx.tenant_id), getConfig('monday_account_slug')]);
+      const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
+      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage') });
+      return;
+    }
+    if (p === '/api/finops/costs/sync' && req.method === 'POST') {
+      if (!allow('finops.view')) return;
+      const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
+      const r = startCostSync(ctx.tenant_id, boardId, ctx.name);
+      if (r.started) audit(ctx, 'finops.sync', 'fin_costs', null, 'Started cost sync from monday');
+      send(res, 200, { ok: true, started: r.started, sync: syncProgress(ctx.tenant_id) });
+      return;
+    }
+    if (p === '/api/finops/costs/sync' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      send(res, 200, { sync: syncProgress(ctx.tenant_id), lastRun: await lastSyncRun(ctx.tenant_id) });
+      return;
+    }
+    if (p.startsWith('/api/finops/costs/') && p.endsWith('/accept') && req.method === 'POST') {
+      if (!allow('finops.manage')) return;
+      const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
+      const id = p.split('/')[4] ?? '';
+      const r = await acceptCostChange(ctx.tenant_id, id, boardId);
+      if (!r.ok) { send(res, 400, { error: r.error }); return; }
+      audit(ctx, 'finops.accept', 'fin_costs', id, `Accepted edited invoice as trusted — new Cost ID ${r.costId}`);
+      send(res, 200, { ok: true, costId: r.costId });
       return;
     }
     // ---- Report confirmations (office): upload a report → shareable link; track approvals ----
@@ -2886,6 +2922,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabLabels" class="tab" style="display:none" onclick="showTab('labels')">Labels</button>
         <button id="tabConfirm" class="tab" style="display:none" onclick="showTab('confirm')">Confirmations</button>
       </div></div>
+      <div class="grp" id="grp_finops"><button class="grpbtn" onclick="toggleGrp('finops')">Fin&amp;Ops \u25be</button><div class="grpmenu" id="menu_finops">
+        <button id="tabFinCosts" class="tab" style="display:none" onclick="showTab('fincosts')">Costs</button>
+      </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
         <button id="tabCustAdmin" class="tab" style="display:none" onclick="showTab('custadmin')">Customers</button>
@@ -3175,6 +3214,31 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="finCostsView" style="display:none">
+    <main style="max-width:1400px">
+      <div class="titlerow">
+        <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b>FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fc_last" style="margin:0;text-align:right"></span><button class="newbtn" id="fc_sync">Sync from Monday</button></div>
+      </div>
+      <div id="fc_progress" class="podecide" style="display:none;margin:14px 0 0"><div class="msg" id="fc_progress_msg"></div></div>
+      <div class="statgrid" id="fc_stats" style="margin:14px 0"></div>
+      <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <select id="fc_year" class="tinput"></select>
+        <select id="fc_month" class="tinput"></select>
+        <select id="fc_company" class="tinput"><option value="acemark">Acemark</option><option value="ace_group">Ace Group</option><option value="off_balance">Poza bilans</option><option value="">All companies</option></select>
+        <select id="fc_dept" class="tinput"></select>
+        <select id="fc_cat" class="tinput"></select>
+        <select id="fc_kind" class="tinput"><option value="">Fixed + variable</option><option value="koszt stały">Fixed (stały)</option><option value="koszt zmienny">Variable (zmienny)</option></select>
+        <select id="fc_status" class="tinput"></select>
+        <select id="fc_flag" class="tinput"><option value="">All invoices</option><option value="any">Any warning</option><option value="changed">Changed after sync</option><option value="duplicate">Duplicate Cost ID</option><option value="incomplete">Incomplete (no ID)</option><option value="konto">KONTO \u2260 category</option></select>
+        <input id="fc_q" class="tinput" placeholder="Search supplier, invoice no, order, description" style="min-width:260px;flex:1">
+      </div>
+      <div class="card2" style="overflow-x:auto"><table><thead><tr>
+        <th>DATE</th><th>SUPPLIER</th><th>INVOICE NO</th><th style="text-align:right">NET</th><th style="text-align:right">GROSS</th><th>CATEGORY</th><th>DEPT</th><th>STATUS</th><th>ORDER</th><th>COST ID</th><th></th>
+      </tr></thead><tbody id="fc_rows"></tbody></table></div>
+      <div id="fc_more" class="sub" style="margin:10px 0 30px"></div>
+    </main>
+  </div>
   <div id="confirmView" style="display:none">
     <main style="max-width:1180px">
       <div class="titlerow"><div><h2>Report confirmations</h2><div class="sub">Upload a report to confirm (HTML), copy the link and send it to the customer. They mark their decisions, sign and click <b>Approve</b> &mdash; you then download the signed PDF here.</div></div></div>
@@ -3515,7 +3579,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
-    var need={confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    if(myRole==='acemark_finance') return 'fincosts';
+    var need={fincosts:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3565,12 +3630,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
-    if(myRole==='logistics'){showTab(restoreTab());return;}
+    if(myRole==='logistics'||myRole==='acemark_finance'){showTab(restoreTab());return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4626,6 +4691,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('suppliersView').style.display=name==='suppliers'?'block':'none';
     document.getElementById('labelsView').style.display=name==='labels'?'block':'none';
     document.getElementById('confirmView').style.display=name==='confirm'?'block':'none';
+    document.getElementById('finCostsView').style.display=name==='fincosts'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4670,6 +4736,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='suppliers')loadSuppliers();
     if(name==='labels')initLabels();
     if(name==='confirm')loadConfirmations();
+    if(name==='fincosts')loadFinCosts();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4680,8 +4747,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinCosts'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4798,10 +4865,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
-    var isLogistics=(myRole==='logistics');
-    show('tabItems',!isCustomer&&!isLogistics);
+    var isLogistics=(myRole==='logistics'), isFin=(myRole==='acemark_finance');
+    show('tabItems',!isCustomer&&!isLogistics&&!isFin);
     show('tabLabels',canCap('labels.print'));
     show('tabConfirm',canCap('confirmations.manage'));
+    show('tabFinCosts',canCap('finops.view'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -5969,6 +6037,101 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     go.onclick=async function(){ var c=ta.value.trim(); if(!c){ ta.focus(); return; } go.disabled=true; var ok=await poSetStatus(id,'rejected',{comment:c}); if(ok)close(); else go.disabled=false; };
     ta.focus();
   }
+  // ---- Fin&Ops ▸ Costs: invoices synced from monday, guarded by a Cost ID ----
+  var FC={rows:[],canManage:false,slug:'',boardId:'',limit:300,timer:null};
+  var FC_MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var FC_FLAG={changed:['Changed','#fde2e0','#b42318'],duplicate:['Duplicate','#fff1e0','#b45309'],incomplete:['Incomplete','#eeedf3','#6b6786'],konto:['KONTO','#e0effa','#0b6ea8']};
+  function fcMoney(v){ return v==null?'\u2014':Number(v).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function fcOpts(id,first,vals,keep){ var el=document.getElementById(id); var cur=keep?el.value:''; el.innerHTML='<option value="">'+first+'</option>'+vals.map(function(v){return '<option value="'+av(v[0])+'">'+esc(v[1])+'</option>';}).join(''); if(cur&&vals.some(function(v){return String(v[0])===cur;}))el.value=cur; }
+  async function loadFinCosts(){
+    var first=!document.getElementById('fc_sync').dataset.ready;
+    if(first){ document.getElementById('fc_sync').dataset.ready='1';
+      document.getElementById('fc_sync').onclick=fcSync;
+      ['fc_year','fc_month','fc_company','fc_dept','fc_cat','fc_kind','fc_status','fc_flag'].forEach(function(id){ document.getElementById(id).onchange=function(){ FC.limit=300; renderFinCosts(); }; });
+      document.getElementById('fc_q').oninput=function(){ FC.limit=300; renderFinCosts(); };
+    }
+    var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fc_rows').innerHTML='<tr><td colspan="11" class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
+    FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId;
+    var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
+    fcOpts('fc_year','All years',years.map(function(y){return [y,String(y)];}),!first);
+    if(first&&years.length)document.getElementById('fc_year').value=String(years[0]);
+    fcOpts('fc_month','All months',FC_MONTHS.map(function(m,i){return [i+1,m];}),!first);
+    var uniq=function(k){ var o={}; FC.rows.forEach(function(r){ if(r[k])o[r[k]]=1; }); return Object.keys(o).sort().map(function(v){return [v,v];}); };
+    fcOpts('fc_dept','All departments',uniq('department'),!first);
+    fcOpts('fc_cat','All categories',uniq('subcategory'),!first);
+    fcOpts('fc_status','All statuses',uniq('status'),!first);
+    fcLast(d.lastRun); renderFinCosts(); fcProgress(d.sync);
+  }
+  function fcLast(run){
+    var el=document.getElementById('fc_last');
+    if(!run){ el.textContent='Never synced'; return; }
+    el.innerHTML='Last sync '+esc(cfWhen(run.finished_at||run.started_at))+(run.started_by?' \u00b7 '+esc(run.started_by):'')
+      +(run.error?'<br><span style="color:#b42318">failed: '+esc(String(run.error).slice(0,120))+'</span>':(run.finished_at?'<br>'+(run.scanned||0)+' invoices \u00b7 '+(run.added||0)+' new \u00b7 '+(run.changed||0)+' changed':''));
+  }
+  function fcFiltered(){
+    var g=function(id){ return document.getElementById(id).value; };
+    var y=g('fc_year'),m=g('fc_month'),co=g('fc_company'),de=g('fc_dept'),ca=g('fc_cat'),ki=g('fc_kind'),st=g('fc_status'),fl=g('fc_flag'),q=g('fc_q').trim().toLowerCase();
+    return FC.rows.filter(function(r){
+      if(y&&String(r.period_year)!==y)return false; if(m&&String(r.period_month)!==m)return false;
+      if(co&&r.company!==co)return false; if(de&&r.department!==de)return false; if(ca&&r.subcategory!==ca)return false;
+      if(ki&&r.cost_kind!==ki)return false; if(st&&r.status!==st)return false;
+      if(fl==='any'&&!r.flags.length)return false; if(fl&&fl!=='any'&&r.flags.indexOf(fl)<0)return false;
+      if(q&&[r.supplier,r.invoice_no,r.order_ref,r.description,r.cost_id].join(' ').toLowerCase().indexOf(q)<0)return false;
+      return true;
+    }).sort(function(a,b){ return String(b.invoice_date||'').localeCompare(String(a.invoice_date||''))||String(a.supplier||'').localeCompare(String(b.supplier||'')); });
+  }
+  function renderFinCosts(){
+    var rows=fcFiltered(), sum=function(k,f){ return rows.reduce(function(s,r){ return s+((!f||f(r))?(r[k]||0):0); },0); };
+    var unpaid=function(r){ return r.status!=='Opłacona'; }, warn=rows.filter(function(r){return r.flags.length;}).length, chg=rows.filter(function(r){return r.flags.indexOf('changed')>=0;}).length;
+    document.getElementById('fc_stats').innerHTML='<div class="stat"><div class="v">'+rows.length.toLocaleString('en-GB')+'</div><div class="l">Invoices</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(sum('net'))+' zł</div><div class="l">Net total</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(sum('gross',unpaid))+' zł</div><div class="l">Gross not yet paid</div></div>'
+      +'<div class="stat"><div class="v" style="color:'+(chg?'#b42318':'inherit')+'">'+chg+'</div><div class="l">Changed after sync</div></div>'
+      +'<div class="stat"><div class="v">'+warn+'</div><div class="l">With any warning</div></div>';
+    var tb=document.getElementById('fc_rows'), shown=rows.slice(0,FC.limit);
+    tb.innerHTML=shown.length?shown.map(function(r){
+      var flags=r.flags.map(function(f){ var m=FC_FLAG[f]; return '<span class="pill" data-fc="'+(f==='changed'?'changed':'')+'" data-id="'+av(r.id)+'" style="background:'+m[1]+';color:'+m[2]+';margin-left:4px'+(f==='changed'?';cursor:pointer':'')+'">'+m[0]+'</span>'; }).join('');
+      var url='https://'+FC.slug+'.monday.com/boards/'+FC.boardId+'/pulses/'+r.monday_item_id;
+      return '<tr'+(r.flags.indexOf('changed')>=0?' style="background:#fff5f4"':'')+'><td style="white-space:nowrap">'+esc(r.invoice_date||r.group_title||'\u2014')+'</td><td><b>'+esc(r.supplier||'\u2014')+'</b><div class="sub" style="margin:0">'+esc(r.description||'')+'</div></td><td class="mono" style="font-size:12px">'+esc(r.invoice_no||'\u2014')+'</td>'
+        +'<td style="text-align:right;white-space:nowrap">'+fcMoney(r.net)+'</td><td style="text-align:right;white-space:nowrap;color:var(--muted)">'+fcMoney(r.gross)+'</td>'
+        +'<td>'+esc(r.subcategory||'\u2014')+'<div class="sub" style="margin:0">'+esc((r.cost_kind||'').replace('koszt ',''))+(r.konto?' \u00b7 '+esc(r.konto):'')+'</div></td><td>'+esc(r.department||'\u2014')+'</td><td>'+esc(r.status||'\u2014')+'</td><td>'+esc(r.order_ref||'')+'</td>'
+        +'<td class="mono" style="font-size:11px;color:var(--muted);max-width:230px;overflow-wrap:anywhere">'+esc(r.cost_id||'')+flags+'</td>'
+        +'<td><a class="codelink" target="_blank" rel="noopener" href="'+av(url)+'">monday \u2197</a></td></tr>';
+    }).join(''):'<tr><td colspan="11" class="sub" style="padding:18px">'+(FC.rows.length?'No invoices match these filters.':'No costs yet \u2014 click \u201cSync from Monday\u201d.')+'</td></tr>';
+    tb.querySelectorAll('[data-fc="changed"]').forEach(function(el){ el.onclick=function(){ fcShowChange(el.getAttribute('data-id')); }; });
+    var more=document.getElementById('fc_more');
+    if(rows.length>shown.length){ more.innerHTML='Showing '+shown.length+' of '+rows.length+' \u2014 <a class="codelink" id="fc_showall">show all</a>'; document.getElementById('fc_showall').onclick=function(){ FC.limit=100000; renderFinCosts(); }; } else more.textContent='';
+  }
+  function fcShowChange(id){
+    var r=FC.rows.filter(function(x){return x.id===id;})[0]; if(!r)return;
+    var line=function(label,was,now){ var diff=String(was==null?'':was)!==String(now==null?'':now); return '<div class="drow"><dt>'+label+'</dt><dd>'+(diff?'<span style="text-decoration:line-through;color:var(--muted)">'+esc(was==null?'\u2014':was)+'</span> \u2192 <b style="color:#b42318">'+esc(now==null||now===''?'\u2014':now)+'</b>':esc(now==null?'\u2014':now))+'</dd></div>'; };
+    var html='<div style="padding:18px 22px"><p class="sub" style="margin:0 0 12px">This invoice was edited in monday after its Cost ID was created'+(r.changed_at?' (first noticed '+esc(cfWhen(r.changed_at))+')':'')+'.</p>'
+      +line('Supplier',r.orig_supplier,r.supplier)+line('Invoice no',r.orig_invoice_no,r.invoice_no)+line('Net',r.orig_net==null?null:fcMoney(r.orig_net),r.net==null?null:fcMoney(r.net))
+      +'<div class="drow"><dt>Cost ID</dt><dd class="mono" style="font-size:12px">'+esc(r.cost_id||'')+'</dd></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button>'+(FC.canManage?'<button class="save" id="fcAccept">Accept as correct</button>':'')+'</div>';
+    openModal('Invoice changed after sync',html);
+    var b=document.getElementById('fcAccept'); if(b)b.onclick=async function(){
+      if(!confirm('Accept the current monday values as correct? A new Cost ID is created and written to monday.'))return;
+      b.disabled=true; var rr=await api('/api/finops/costs/'+encodeURIComponent(id)+'/accept',{method:'POST'}); var d=await rr.json();
+      if(rr.ok&&d.ok){ closeModal(); tShow('Accepted'); loadFinCosts(); } else { tShow(d.error||'Could not accept'); b.disabled=false; }
+    };
+  }
+  async function fcSync(){
+    var btn=document.getElementById('fc_sync'); btn.disabled=true;
+    var d; try{ var r=await api('/api/finops/costs/sync',{method:'POST'}); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not start'); }catch(e){ tShow(e.message||'Could not start the sync'); btn.disabled=false; return; }
+    fcProgress(d.sync);
+  }
+  function fcProgress(s){
+    var box=document.getElementById('fc_progress'), btn=document.getElementById('fc_sync');
+    if(FC.timer){ clearTimeout(FC.timer); FC.timer=null; }
+    if(!s||(!s.running&&!s.error)){ box.style.display='none'; btn.disabled=false; return; }
+    box.style.display='flex';
+    if(s.running){
+      btn.disabled=true; box.className='podecide';
+      document.getElementById('fc_progress_msg').innerHTML='<b>Syncing\u2026</b><small>'+esc(s.phase)+(s.total?' '+s.done+' / '+s.total:(s.done?' '+s.done+' read':''))+' \u2014 you can leave this page; it keeps running.'+(/^Writing/.test(s.phase)?' The invoices below are already up to date; the Cost IDs are now being copied into monday (the first time takes a while).':'')+'</small>';
+      FC.timer=setTimeout(async function(){ if(sessionStorage.getItem('ace_tab')!=='fincosts')return; try{ var d=await (await api('/api/finops/costs/sync')).json(); if(d.sync&&d.sync.running){ var w=/^Writing/.test(d.sync.phase); if(w&&!FC.shownSaved){ FC.shownSaved=true; loadFinCosts(); } else fcProgress(d.sync); } else { FC.shownSaved=false; loadFinCosts(); } }catch(e){} },2500);
+    } else { btn.disabled=false; box.className='podecide bad'; document.getElementById('fc_progress_msg').innerHTML='<b>Last sync failed</b><small>'+esc(s.error)+'</small>'; }
+  }
   // ---- Operations ▸ Confirmations: shareable report sign-off links ----
   var CF_ROWS=[];
   function cfLink(t){ return location.origin+'/c/'+t; }
@@ -6682,7 +6845,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token');
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
+  } else if(token){document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'||myRole==='acemark_finance'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----

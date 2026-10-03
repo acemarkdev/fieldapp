@@ -1,7 +1,8 @@
 // Minimal Monday.com GraphQL client for the Sync API.
 // The token is read from the server environment — it never ships to a client.
 
-const MONDAY_URL = 'https://api.monday.com/v2';
+// Overridable so tests can point the client at a fake server.
+const MONDAY_URL = process.env.MONDAY_API_URL ?? 'https://api.monday.com/v2';
 
 export interface MondayColumn {
   id: string;
@@ -126,6 +127,39 @@ export class Monday {
     return out;
   }
 
+  /** Every item with its group, last-updated time and the text of the given columns (500 per page).
+   *  Used by the Fin&Ops cost sync (thousands of invoices). */
+  async listItemsDetailed(boardId: string, columnIds: string[], onProgress?: (n: number) => void): Promise<{ id: string; name: string; group: string | null; updated_at: string | null; cols: Record<string, string | null> }[]> {
+    const out: { id: string; name: string; group: string | null; updated_at: string | null; cols: Record<string, string | null> }[] = [];
+    const fields = `cursor items { id name updated_at group { title } column_values(ids: $col) { id text } }`;
+    let cursor: string | null = null;
+    for (let page = 0; page < 200; page++) {
+      const d: any = cursor
+        ? await this.gqlRetry(`query ($c: String!, $col: [String!]) { next_items_page(cursor: $c, limit: 500) { ${fields} } }`, { c: cursor, col: columnIds })
+        : await this.gqlRetry(`query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 500) { ${fields} } } }`, { b: [boardId], col: columnIds });
+      const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) { const cols: Record<string, string | null> = {}; for (const cv of (i.column_values ?? [])) cols[cv.id] = cv.text ?? null; out.push({ id: i.id, name: i.name, group: i.group?.title ?? null, updated_at: i.updated_at ?? null, cols }); }
+      onProgress?.(out.length);
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
+  /** Set one text column on many items in a single request (aliased mutations). Keep batches small (≤ 25). */
+  async setTextColumnBatch(boardId: string, columnId: string, pairs: { itemId: string; value: string }[]): Promise<void> {
+    if (!pairs.length) return;
+    if (!/^\d+$/.test(boardId) || pairs.some((p) => !/^\d+$/.test(p.itemId))) throw new Error('Invalid monday id.');
+    const body = pairs.map((p, i) => `m${i}: change_simple_column_value(board_id: ${boardId}, item_id: ${p.itemId}, column_id: ${JSON.stringify(columnId)}, value: ${JSON.stringify(p.value)}) { id }`).join('\n');
+    await this.gqlRetry(`mutation { ${body} }`);
+  }
+
+  /** gql() that waits and retries when monday rate-limits (complexity budget / too many requests). */
+  gqlRetry<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+    return withMondayRetry(() => this.gql<T>(query, variables));
+  }
+
   async createItem(boardId: string, name: string, columnValues: Record<string, unknown>): Promise<string> {
     const d = await this.gql<{ create_item: { id: string } }>(
       `mutation ($b: ID!, $n: String!, $cv: JSON!) {
@@ -181,5 +215,19 @@ export class Monday {
     const json: any = await res.json();
     if (json.errors) throw new Error('Monday file upload error: ' + JSON.stringify(json.errors));
     return json.data.add_file_to_column.id;
+  }
+}
+
+/** Run a monday call, waiting and retrying when monday rate-limits it (complexity budget, 429, dropped connection). */
+export async function withMondayRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await fn(); }
+    catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const limited = /complexity|rate.?limit|too many|budget exhausted|429|ECONNRESET|fetch failed/i.test(msg);
+      if (!limited || attempt >= 6) throw e;
+      const secs = Number(/reset in (\d+) seconds/i.exec(msg)?.[1] ?? 0) || 10 * (attempt + 1);
+      await new Promise((r) => setTimeout(r, Math.min(60, secs + 1) * 1000));
+    }
   }
 }

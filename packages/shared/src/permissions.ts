@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance',
 };
 
 export type Capability =
@@ -32,7 +32,9 @@ export type Capability =
   | 'finance.view'     // see the budget / customer pricing module (admin, invoice_manager only)
   | 'finance.manage'   // edit pricing rules, assign to jobs, set variations
   | 'labels.print'     // Logistics ▸ Labels: turn an Archimede PDF into a sheet of window/door labels
-  | 'confirmations.manage'; // share report-confirmation links, track approvals, download the signed PDF
+  | 'confirmations.manage' // share report-confirmation links, track approvals, download the signed PDF
+  | 'finops.view'      // Fin&Ops: company costs synced from the monday invoices board
+  | 'finops.manage';   // Fin&Ops: accept an edited invoice as the new trusted record (admin)
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -57,6 +59,8 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
   { key: 'labels.print', label: 'Print labels', desc: 'Window/door labels from an Archimede PDF' },
   { key: 'confirmations.manage', label: 'Report confirmations', desc: 'Share reports for sign-off, track approvals' },
+  { key: 'finops.view', label: 'Fin&Ops costs', desc: 'Company costs from the monday invoices board; run the sync' },
+  { key: 'finops.manage', label: 'Manage Fin&Ops', desc: 'Accept edited invoices as the new trusted record' },
 ];
 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
@@ -72,6 +76,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   customer: [],
   // Logistics menu only (Labels, Confirmations) — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
   logistics: ['labels.print', 'confirmations.manage'],
+  // Fin&Ops menu only (company cost control) — no jobs, items or anything else.
+  acemark_finance: ['finops.view'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

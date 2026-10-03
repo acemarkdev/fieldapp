@@ -37,6 +37,14 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   ok('office lacks labels.print', can('office', 'labels.print') === false);
 }
 
+// --- acemark_finance: Fin&Ops (view) and nothing else ---
+{
+  const { CAPABILITIES } = await import('./permissions');
+  for (const c of CAPABILITIES) ok(`acemark_finance ${c.key} === ${c.key === 'finops.view'}`, can('acemark_finance', c.key) === (c.key === 'finops.view'));
+  for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'] as const) ok(`${r} lacks finops.view`, can(r, 'finops.view') === false);
+  ok('admin has finops.manage', can('admin', 'finops.manage') === true);
+}
+
 // --- unknown / null role gets nothing ---
 ok('null role lacks finance.view', can(null, 'finance.view') === false);
 ok('unknown role lacks finance.view', can('someone', 'finance.view' as any) === false);
