@@ -45,7 +45,7 @@ import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
-import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick } from './finCosts';
+import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
@@ -433,14 +433,15 @@ const server = createServer(async (req, res) => {
       if (!allow('finops.view')) return;
       const [rows, run, slug] = await Promise.all([listCosts(ctx.tenant_id), lastSyncRun(ctx.tenant_id), getConfig('monday_account_slug')]);
       const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
-      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, isTestBoard: boardId !== FIN_BOARD_PROD, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage'), auto: await getAutoSyncSettings() });
+      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, isTestBoard: boardId !== FIN_BOARD_PROD, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage'), auto: { ...(await getAutoSyncSettings()), months: AUTO_SYNC_MONTHS } });
       return;
     }
     if (p === '/api/finops/costs/sync' && req.method === 'POST') {
       if (!allow('finops.view')) return;
       const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
-      const r = startCostSync(ctx.tenant_id, boardId, ctx.name);
-      if (r.started) audit(ctx, 'finops.sync', 'fin_costs', null, 'Started cost sync from monday');
+      const months = parseScope((await readJson(req)).months);
+      const r = startCostSync(ctx.tenant_id, boardId, `${ctx.name} (${scopeLabel(months)})`, months);
+      if (r.started) audit(ctx, 'finops.sync', 'fin_costs', null, `Started cost sync from monday — ${scopeLabel(months)}`);
       send(res, 200, { ok: true, started: r.started, sync: syncProgress(ctx.tenant_id) });
       return;
     }
@@ -457,7 +458,7 @@ const server = createServer(async (req, res) => {
       if (!Number.isInteger(hour) || hour < 0 || hour > 23) { send(res, 400, { error: 'Hour must be 0–23.' }); return; }
       await setAutoSyncSettings(b.enabled !== false, hour);
       audit(ctx, 'finops.autosync', 'fin_costs', null, `Automatic cost sync ${b.enabled !== false ? 'on at ' + String(hour).padStart(2, '0') + ':00' : 'off'}`);
-      send(res, 200, { ok: true, auto: await getAutoSyncSettings() });
+      send(res, 200, { ok: true, auto: { ...(await getAutoSyncSettings()), months: AUTO_SYNC_MONTHS } });
       return;
     }
     if (p.startsWith('/api/finops/costs/') && p.endsWith('/accept') && req.method === 'POST') {
@@ -3277,6 +3278,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b id="fc_board">FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced; the month it counts in is its monday group &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
         <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fc_last" style="margin:0;text-align:right"></span><button class="newbtn" id="fc_sync">Sync from Monday</button></div>
       </div>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin:8px 0 0"><span class="sub" style="margin:0">Sync:</span>
+        <button class="pobtn fcscope" data-m="" style="padding:5px 11px;font-size:12px">All</button><button class="pobtn fcscope" data-m="12" style="padding:5px 11px;font-size:12px">Last 12 months</button><button class="pobtn fcscope" data-m="3" style="padding:5px 11px;font-size:12px">Last 3 months</button></div>
       <div class="sub" id="fc_auto" style="margin:6px 0 0;text-align:right"></div>
       <div id="fc_progress" class="podecide" style="display:none;margin:14px 0 0"><div class="msg" id="fc_progress_msg"></div></div>
       <div class="statgrid" id="fc_stats" style="margin:14px 0"></div>
@@ -6119,6 +6122,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(first){ document.getElementById('fc_sync').dataset.ready='1';
       document.getElementById('fc_sync').onclick=fcSync;
       document.getElementById('fc_csv').onclick=fcCsv;
+      FC.scope=sessionStorage.getItem('ace_fc_scope'); if(FC.scope===null)FC.scope='12';
+      document.querySelectorAll('.fcscope').forEach(function(b){ b.onclick=function(){ FC.scope=b.getAttribute('data-m'); sessionStorage.setItem('ace_fc_scope',FC.scope); fcScopeUi(); }; });
+      fcScopeUi();
       ['fc_year','fc_month','fc_company','fc_dept','fc_cat','fc_kind','fc_status','fc_flag'].forEach(function(id){ document.getElementById(id).onchange=function(){ FC.limit=300; renderFinCosts(); }; });
       document.getElementById('fc_q').oninput=function(){ FC.limit=300; renderFinCosts(); };
     }
@@ -6137,17 +6143,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     FC.lastRun=d.lastRun; FC.loaded=true; FC.auto=d.auto; fcAutoLine();
     fcLast(d.lastRun); renderFinCosts(); fcProgress(d.sync);
   }
+  function fcScopeUi(){ document.querySelectorAll('.fcscope').forEach(function(b){ var on=b.getAttribute('data-m')===FC.scope; b.style.background=on?'var(--purple)':'#fff'; b.style.color=on?'#fff':'var(--ink)'; b.style.borderColor=on?'var(--purple)':'var(--line)'; }); }
   function fcAutoLine(){
     var a=FC.auto, el=document.getElementById('fc_auto'); if(!a){ el.textContent=''; return; }
     var hh=(a.hour<10?'0':'')+a.hour+':00';
-    el.innerHTML='Automatic sync: '+(a.enabled?'<b>every day at '+hh+'</b> (Poland time)':'<b>off</b>')+(FC.canManage?' \u00b7 <a class="codelink" id="fc_auto_edit">change</a>':'');
+    el.innerHTML='Automatic sync: '+(a.enabled?'<b>every day at '+hh+'</b> (Poland time, last '+(a.months||12)+' months)':'<b>off</b>')+(FC.canManage?' \u00b7 <a class="codelink" id="fc_auto_edit">change</a>':'');
     var e=document.getElementById('fc_auto_edit'); if(e)e.onclick=fcAutoEdit;
   }
   function fcAutoEdit(){
     var a=FC.auto||{enabled:true,hour:6}, opts=''; for(var h=0;h<24;h++)opts+='<option value="'+h+'"'+(h===a.hour?' selected':'')+'>'+(h<10?'0':'')+h+':00</option>';
     openModal('Automatic sync','<div class="fgrid"><div class="field full"><label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink)"><input type="checkbox" id="fca_on"'+(a.enabled?' checked':'')+' style="width:16px;height:16px"> Sync from Monday automatically every day</label></div>'
       +'<div class="field"><label>Time (Poland time)</label><select id="fca_hour">'+opts+'</select></div>'
-      +'<div class="sub full" style="margin:0">Runs once a day at the chosen hour. If the server was restarting at that moment, it runs as soon as it is back. You can still sync by hand at any time.</div></div>'
+      +'<div class="sub full" style="margin:0">Runs once a day at the chosen hour and refreshes the last 12 months. If the server was restarting at that moment, it runs as soon as it is back. You can still sync by hand at any time.</div></div>'
       +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="fca_save">Save</button></div>');
     document.getElementById('fca_save').onclick=async function(){
       var r=await api('/api/finops/auto-sync',{method:'PUT',body:JSON.stringify({enabled:document.getElementById('fca_on').checked,hour:+document.getElementById('fca_hour').value})}); var d=await r.json();
@@ -6188,9 +6195,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tb.innerHTML=shown.length?shown.map(function(r){
       var flags=r.flags.map(function(f){ var m=FC_FLAG[f]; return '<span class="pill" data-fc="'+(f==='changed'?'changed':'')+'" data-id="'+av(r.id)+'" style="background:'+m[1]+';color:'+m[2]+';margin-left:4px'+(f==='changed'?';cursor:pointer':'')+'">'+m[0]+'</span>'; }).join('');
       var url='https://'+FC.slug+'.monday.com/boards/'+FC.boardId+'/pulses/'+r.monday_item_id;
-      return '<tr'+(r.flags.indexOf('changed')>=0?' style="background:#fff5f4"':'')+'><td style="white-space:nowrap">'+esc(r.invoice_date||r.group_title||'\u2014')+'</td><td><b>'+esc(r.supplier||'\u2014')+'</b><div class="sub" style="margin:0">'+esc(r.description||'')+'</div></td><td class="mono" style="font-size:12px">'+esc(r.invoice_no||'\u2014')+'</td>'
+      return '<tr'+(r.flags.indexOf('changed')>=0?' style="background:#fff5f4"':'')+'><td style="white-space:nowrap">'+esc(r.invoice_date||r.group_title||'\u2014')+'</td><td><a target="_blank" rel="noopener" href="'+av(url)+'" title="Open this invoice in monday" style="font-weight:700;color:var(--ink);text-decoration:none">'+esc(r.supplier||'\u2014')+'</a><div class="sub" style="margin:0">'+esc(r.description||'')+'</div></td><td class="mono" style="font-size:12px">'+esc(r.invoice_no||'\u2014')+'</td>'
         +'<td style="text-align:right;white-space:nowrap">'+fcMoney(r.net)+'</td><td style="text-align:right;white-space:nowrap;color:var(--muted)">'+fcMoney(r.gross)+'</td>'
-        +'<td>'+esc(r.subcategory||'\u2014')+'<div class="sub" style="margin:0">'+fpKind(r)+(r.konto?' \u00b7 KONTO '+esc(r.konto):'')+'</div>'+fcReasons(r).map(function(x){ return '<div style="font-size:11px;color:#b45309;max-width:260px;white-space:normal">\u26a0 '+esc(x)+'</div>'; }).join('')+'</td><td>'+esc(r.department||'\u2014')+'</td><td>'+esc(r.status||'\u2014')+'</td><td>'+esc(r.order_ref||'')+'</td>'
+        +'<td>'+esc(r.subcategory||'\u2014')+'<div class="sub" style="margin:0">'+fpKind(r)+(r.konto?' \u00b7 KONTO '+esc(r.konto):'')+'</div>'+fcReasons(r).map(function(x){ return '<div style="font-size:11px;color:#b45309;max-width:260px;white-space:normal">\u26a0 '+esc(x)+'</div>'; }).join('')+(fcNeedsReclass(r)?'<a class="pobtn" style="display:inline-block;margin-top:5px;padding:4px 10px;font-size:11px;text-decoration:none;color:#b45309;border-color:#f5d9a8" target="_blank" rel="noopener" href="'+av(url)+'">Open in monday to fix \u2197</a>':'')+'</td><td>'+esc(r.department||'\u2014')+'</td><td>'+esc(r.status||'\u2014')+'</td><td>'+esc(r.order_ref||'')+'</td>'
         +'<td class="mono" style="font-size:11px;color:var(--muted);max-width:230px;overflow-wrap:anywhere">'+esc(r.cost_id||'')+flags+'</td>'
         +'<td><a class="codelink" target="_blank" rel="noopener" href="'+av(url)+'">monday \u2197</a></td></tr>';
     }).join(''):'<tr><td colspan="11" class="sub" style="padding:18px">'+(FC.rows.length?'No invoices match these filters.':'No costs yet \u2014 click \u201cSync from Monday\u201d.')+'</td></tr>';
@@ -6220,7 +6227,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   async function fcSync(){
     var btn=document.getElementById('fc_sync'); btn.disabled=true;
-    var d; try{ var r=await api('/api/finops/costs/sync',{method:'POST'}); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not start'); }catch(e){ tShow(e.message||'Could not start the sync'); btn.disabled=false; return; }
+    var d; try{ var r=await api('/api/finops/costs/sync',{method:'POST',body:JSON.stringify({months:FC.scope||null})}); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not start'); }catch(e){ tShow(e.message||'Could not start the sync'); btn.disabled=false; return; }
     fcProgress(d.sync);
   }
   function fcProgress(s){

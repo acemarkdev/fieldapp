@@ -147,6 +147,30 @@ export class Monday {
     return out;
   }
 
+  /** The board's groups (on the invoices board: one per month). */
+  async listGroups(boardId: string): Promise<{ id: string; title: string }[]> {
+    const d: any = await this.gqlRetry(`query ($b: [ID!]) { boards(ids: $b) { groups { id title } } }`, { b: [boardId] });
+    return d.boards?.[0]?.groups ?? [];
+  }
+
+  /** Like listItemsDetailed, but only the items of one group. */
+  async listGroupItemsDetailed(boardId: string, groupId: string, columnIds: string[]): Promise<{ id: string; name: string; group: string | null; updated_at: string | null; cols: Record<string, string | null> }[]> {
+    const out: { id: string; name: string; group: string | null; updated_at: string | null; cols: Record<string, string | null> }[] = [];
+    const fields = `cursor items { id name updated_at group { title } column_values(ids: $col) { id text } }`;
+    let cursor: string | null = null;
+    for (let page = 0; page < 200; page++) {
+      const d: any = cursor
+        ? await this.gqlRetry(`query ($c: String!, $col: [String!]) { next_items_page(cursor: $c, limit: 500) { ${fields} } }`, { c: cursor, col: columnIds })
+        : await this.gqlRetry(`query ($b: [ID!], $g: [String], $col: [String!]) { boards(ids: $b) { groups(ids: $g) { items_page(limit: 500) { ${fields} } } } }`, { b: [boardId], g: [groupId], col: columnIds });
+      const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.groups?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) { const cols: Record<string, string | null> = {}; for (const cv of (i.column_values ?? [])) cols[cv.id] = cv.text ?? null; out.push({ id: i.id, name: i.name, group: i.group?.title ?? null, updated_at: i.updated_at ?? null, cols }); }
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
   /** Set one text column on many items in a single request (aliased mutations). Keep batches small (≤ 25). */
   async setTextColumnBatch(boardId: string, columnId: string, pairs: { itemId: string; value: string }[]): Promise<void> {
     if (!pairs.length) return;

@@ -186,18 +186,31 @@ async function ensureCostIdColumn(monday: Monday, boardId: string): Promise<stri
   return hit ? hit.id : withMondayRetry(() => monday.createColumn(boardId, COST_ID_COLUMN_TITLE, 'text'));
 }
 
+// Sync scope: the whole board, or only the month groups of the last N months (the board has one group
+// per month). A month is in scope when it is the current month, one of the N-1 before it, or later.
+export type SyncScope = number | null;   // months, or null = everything
+export const AUTO_SYNC_MONTHS = 12;
+export function parseScope(v: unknown): SyncScope { const n = Number(v); return n === 3 || n === 12 ? n : null; }
+export const scopeLabel = (m: SyncScope) => (m ? `last ${m} months` : 'all history');
+export function inScope(year: number | null, month: number | null, months: SyncScope, now: Date = new Date()): boolean {
+  if (!months) return true;
+  if (!year || !month) return false;
+  const [cy, cm] = localDayHour(now, AUTO_SYNC_TZ).day.split('-').map(Number);
+  return (cy - year) * 12 + (cm - month) < months;
+}
+
 /** Starts a sync in the background (one per tenant at a time). Poll syncProgress() for status. */
-export function startCostSync(tenantId: string, boardId: string, startedBy: string): { started: boolean } {
+export function startCostSync(tenantId: string, boardId: string, startedBy: string, months: SyncScope = null): { started: boolean } {
   if (progress.get(tenantId)?.running) return { started: false };
-  const p: SyncProgress = { running: true, phase: 'Reading invoices from monday…', done: 0, total: 0, startedAt: new Date().toISOString(), error: null };
+  const p: SyncProgress = { running: true, phase: `Reading invoices from monday (${scopeLabel(months)})…`, done: 0, total: 0, startedAt: new Date().toISOString(), error: null };
   progress.set(tenantId, p);
-  runCostSync(tenantId, boardId, startedBy, p)
+  runCostSync(tenantId, boardId, startedBy, p, months)
     .catch((e: any) => { p.error = e?.message ?? String(e); console.error('[fin sync]', e); })
     .finally(() => { p.running = false; });
   return { started: true };
 }
 
-async function runCostSync(tenantId: string, boardId: string, startedBy: string, p: SyncProgress): Promise<void> {
+async function runCostSync(tenantId: string, boardId: string, startedBy: string, p: SyncProgress, months: SyncScope): Promise<void> {
   const now = new Date().toISOString();
   const run = await db().from('fin_sync_runs').insert({ tenant_id: tenantId, started_by: startedBy }).select('id').single();
   if (run.error) throw run.error;
@@ -205,10 +218,18 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
   try {
     const monday = new Monday();
     const costIdCol = await ensureCostIdColumn(monday, boardId);
-    const items = await monday.listItemsDetailed(boardId, [...Object.values(C), costIdCol], (n) => { p.done = n; });
+    const colIds = [...Object.values(C), costIdCol];
+    let items: MondayCostItem[];
+    if (!months) items = await monday.listItemsDetailed(boardId, colIds, (n) => { p.done = n; });
+    else {
+      // Only the month groups in scope, one group at a time.
+      const groups = (await monday.listGroups(boardId)).filter((g) => { const gp = groupPeriod(g.title); return inScope(gp.year, gp.month, months); });
+      items = [];
+      for (const g of groups) { items.push(...await monday.listGroupItemsDetailed(boardId, g.id, colIds)); p.done = items.length; }
+    }
 
     p.phase = 'Saving to the app…'; p.done = 0; p.total = items.length;
-    const existing = new Map<string, any>((await selectAll('fin_costs', 'id,monday_item_id,cost_id,orig_supplier,orig_invoice_no,orig_net,changed,changed_at,first_synced_at,removed', tenantId)).map((r) => [r.monday_item_id, r]));
+    const existing = new Map<string, any>((await selectAll('fin_costs', 'id,monday_item_id,cost_id,orig_supplier,orig_invoice_no,orig_net,changed,changed_at,first_synced_at,removed,period_year,period_month', tenantId)).map((r) => [r.monday_item_id, r]));
     const rows = items.map((it) => toCostRow(tenantId, it, costIdCol, existing.get(it.id) ?? null, now));
     let added = 0, updated = 0;
     for (const r of rows) (existing.has(r.monday_item_id) ? updated++ : added++);
@@ -217,9 +238,10 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
       if (error) throw error;
       p.done = Math.min(rows.length, i + 500);
     }
-    // Items that disappeared from the board.
+    // Items that disappeared from the board. In a scoped sync only months that were actually read can
+    // be judged — older invoices were not looked at, so they are left alone.
     const live = new Set(items.map((i) => i.id));
-    const gone = [...existing.values()].filter((r) => !live.has(r.monday_item_id) && !r.removed).map((r) => r.id);
+    const gone = [...existing.values()].filter((r) => !live.has(r.monday_item_id) && !r.removed && inScope(r.period_year, r.period_month, months)).map((r) => r.id);
     for (let i = 0; i < gone.length; i += 200) {
       const { error } = await db().from('fin_costs').update({ removed: true, last_synced_at: now }).in('id', gone.slice(i, i + 200));
       if (error) throw error;
@@ -300,5 +322,5 @@ export async function autoSyncTick(tenantId: string, boardId: string): Promise<b
   const s = await getAutoSyncSettings();
   if (!s.enabled || localDayHour(new Date(), s.tz).hour < s.hour) return false;   // cheap exit before touching the runs table
   if (!autoSyncDue(new Date(), s, await lastAutoRunStart(tenantId))) return false;
-  return startCostSync(tenantId, boardId, AUTO_SYNC_BY).started;
+  return startCostSync(tenantId, boardId, AUTO_SYNC_BY, AUTO_SYNC_MONTHS).started;
 }

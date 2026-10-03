@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.7.1';
+export const APP_VERSION = '1.7.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.7.2', date: '2026-10-03', changes: [
+    'Fin&Ops sync scope. Under \u201cSync from Monday\u201d choose All, Last 12 months or Last 3 months \u2014 a scoped sync reads only those month groups, so it is much faster. The automatic daily sync now refreshes the last 12 months only. Older invoices are left exactly as they were; run \u201cAll\u201d when something older was changed on the board.',
+    'Fin&Ops \u25b8 Costs: every invoice that needs fixing now has an \u201cOpen in monday to fix\u201d button right under its warning, and the supplier name on every row opens the invoice in monday. No migration.',
+  ] },
   { version: '1.7.1', date: '2026-10-03', changes: [
     'Fin&Ops: an invoice is now counted in the month of its monday group (not its invoice date), so monthly totals match the board exactly \u2014 e.g. September 2026 = 461,311.90. Invoices dated outside their group\u2019s month are listed under \u201cTo fix in monday\u201d. Entries without an invoice number are now registered too: their Cost ID uses BRAK-FV-<date> in place of the number, and filling the number in later updates the ID without raising a Changed flag. \u201c429 Office\u201d is accepted as a Production line. Takes effect after the next sync. No migration.',
   ] },

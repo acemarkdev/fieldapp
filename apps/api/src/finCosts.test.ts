@@ -1,5 +1,5 @@
 // Fin&Ops cost rules. Run: npx tsx apps/api/src/finCosts.test.ts
-import { groupPeriod, isNumberFilledIn, buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour, categoryCode, costKindOf } from './finCosts';
+import { inScope, parseScope, groupPeriod, isNumberFilledIn, buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour, categoryCode, costKindOf } from './finCosts';
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) { fail++; console.error('✗ ' + label); } else console.log('✓ ' + label); };
@@ -89,6 +89,17 @@ ok('473 Investments under Production → on the sheet', !cls('Production', '473 
 ok('no department → unclassified', cls(null, '631 Materials', '631').includes('unclassified'));
 ok('no category → unclassified', cls('Office', null, null).includes('unclassified'));
 ok('unknown department is not judged against the sheet', !cls('Warehouse', '429 Office', '429').includes('offsheet'));
+
+// --- sync scope (last N months, by monday month group) ---
+const NOWS = new Date('2026-10-03T10:00:00Z');
+ok('scope: everything when no limit', inScope(2022, 11, null, NOWS) && inScope(null, null, null, NOWS));
+ok('scope 3: Oct, Sep, Aug 2026 in', inScope(2026, 10, 3, NOWS) && inScope(2026, 9, 3, NOWS) && inScope(2026, 8, 3, NOWS));
+ok('scope 3: Jul 2026 out', !inScope(2026, 7, 3, NOWS));
+ok('scope 12: Nov 2025 in, Oct 2025 out', inScope(2025, 11, 12, NOWS) && !inScope(2025, 10, 12, NOWS));
+ok('scope: a future month group is in', inScope(2026, 11, 3, NOWS));
+ok('scope: a row with no month is not in a scoped sync', !inScope(2022, null, 12, NOWS));
+ok('scope: month boundary uses Poland time', inScope(2026, 9, 1, new Date('2026-09-30T21:30:00Z')) && !inScope(2026, 9, 1, new Date('2026-09-30T22:30:00Z')));
+ok('parseScope: 3 / 12 / anything else = all', parseScope('3') === 3 && parseScope(12) === 12 && parseScope('') === null && parseScope(null) === null && parseScope(7) === null);
 
 // --- automatic daily sync (06:00 Poland time) ---
 const S = { enabled: true, hour: 6, tz: 'Europe/Warsaw' };
