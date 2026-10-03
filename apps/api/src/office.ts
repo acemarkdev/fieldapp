@@ -45,7 +45,7 @@ import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
-import { FIN_BOARD_DEFAULT, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange } from './finCosts';
+import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
@@ -433,7 +433,7 @@ const server = createServer(async (req, res) => {
       if (!allow('finops.view')) return;
       const [rows, run, slug] = await Promise.all([listCosts(ctx.tenant_id), lastSyncRun(ctx.tenant_id), getConfig('monday_account_slug')]);
       const boardId = (await getConfig('fin_costs_board_id')) || FIN_BOARD_DEFAULT;
-      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage') });
+      send(res, 200, { rows, lastRun: run, sync: syncProgress(ctx.tenant_id), boardId, isTestBoard: boardId !== FIN_BOARD_PROD, slug: slug || 'ace189144', canManage: can(ctx.role, 'finops.manage') });
       return;
     }
     if (p === '/api/finops/costs/sync' && req.method === 'POST') {
@@ -3217,7 +3217,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="finCostsView" style="display:none">
     <main style="max-width:1400px">
       <div class="titlerow">
-        <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b>FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
+        <div><h2>Costs</h2><div class="sub">All purchase invoices from the monday board <b id="fc_board">FAKTURY WSZYSTKIE</b>. Each invoice gets a <b>Cost ID</b> (supplier # invoice no # net) when first synced &mdash; kept here and written to monday. If the supplier, invoice number or net amount is edited later, the invoice is flagged <b>Changed</b>.</div></div>
         <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fc_last" style="margin:0;text-align:right"></span><button class="newbtn" id="fc_sync">Sync from Monday</button></div>
       </div>
       <div id="fc_progress" class="podecide" style="display:none;margin:14px 0 0"><div class="msg" id="fc_progress_msg"></div></div>
@@ -6060,6 +6060,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fcOpts('fc_dept','All departments',uniq('department'),!first);
     fcOpts('fc_cat','All categories',uniq('subcategory'),!first);
     fcOpts('fc_status','All statuses',uniq('status'),!first);
+    var bl=document.getElementById('fc_board'); if(bl)bl.innerHTML='<a class="codelink" target="_blank" rel="noopener" href="https://'+av(d.slug)+'.monday.com/boards/'+av(d.boardId)+'">FAKTURY WSZYSTKIE'+(d.isTestBoard?' _TEST':'')+' \u2197</a>';
     fcLast(d.lastRun); renderFinCosts(); fcProgress(d.sync);
   }
   function fcLast(run){

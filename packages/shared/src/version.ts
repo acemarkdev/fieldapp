@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.5.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.5.1', date: '2026-10-03', changes: [
+    'Fin&Ops \u25b8 Costs: the test site now syncs with the copy board \u201cFAKTURY WSZYSTKIE _TEST\u201d; only the live site reads and writes the real board. The Costs page links to the board it is using. No migration.',
+  ] },
   { version: '1.5.0', date: '2026-10-03', changes: [
     'New Fin&Ops menu \u25b8 Costs (phase 1 of company cost control) + new role Acemark Finance. \u201cSync from Monday\u201d pulls every purchase invoice from the board FAKTURY WSZYSTKIE (all history) into the app. Each invoice gets a Cost ID \u2014 SUPPLIER#INVOICE NO#NET \u2014 when first synced: kept in the app as the trusted copy and written to a new \u201cCost ID\u201d column on the board. Later syncs rebuild it from monday\u2019s current values; if the supplier, invoice number or net amount was edited, the invoice is flagged Changed (old \u2192 new shown; an admin can accept it). Also flags duplicate Cost IDs (same invoice entered twice), incomplete invoices and KONTO not matching the category. Filters by year, month, company (Acemark / Ace Group / Poza bilans), department, category, fixed/variable, status and warnings, with net / unpaid totals. Acemark Finance users see only Fin&Ops. Requires migrations 0055_acemark_finance_role.sql then 0056_fin_costs.sql.',
   ] },

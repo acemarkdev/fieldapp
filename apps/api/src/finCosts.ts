@@ -8,7 +8,12 @@
 import { db } from './supabase';
 import { Monday, withMondayRetry } from './monday';
 
-export const FIN_BOARD_DEFAULT = '3609645458';
+// The invoices board per environment. Only PROD touches the real board "FAKTURY WSZYSTKIE"; test and
+// local development use its copy "FAKTURY WSZYSTKIE _TEST" (same column ids), so test syncs can never
+// write Cost IDs to — or fight with prod over — the live board. Override with env FIN_COSTS_BOARD_ID
+// or app_config 'fin_costs_board_id'.
+export const FIN_BOARD_PROD = '3609645458', FIN_BOARD_TEST = '18433834194';
+export const FIN_BOARD_DEFAULT = process.env.FIN_COSTS_BOARD_ID || (process.env.APP_ENV === 'prod' ? FIN_BOARD_PROD : FIN_BOARD_TEST);
 export const COST_ID_COLUMN_TITLE = 'Cost ID';
 
 // monday column ids on the invoices board.
