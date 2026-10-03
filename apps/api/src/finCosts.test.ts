@@ -1,11 +1,11 @@
 // Fin&Ops cost rules. Run: npx tsx apps/api/src/finCosts.test.ts
-import { buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour } from './finCosts';
+import { buildCostId, parseAmount, periodOf, companyOf, toCostRow, flagsOf, autoSyncDue, localDayHour, categoryCode, costKindOf } from './finCosts';
 
 let fail = 0;
 const ok = (label: string, cond: boolean) => { if (!cond) { fail++; console.error('✗ ' + label); } else console.log('✓ ' + label); };
 const item = (o: Partial<{ id: string; name: string; group: string; no: string; net: string; date: string; sub: string; konto: string; cid: string }>) => ({
   id: o.id ?? '1', name: o.name ?? 'Cortizo', group: o.group ?? 'Wrzesień 2026', updated_at: null,
-  cols: { tekst1: o.no ?? '26/P14/000829', tekst0: o.net ?? '3095.81', data: o.date ?? '2026-09-30', tekst53: o.sub ?? '631 Materials', dropdown: o.konto ?? '631', cid: o.cid ?? null } as Record<string, string | null>,
+  cols: { tekst1: o.no ?? '26/P14/000829', tekst0: o.net ?? '3095.81', data: o.date ?? '2026-09-30', tekst53: o.sub ?? '631 Materials', dropdown: o.konto ?? '631', color_mkz3ghnq: 'Production', cid: o.cid ?? null } as Record<string, string | null>,
 });
 const T = 't1', NOW = '2026-10-03T10:00:00Z';
 
@@ -52,6 +52,30 @@ ok('flag incomplete', flagsOf(blank, new Set()).includes('incomplete'));
 ok('flag konto mismatch', flagsOf(toCostRow(T, item({ konto: '473' }), 'cid', null, NOW), new Set()).includes('konto'));
 ok('no konto flag when matching (.V)', !flagsOf(toCostRow(T, item({ sub: '499.V Handel', konto: '499.V' }), 'cid', null, NOW), new Set()).includes('konto'));
 ok('clean row has no flags', flagsOf(first, new Set()).length === 0);
+
+// --- classification: code, fixed/variable by category, reclassify flags ---
+ok('code of "631 Materials"', categoryCode('631 Materials') === '631');
+ok('code of "499.V Handel"', categoryCode('499.V Handel') === '499.V');
+ok('code of "Tax"', categoryCode('Tax') === 'TAX');
+ok('code of empty', categoryCode('') === null);
+ok('469 Rentings is fixed', costKindOf('469 Rentings') === 'fixed');
+ok('469.V Rentings is variable', costKindOf('469.V Rentings') === 'variable');
+ok('463 Software fixed, 463.V variable', costKindOf('463 Software') === 'fixed' && costKindOf('463.V Software') === 'variable');
+ok('631 Materials / 429 Office / Tax are variable', costKindOf('631 Materials') === 'variable' && costKindOf('429 Office') === 'variable' && costKindOf('Tax') === 'variable');
+const cls = (dept: string | null, sub: string | null, konto: string | null) => flagsOf({ cost_id: 'x', department: dept, subcategory: sub, konto }, new Set());
+ok('clean classification → no flags', cls('Production', '631 Materials', '631').length === 0);
+ok('KONTO with several values incl. the code → ok', !cls('Sales', '499.V Handel', '499.V, 499').includes('konto'));
+ok('KONTO different from category → konto', cls('Sales', '499.V Handel', '449.V').includes('konto'));
+ok('no KONTO → no konto flag', !cls('Office', '429 Office', null).includes('konto'));
+ok('Tax has no account code → no konto flag', !cls('Sales', 'Tax', '100').includes('konto'));
+ok('429 Office under Production → offsheet', cls('Production', '429 Office', '429').includes('offsheet'));
+ok('463 Software under Production → offsheet (sheet has only 463.V there)', cls('Production', '463 Software', '463').includes('offsheet'));
+ok('463.V Software under Production → on the sheet', !cls('Production', '463.V Software', '463.V').includes('offsheet'));
+ok('473 Maintenance under Sales → offsheet', cls('Sales', '473 Maintenance', '473').includes('offsheet'));
+ok('473 Investments under Production → on the sheet', !cls('Production', '473 Investments', '473').includes('offsheet'));
+ok('no department → unclassified', cls(null, '631 Materials', '631').includes('unclassified'));
+ok('no category → unclassified', cls('Office', null, null).includes('unclassified'));
+ok('unknown department is not judged against the sheet', !cls('Warehouse', '429 Office', '429').includes('offsheet'));
 
 // --- automatic daily sync (06:00 Poland time) ---
 const S = { enabled: true, hour: 6, tz: 'Europe/Warsaw' };

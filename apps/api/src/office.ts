@@ -3264,12 +3264,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px">
         <select id="fp_year" class="tinput"></select>
         <select id="fp_company" class="tinput"><option value="acemark">Acemark</option><option value="ace_group">Ace Group</option><option value="off_balance">Poza bilans</option><option value="">All companies</option></select>
-        <select id="fp_mode" class="tinput" title="How an invoice is put under Fixed or Variable"><option value="rule">Fixed / variable: by category (as in the sheet)</option><option value="board">Fixed / variable: board&rsquo;s Koszt column</option></select>
         <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="fp_dec"> Show decimals</label>
         <span class="sub" style="margin:0 0 0 auto" id="fp_note"></span>
       </div>
       <div class="card2" style="overflow:auto;max-height:calc(100vh - 230px)"><table class="fp"><thead id="fp_head"></thead><tbody id="fp_rows"></tbody></table></div>
-      <div class="sub" style="margin:10px 0 30px">The department comes from the board&rsquo;s <b>Dzia&#322;</b> column and the line from <b>Podrodzaj kosztu</b>. Fixed / variable follows the sheet by default: categories 469, 401, 412, 457, 489, 463, 464 and 467 are fixed; their <b>.V</b> variants and every other category are variable (switch above to use the board&rsquo;s <b>Koszt</b> column instead). Salaries and payroll taxes are not invoices on the board &mdash; those rows fill in once the payroll source is connected. Run <b>Sync from Monday</b> on the Costs tab to refresh.</div>
+      <div class="sub" style="margin:10px 0 30px">The department comes from the board&rsquo;s <b>Dzia&#322;</b> column and the line from <b>Podrodzaj kosztu</b>. Fixed / variable is decided by the category, as in the sheet: 469, 401, 412, 457, 489, 463, 464 and 467 are fixed; their <b>.V</b> variants and every other category are variable (the board&rsquo;s Koszt column is not used). Salaries and payroll taxes are not invoices on the board &mdash; those rows fill in once the payroll source is connected. Run <b>Sync from Monday</b> on the Costs tab to refresh.</div>
     </main>
   </div>
   <div id="finCostsView" style="display:none">
@@ -3287,16 +3286,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <select id="fc_company" class="tinput"><option value="acemark">Acemark</option><option value="ace_group">Ace Group</option><option value="off_balance">Poza bilans</option><option value="">All companies</option></select>
         <select id="fc_dept" class="tinput"></select>
         <select id="fc_cat" class="tinput"></select>
-        <select id="fc_kind" class="tinput"><option value="">Fixed + variable</option><option value="koszt stały">Fixed (stały)</option><option value="koszt zmienny">Variable (zmienny)</option></select>
+        <select id="fc_kind" class="tinput"><option value="">Fixed + variable</option><option value="fixed">Fixed</option><option value="variable">Variable</option></select>
         <select id="fc_status" class="tinput"></select>
-        <select id="fc_flag" class="tinput"><option value="">All invoices</option><option value="any">Any warning</option><option value="changed">Changed after sync</option><option value="duplicate">Duplicate Cost ID</option><option value="incomplete">Incomplete (no ID)</option><option value="konto">KONTO \u2260 category</option></select>
+        <select id="fc_flag" class="tinput"><option value="">All invoices</option><option value="any">Any warning</option><option value="changed">Changed after sync</option><option value="duplicate">Duplicate Cost ID</option><option value="incomplete">Incomplete (no ID)</option><option value="reclass">To reclassify (any reason)</option><option value="offsheet">\u2003Category not on the sheet for this department</option><option value="konto">\u2003KONTO \u2260 category</option><option value="unclassified">\u2003No department / category</option></select>
         <span id="fc_extra" class="pill" style="display:none;background:#efedf7;color:var(--purple);cursor:pointer" title="Click to remove this filter"></span>
         <input id="fc_q" class="tinput" placeholder="Search supplier, invoice no, order, description" style="min-width:260px;flex:1">
       </div>
       <div class="card2" style="overflow-x:auto"><table><thead><tr>
         <th>DATE</th><th>SUPPLIER</th><th>INVOICE NO</th><th style="text-align:right">NET</th><th style="text-align:right">GROSS</th><th>CATEGORY</th><th>DEPT</th><th>STATUS</th><th>ORDER</th><th>COST ID</th><th></th>
       </tr></thead><tbody id="fc_rows"></tbody></table></div>
-      <div id="fc_more" class="sub" style="margin:10px 0 30px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:10px 0 30px"><div id="fc_more" class="sub" style="margin:0"></div><button class="pobtn" id="fc_csv">Export this list (CSV)</button></div>
     </main>
   </div>
   <div id="confirmView" style="display:none">
@@ -6103,13 +6102,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- Fin&Ops ▸ Costs: invoices synced from monday, guarded by a Cost ID ----
   var FC={rows:[],canManage:false,slug:'',boardId:'',limit:300,timer:null};
   var FC_MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  var FC_FLAG={changed:['Changed','#fde2e0','#b42318'],duplicate:['Duplicate','#fff1e0','#b45309'],incomplete:['Incomplete','#eeedf3','#6b6786'],konto:['KONTO','#e0effa','#0b6ea8']};
+  var FC_FLAG={changed:['Changed','#fde2e0','#b42318'],duplicate:['Duplicate','#fff1e0','#b45309'],incomplete:['Incomplete','#eeedf3','#6b6786'],konto:['KONTO','#e0effa','#0b6ea8'],offsheet:['Not on sheet','#fff1e0','#b45309'],unclassified:['Unclassified','#fde2e0','#b42318']};
+  // Plain-language reasons an invoice should be reclassified on the board.
+  function fcReasons(r){
+    var out=[];
+    if(r.flags.indexOf('unclassified')>=0) out.push(!r.department&&!r.subcategory?'No department and no category':(!r.department?'No department (Dzia\u0142)':'No category (Podrodzaj kosztu)'));
+    if(r.flags.indexOf('offsheet')>=0) out.push('\u201c'+r.subcategory+'\u201d is not a '+r.department+' line in the Performance Sheet \u2014 change the category or the department');
+    if(r.flags.indexOf('konto')>=0) out.push('KONTO '+r.konto+' does not match the category \u201c'+r.subcategory+'\u201d \u2014 one of them is wrong');
+    return out;
+  }
   function fcMoney(v){ return v==null?'\u2014':Number(v).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   function fcOpts(id,first,vals,keep){ var el=document.getElementById(id); var cur=keep?el.value:''; el.innerHTML='<option value="">'+first+'</option>'+vals.map(function(v){return '<option value="'+av(v[0])+'">'+esc(v[1])+'</option>';}).join(''); if(cur&&vals.some(function(v){return String(v[0])===cur;}))el.value=cur; }
   async function loadFinCosts(){
     var first=!document.getElementById('fc_sync').dataset.ready;
     if(first){ document.getElementById('fc_sync').dataset.ready='1';
       document.getElementById('fc_sync').onclick=fcSync;
+      document.getElementById('fc_csv').onclick=fcCsv;
       ['fc_year','fc_month','fc_company','fc_dept','fc_cat','fc_kind','fc_status','fc_flag'].forEach(function(id){ document.getElementById(id).onchange=function(){ FC.limit=300; renderFinCosts(); }; });
       document.getElementById('fc_q').oninput=function(){ FC.limit=300; renderFinCosts(); };
     }
@@ -6124,7 +6132,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fcOpts('fc_cat','All categories',uniq('subcategory').concat([['__none','(no category)']]),!first);
     fcOpts('fc_status','All statuses',uniq('status'),!first);
     var bl=document.getElementById('fc_board'); if(bl)bl.innerHTML='<a class="codelink" target="_blank" rel="noopener" href="https://'+av(d.slug)+'.monday.com/boards/'+av(d.boardId)+'">FAKTURY WSZYSTKIE'+(d.isTestBoard?' _TEST':'')+' \u2197</a>';
-    if(FC.preset){ var ps=FC.preset; FC.preset=null; ['year','month','company','dept','cat','kind'].forEach(function(k){ var el=document.getElementById('fc_'+k); el.value=ps[k]==null?'':String(ps[k]); }); document.getElementById('fc_status').value=''; document.getElementById('fc_flag').value=''; document.getElementById('fc_q').value=''; FC.limit=300; FC.extra=ps.extra||null; }
+    if(FC.preset){ var ps=FC.preset; FC.preset=null; ['year','month','company','dept','cat','kind'].forEach(function(k){ var el=document.getElementById('fc_'+k); el.value=ps[k]==null?'':String(ps[k]); }); document.getElementById('fc_status').value=''; document.getElementById('fc_flag').value=ps.flag||''; document.getElementById('fc_q').value=''; FC.limit=300; FC.extra=ps.extra||null; }
     FC.lastRun=d.lastRun; FC.loaded=true; FC.auto=d.auto; fcAutoLine();
     fcLast(d.lastRun); renderFinCosts(); fcProgress(d.sync);
   }
@@ -6159,8 +6167,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(co&&r.company!==co)return false;
       if(FC.extra&&FC.extra.cats.indexOf(r.subcategory||'(no category)')<0)return false;
       if(de&&(de==='__none'?!!r.department:r.department!==de))return false; if(ca&&(ca==='__none'?!!r.subcategory:r.subcategory!==ca))return false;
-      if(ki&&(ki==='koszt stały'?r.cost_kind!==ki:r.cost_kind==='koszt stały'))return false; if(st&&r.status!==st)return false;
-      if(fl==='any'&&!r.flags.length)return false; if(fl&&fl!=='any'&&r.flags.indexOf(fl)<0)return false;
+      if(ki&&fpKind(r)!==ki)return false; if(st&&r.status!==st)return false;
+      if(fl==='any'&&!r.flags.length)return false; if(fl==='reclass'&&!fcNeedsReclass(r))return false; if(fl&&fl!=='any'&&fl!=='reclass'&&r.flags.indexOf(fl)<0)return false;
       if(q&&[r.supplier,r.invoice_no,r.order_ref,r.description,r.cost_id].join(' ').toLowerCase().indexOf(q)<0)return false;
       return true;
     }).sort(function(a,b){ return String(b.invoice_date||'').localeCompare(String(a.invoice_date||''))||String(a.supplier||'').localeCompare(String(b.supplier||'')); });
@@ -6168,11 +6176,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function renderFinCosts(){
     var ex=document.getElementById('fc_extra'); ex.style.display=FC.extra?'inline-block':'none'; if(FC.extra){ ex.textContent=FC.extra.label+' \u2715'; ex.onclick=function(){ FC.extra=null; renderFinCosts(); }; }
     var rows=fcFiltered(), sum=function(k,f){ return rows.reduce(function(s,r){ return s+((!f||f(r))?(r[k]||0):0); },0); };
-    var unpaid=function(r){ return r.status!=='Opłacona'; }, warn=rows.filter(function(r){return r.flags.length;}).length, chg=rows.filter(function(r){return r.flags.indexOf('changed')>=0;}).length;
+    var unpaid=function(r){ return r.status!=='Opłacona'; }, warn=rows.filter(function(r){return r.flags.length;}).length, rcl=rows.filter(fcNeedsReclass).length, chg=rows.filter(function(r){return r.flags.indexOf('changed')>=0;}).length;
     document.getElementById('fc_stats').innerHTML='<div class="stat"><div class="v">'+rows.length.toLocaleString('en-GB')+'</div><div class="l">Invoices</div></div>'
       +'<div class="stat"><div class="v">'+fcMoney(sum('net'))+' zł</div><div class="l">Net total</div></div>'
       +'<div class="stat"><div class="v">'+fcMoney(sum('gross',unpaid))+' zł</div><div class="l">Gross not yet paid</div></div>'
       +'<div class="stat"><div class="v" style="color:'+(chg?'#b42318':'inherit')+'">'+chg+'</div><div class="l">Changed after sync</div></div>'
+      +'<div class="stat"><div class="v" style="color:'+(rcl?'#b45309':'inherit')+'">'+rcl+'</div><div class="l">To reclassify in monday</div></div>'
       +'<div class="stat"><div class="v">'+warn+'</div><div class="l">With any warning</div></div>';
     var tb=document.getElementById('fc_rows'), shown=rows.slice(0,FC.limit);
     tb.innerHTML=shown.length?shown.map(function(r){
@@ -6180,13 +6189,19 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var url='https://'+FC.slug+'.monday.com/boards/'+FC.boardId+'/pulses/'+r.monday_item_id;
       return '<tr'+(r.flags.indexOf('changed')>=0?' style="background:#fff5f4"':'')+'><td style="white-space:nowrap">'+esc(r.invoice_date||r.group_title||'\u2014')+'</td><td><b>'+esc(r.supplier||'\u2014')+'</b><div class="sub" style="margin:0">'+esc(r.description||'')+'</div></td><td class="mono" style="font-size:12px">'+esc(r.invoice_no||'\u2014')+'</td>'
         +'<td style="text-align:right;white-space:nowrap">'+fcMoney(r.net)+'</td><td style="text-align:right;white-space:nowrap;color:var(--muted)">'+fcMoney(r.gross)+'</td>'
-        +'<td>'+esc(r.subcategory||'\u2014')+'<div class="sub" style="margin:0">'+esc((r.cost_kind||'').replace('koszt ',''))+(r.konto?' \u00b7 '+esc(r.konto):'')+'</div></td><td>'+esc(r.department||'\u2014')+'</td><td>'+esc(r.status||'\u2014')+'</td><td>'+esc(r.order_ref||'')+'</td>'
+        +'<td>'+esc(r.subcategory||'\u2014')+'<div class="sub" style="margin:0">'+fpKind(r)+(r.konto?' \u00b7 KONTO '+esc(r.konto):'')+'</div>'+fcReasons(r).map(function(x){ return '<div style="font-size:11px;color:#b45309;max-width:260px;white-space:normal">\u26a0 '+esc(x)+'</div>'; }).join('')+'</td><td>'+esc(r.department||'\u2014')+'</td><td>'+esc(r.status||'\u2014')+'</td><td>'+esc(r.order_ref||'')+'</td>'
         +'<td class="mono" style="font-size:11px;color:var(--muted);max-width:230px;overflow-wrap:anywhere">'+esc(r.cost_id||'')+flags+'</td>'
         +'<td><a class="codelink" target="_blank" rel="noopener" href="'+av(url)+'">monday \u2197</a></td></tr>';
     }).join(''):'<tr><td colspan="11" class="sub" style="padding:18px">'+(FC.rows.length?'No invoices match these filters.':'No costs yet \u2014 click \u201cSync from Monday\u201d.')+'</td></tr>';
     tb.querySelectorAll('[data-fc="changed"]').forEach(function(el){ el.onclick=function(){ fcShowChange(el.getAttribute('data-id')); }; });
     var more=document.getElementById('fc_more');
     if(rows.length>shown.length){ more.innerHTML='Showing '+shown.length+' of '+rows.length+' \u2014 <a class="codelink" id="fc_showall">show all</a>'; document.getElementById('fc_showall').onclick=function(){ FC.limit=100000; renderFinCosts(); }; } else more.textContent='';
+  }
+  function fcCsv(){
+    var rows=fcFiltered(), q=function(v){ return '"'+String(v==null?'':v).replace(/"/g,'""')+'"'; };
+    var L=[['Date','Supplier','Invoice no','Net','Gross','Department','Category','Fixed/variable','KONTO','Status','Order','Description','Warnings','What to fix','Cost ID','Monday link'].map(q).join(',')];
+    rows.forEach(function(r){ L.push([r.invoice_date||'',r.supplier,r.invoice_no,r.net==null?'':r.net.toFixed(2),r.gross==null?'':r.gross.toFixed(2),r.department,r.subcategory,fpKind(r),r.konto,r.status,r.order_ref,r.description,r.flags.join(' | '),fcReasons(r).join(' | '),r.cost_id,'https://'+FC.slug+'.monday.com/boards/'+FC.boardId+'/pulses/'+r.monday_item_id].map(q).join(',')); });
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='Costs '+(document.getElementById('fc_year').value||'all')+(document.getElementById('fc_flag').value?' '+document.getElementById('fc_flag').value:'')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
   function fcShowChange(id){
     var r=FC.rows.filter(function(x){return x.id===id;})[0]; if(!r)return;
@@ -6223,17 +6238,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var FP_ORDER=['469','401','412','457','489','463','464','467','429','445','425','449','468','500','TAX','499','631','473','416'];
   var FP_DEPTS=['Office','Sales','Production'];
   // Sheet rule: these categories are fixed costs; their ".V" variants and everything else are variable.
-  function fpKind(r,mode){
-    if(mode==='board') return r.cost_kind==='koszt stały'?'fixed':'variable';
+  function fpKind(r){
     var c=String(r.subcategory||'').toUpperCase();
     return (/^(469|401|412|457|489|463|464|467)(?![.]V)/.test(c))?'fixed':'variable';
   }
+  var FC_RECLASS=['konto','offsheet','unclassified'];
+  function fcNeedsReclass(r){ return r.flags.some(function(f){ return FC_RECLASS.indexOf(f)>=0; }); }
   function fpRank(cat){ var c=String(cat||'').toUpperCase(); for(var i=0;i<FP_ORDER.length;i++){ if(c.indexOf(FP_ORDER[i])===0)return i; } return 99; }
   async function loadFinPerf(){
     var first=!document.getElementById('fp_csv').dataset.ready;
     if(first){ document.getElementById('fp_csv').dataset.ready='1';
       document.getElementById('fp_csv').onclick=fpCsv;
-      ['fp_year','fp_company','fp_dec','fp_mode'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
+      ['fp_year','fp_company','fp_dec'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
     var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fp_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
     FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId; FC.lastRun=d.lastRun;
     var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
@@ -6244,18 +6260,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function fpBuild(){
     var year=+document.getElementById('fp_year').value, co=document.getElementById('fp_company').value;
     var rows=FC.rows.filter(function(r){ return r.period_year===year&&(!co||r.company===co); });
-    var depts={}, noMonth=0, chg=0, mode=document.getElementById('fp_mode').value, differ=0;
+    var depts={}, noMonth=0, chg=0, reclass=0;
     rows.forEach(function(r){
       if(!r.period_month){ noMonth++; return; }
       if(r.flags&&r.flags.indexOf('changed')>=0)chg++;
-      var dn=r.department||'(no department)', kind=fpKind(r,mode), cat=r.subcategory||'(no category)';
-      if(r.cost_kind&&fpKind(r,'rule')!==fpKind(r,'board'))differ++;
+      var dn=r.department||'(no department)', kind=fpKind(r), cat=r.subcategory||'(no category)';
+      if(fcNeedsReclass(r))reclass++;
       var D=depts[dn]||(depts[dn]={fixed:{},variable:{}}); var L=D[kind][cat]||(D[kind][cat]=[0,0,0,0,0,0,0,0,0,0,0,0]);
       L[r.period_month-1]+=(r.net||0);
     });
     var names=FP_DEPTS.filter(function(n){return depts[n];}).concat(Object.keys(depts).filter(function(n){return FP_DEPTS.indexOf(n)<0;}).sort());
     var add=function(a,b){ return a.map(function(v,i){return v+b[i];}); }, zero=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; };
-    var out={year:year,company:co,mode:mode,differ:differ,depts:[],total:zero(),noMonth:noMonth,changed:chg,count:rows.length};
+    var out={year:year,company:co,reclass:reclass,depts:[],total:zero(),noMonth:noMonth,changed:chg,count:rows.length};
     names.forEach(function(n){
       var D={name:n,total:zero(),kinds:[]};
       ['fixed','variable'].forEach(function(k){
@@ -6291,16 +6307,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tb.innerHTML=M.depts.length?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs for this year / company yet.</td></tr>';
     tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); fpDrill(td); }; });
     tb.querySelectorAll('tr.kind').forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'), hide=!tr.classList.contains('shut'); tr.classList.toggle('shut',hide); tr.querySelector('td').firstChild.textContent=(hide?'\u25b8 ':'\u25be ')+tr.querySelector('td').firstChild.textContent.slice(2); tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=hide?'none':''; }); }; });
-    document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.differ?' \u00b7 <span title="Invoices whose Koszt (sta\u0142y / zmienny) on the board is different from what their category implies">'+M.differ+' where the board\u2019s Koszt disagrees with the category</span>':'')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
+    document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.reclass?' \u00b7 <a class="codelink" id="fp_rcl" style="color:#b45309" title="Invoices whose category, department or KONTO looks wrong \u2014 open the list to fix them in monday">'+M.reclass+' to reclassify \u2192</a>':' \u00b7 nothing to reclassify')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
+    var rc=document.getElementById('fp_rcl'); if(rc)rc.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:'',flag:'reclass'}; showTab('fincosts'); };
     var c=document.getElementById('fp_chg'); if(c)c.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:''}; showTab('fincosts'); setTimeout(function(){ document.getElementById('fc_flag').value='changed'; renderFinCosts(); },900); };
   }
   function fpDrill(td){
     var M=FP.model, d=td.getAttribute('data-d'), k=td.getAttribute('data-k'), c=td.getAttribute('data-c');
-    var extra=null, kindSel='';
-    if(k!=null&&c==null){
-      if(M.mode==='board') kindSel=(k==='fixed'?'koszt stały':'koszt zmienny');
-      else { var D=M.depts.filter(function(x){return x.name===d;})[0], K=D&&D.kinds.filter(function(x){return x.kind===k;})[0]; extra={label:(k==='fixed'?'Fixed':'Variable')+' lines only',cats:K?K.lines.map(function(l){return l.cat;}):[]}; }
-    } else if(k!=null&&c!=null&&M.mode==='board') kindSel=(k==='fixed'?'koszt stały':'koszt zmienny');
+    var extra=null, kindSel=(k==null?'':k);
     FC.preset={year:M.year,month:td.getAttribute('data-m')||'',company:M.company,dept:d==null?'':(d==='(no department)'?'__none':d),cat:c==null?'':(c==='(no category)'?'__none':c),kind:kindSel,extra:extra};
     showTab('fincosts');
   }

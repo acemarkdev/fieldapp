@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.6.1';
+export const APP_VERSION = '1.7.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.7.0', date: '2026-10-03', changes: [
+    'Fin&Ops: the board\u2019s Koszt (sta\u0142y / zmienny) column is no longer used \u2014 fixed or variable is always decided by the category, as in the sheet. New \u201cTo reclassify\u201d worklist: invoices whose category is not a line for their department in the Performance Sheet (e.g. 429 Office under Production), whose KONTO does not match the category, or that have no department / category. Performance shows the count with a link; the Costs tab lists them with the reason in plain words, a monday link to fix each one, a new filter (any reason or one reason) and \u201cExport this list (CSV)\u201d. After fixing in monday, the next sync clears them. No migration.',
+  ] },
   { version: '1.6.1', date: '2026-10-03', changes: [
     'Fin&Ops: automatic daily sync from Monday \u2014 on by default at 06:00 Poland time. Admins can change the hour or switch it off on the Costs tab (\u201cAutomatic sync \u2026 change\u201d). Runs once a day; if the server was restarting at that hour it runs as soon as it is back. Automatic runs appear in the last-sync line as \u201cAutomatic (daily)\u201d. No migration.',
   ] },
