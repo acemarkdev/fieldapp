@@ -1,5 +1,5 @@
 // Fin&Ops payroll rules. Run: npx tsx apps/api/src/finPayroll.test.ts
-import { payrollView, payrollFields, type PayrollRow } from './finPayroll';
+import { payrollView, payrollFields, resultItemFields, type PayrollRow } from './finPayroll';
 
 let fail = 0;
 const ok = (label: string, cond: boolean, extra: any = '') => { if (!cond) { fail++; console.error('✗ ' + label, JSON.stringify(extra)); } else console.log('✓ ' + label); };
@@ -52,6 +52,16 @@ ok('ticking Actuals with a figure missing is refused', payrollFields({ year: 202
 ok('Actuals with zeros is fine', payrollFields({ year: 2026, month: 9, actual: true, departments: D({ salaries: 0, taxes: 0 }) }).ok === true);
 ok('bad month refused', payrollFields({ year: 2026, month: 13, departments: {} }).ok === false);
 ok('negative refused', payrollFields({ year: 2026, month: 9, departments: D({ salaries: -5, taxes: 0 }) }).ok === false);
+
+// Result items (depreciation / financial cost)
+ok('result item parsed', (() => { const r: any = resultItemFields({ year: 2026, month: 3, kind: 'depreciation', amount: '12 500,50' }); return r.ok && r.amount === 12500.5; })());
+ok('empty clears', (() => { const r: any = resultItemFields({ year: 2026, month: 3, kind: 'financial_cost', amount: '' }); return r.ok && r.amount === null; })());
+ok('zero is a real 0', (resultItemFields({ year: 2026, month: 3, kind: 'depreciation', amount: 0 }) as any).amount === 0);
+ok('text refused', resultItemFields({ year: 2026, month: 3, kind: 'depreciation', amount: 'abc' }).ok === false);
+ok('negative depreciation refused', resultItemFields({ year: 2026, month: 3, kind: 'depreciation', amount: -1 }).ok === false);
+ok('negative financial cost allowed (net income)', resultItemFields({ year: 2026, month: 3, kind: 'financial_cost', amount: -200 }).ok === true);
+ok('unknown item refused', resultItemFields({ year: 2026, month: 3, kind: 'salaries', amount: 1 }).ok === false);
+ok('bad month refused (result item)', resultItemFields({ year: 2026, month: 0, kind: 'depreciation', amount: 1 }).ok === false);
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
 console.log('\nAll payroll rule tests passed.');

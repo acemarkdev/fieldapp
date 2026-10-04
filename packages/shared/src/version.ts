@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.12.0';
+export const APP_VERSION = '1.13.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.13.0', date: '2026-10-04', changes: [
+    'Fin&Ops \u25b8 Performance \u25b8 Result: Depreciation and Financial cost can now be typed in per month \u2014 click a month in those rows, enter the amount (empty clears it). Two new lines follow: Operating profit (EBITDA \u2212 Depreciation) and Profit before tax (Operating profit \u2212 Financial cost), each with its % of sales. The RESULT header now shows Profit before tax.',
+    'The new rows are in the CSV export and in Polish; every change is recorded in the audit log.',
+  ] },
   { version: '1.12.0', date: '2026-10-04', changes: [
     'Fin&Ops \u25b8 Performance: new Result block at the bottom, built like the Performance Sheet. Sales \u2212 Materials (RW of the jobs counted in the month, from Job costs) \u2212 Sales costs (the whole Sales department incl. payroll) = Gross margin; \u2212 Overheads (Office incl. payroll + Production payroll) = EBITDA. Every line shows its % of sales underneath, per month and for the year.',
     'Months that still use a payroll estimate are shown in italics in the Result rows too. Click a Materials cell to open Job costs for that month; click Sales to open the Sales tab.',

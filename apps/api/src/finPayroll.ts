@@ -80,3 +80,35 @@ export async function savePayrollMonth(tenantId: string, by: string, b: any): Pr
   if (error) throw error;
   return { ok: true, year: f.year, month: f.month, actual: f.actual };
 }
+
+// ---- Result items: depreciation and financial cost, typed in per month for the Performance result block. ----
+export const RESULT_ITEMS = ['depreciation', 'financial_cost'] as const;
+export type ResultItem = (typeof RESULT_ITEMS)[number];
+export interface ResultItemRow { year: number; month: number; depreciation: number | null; financial_cost: number | null }
+
+/** One typed cell → what to store. Empty clears it; depreciation cannot be negative (a financial cost can: net interest income). */
+export function resultItemFields(b: any): Result<{ year: number; month: number; kind: ResultItem; amount: number | null }> {
+  const year = Number(b.year), month = Number(b.month);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100 || !Number.isInteger(month) || month < 1 || month > 12) return fail(400, 'Month or year looks wrong.');
+  if (!RESULT_ITEMS.includes(b.kind)) return fail(400, 'Unknown result item.');
+  const raw = b.amount === null || b.amount === undefined ? '' : String(b.amount).trim();
+  const amount = raw === '' ? null : parseMoney(b.amount);
+  if (raw !== '' && amount === null) return fail(400, 'Enter the amount.');
+  if (b.kind === 'depreciation' && (amount ?? 0) < 0) return fail(400, 'Amounts cannot be negative.');
+  return { ok: true, year, month, kind: b.kind, amount };
+}
+/** Empty (not an error) while the table is not there yet, so Payroll and Performance keep working before the migration. */
+export async function listResultItems(tenantId: string): Promise<ResultItemRow[]> {
+  const { data, error } = await db().from('fin_result_items').select('period_year,period_month,depreciation,financial_cost').eq('tenant_id', tenantId);
+  if (error) { console.warn('[finops] result items not readable:', error.message); return []; }
+  const num = (v: any) => (v === null || v === undefined ? null : Number(v));
+  return (data ?? []).map((r: any) => ({ year: r.period_year, month: r.period_month, depreciation: num(r.depreciation), financial_cost: num(r.financial_cost) }));
+}
+export async function saveResultItem(tenantId: string, by: string, b: any): Promise<Result<{ year: number; month: number; kind: ResultItem; amount: number | null }>> {
+  const f = resultItemFields(b); if (!f.ok) return f;
+  const { error } = await db().from('fin_result_items').upsert(
+    { tenant_id: tenantId, period_year: f.year, period_month: f.month, [f.kind]: f.amount, updated_by: by, updated_at: new Date().toISOString() },
+    { onConflict: 'tenant_id,period_year,period_month' });
+  if (error) throw error;
+  return f;
+}
