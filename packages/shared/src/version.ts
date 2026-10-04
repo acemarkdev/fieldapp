@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.9.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.9.0', date: '2026-10-04', changes: [
+    'Fin&Ops \u25b8 Sales (phase 5.1) \u2014 the \u201cSprzeda\u017c\u201d sheet in the app, entered by hand until Subiekt is connected. One row per job, holding all of its invoices (prepayments and the final one); click a job to see, add, edit or delete them. Invoices without a number are shown as planned; sales not tied to a job have their own group. Filters (year, month, Orpiszew / trade, country, buyer), totals, CSV export, and an admin import that pastes the existing sheet (lines already here are skipped).',
+    'Job costs now take a job\u2019s sales from its sales invoices (their net sum) when it has any \u2014 no more copying by hand; the value from the sheet is kept for reference and a filter lists the jobs where the two differ. Locking a job freezes its sales figure, so later invoices cannot move a locked job\u2019s result.',
+    'Performance shows a Sales results block under the costs, as in the sheet: total, Sales from Orpiszew (producer Acemark PL) and Trade from Poland (everything else), each by country, with the UK split into Acemark Glazing / PCW / Others UK. Click a number to see its invoices. Requires migration 0058_fin_sales.sql.',
+  ] },
   { version: '1.8.0', date: '2026-10-04', changes: [
     'Fin&Ops \u25b8 Job costs (phase 4) \u2014 the \u201cKoszty\u201d sheet in the app: profit & loss per job order. One row per job (Z.373, \u201cZ.102 panele\u201d, Z.214B\u2026 are separate jobs) with the sheet\u2019s columns: Material Cost (RW), other cost \u2014 panels, glass, other extras, painting, transport, customs clearance, labour hours and cost, sales, total cost, profit / loss, profitability, customer. Open a job to enter its cost lines \u2014 several per job (e.g. several invoices), each with an optional invoice number, supplier, date and note; labour is hours \u00d7 rate (default rate set by an admin). Filters, totals, CSV export. An admin can lock a job \u2014 it is then read-only for everyone until an admin unlocks it \u2014 and can import the existing sheet by pasting its rows (existing jobs are skipped). Finance and admin only. Requires migration 0057_fin_jobs.sql.',
   ] },

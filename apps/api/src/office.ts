@@ -46,6 +46,7 @@ import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
 import { JOB_KINDS, JOB_KIND_LABEL, listJobs, getJob, createJob, updateJob, deleteJob, setJobLock, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
+import { listSales, createSale, updateSale, deleteSale, importSales } from './finSales';
 import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
@@ -526,6 +527,34 @@ const server = createServer(async (req, res) => {
         audit(ctx, 'finjob.item.add', 'fin_job', jobId, `Added a cost line to ${r.reference}`);
         send(res, 200, { ok: true, id: r.id }); return;
       }
+    }
+    // ---- Fin&Ops ▸ Sales (sheet "Sprzedaż"): sales invoices, entered by hand; shown per job. Import = admin. ----
+    if (p === '/api/finops/sales' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      send(res, 200, { invoices: await listSales(ctx.tenant_id), canManage: can(ctx.role, 'finops.manage') }); return;
+    }
+    if (p === '/api/finops/sales' && req.method === 'POST') {
+      if (!allow('finops.view')) return;
+      const r = await createSale(ctx.tenant_id, ctx.name, await readJson(req));
+      if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+      audit(ctx, 'finsale.create', 'fin_sale', r.id, 'Added a sales invoice');
+      send(res, 200, { ok: true, id: r.id }); return;
+    }
+    if (p === '/api/finops/sales/import' && req.method === 'POST') {
+      if (!allow('finops.manage')) return;
+      const rows = (await readJson(req)).rows;
+      if (!Array.isArray(rows) || !rows.length) { send(res, 400, { error: 'Nothing to import.' }); return; }
+      const r = await importSales(ctx.tenant_id, ctx.name, rows.slice(0, 20000));
+      audit(ctx, 'finsale.import', 'fin_sale', null, `Imported ${r.added} sales invoice(s); ${r.skipped} already existed, ${r.invalid} not invoices`);
+      send(res, 200, { ok: true, ...r }); return;
+    }
+    if (p.startsWith('/api/finops/sales/') && (req.method === 'PUT' || req.method === 'DELETE')) {
+      if (!allow('finops.view')) return;
+      const sid = p.split('/')[4] ?? '';
+      const r = req.method === 'PUT' ? await updateSale(ctx.tenant_id, sid, await readJson(req)) : await deleteSale(ctx.tenant_id, sid);
+      if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+      audit(ctx, req.method === 'PUT' ? 'finsale.update' : 'finsale.delete', 'fin_sale', sid, `${req.method === 'PUT' ? 'Edited' : 'Deleted'} a sales invoice`);
+      send(res, 200, { ok: true }); return;
     }
     // Automatic daily sync: on/off + hour (Poland time). Admin only.
     if (p === '/api/finops/auto-sync' && req.method === 'PUT') {
@@ -2914,6 +2943,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .fj td{cursor:pointer}.fj tr:hover td{background:#fbf3f8!important}.fj td:first-child{min-width:130px;font-weight:700}
   .fj tr.lk td{color:#6b6786}.fj tr.ctrl:hover td{background:#fff8eb!important}
   .fjl{width:100%;border-collapse:collapse;font-size:12.5px}.fjl td,.fjl th{padding:6px 8px;border-top:1px solid #f2f0f8;text-align:left;vertical-align:top}.fjl th{font-size:10px;color:#9a97ad;letter-spacing:.04em}
+  .fsl tr.g td{cursor:pointer;font-size:13px;padding:9px 8px}.fsl tr.g:hover td{background:#fbf3f8}.fsl tr.g td:first-child{font-weight:700}
+  .fsl tr.i td{background:#faf9fd;font-size:12px}.fsl tr.i td:first-child{padding-left:26px}.fsl th[style*=right]{text-align:right}
   .fjl td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .fp tr.ctrl td{background:#fff8eb!important;font-weight:800;border-top:2px solid #f5d9a8}
   .tabbadge{display:inline-block;min-width:16px;padding:0 5px;height:16px;line-height:16px;border-radius:8px;background:var(--magenta);color:#fff;font-size:10px;font-weight:800;text-align:center}
@@ -3048,6 +3079,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabFinPerf" class="tab" style="display:none" onclick="showTab('finperf')">Performance</button>
         <button id="tabFinCosts" class="tab" style="display:none" onclick="showTab('fincosts')">Costs</button>
         <button id="tabFinJobs" class="tab" style="display:none" onclick="showTab('finjobs')">Job costs</button>
+        <button id="tabFinSales" class="tab" style="display:none" onclick="showTab('finsales')">Sales</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
@@ -3338,6 +3370,26 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="finSalesView" style="display:none">
+    <main style="max-width:1500px">
+      <div class="titlerow">
+        <div><h2>Sales</h2><div class="sub">Sales invoices &mdash; the <b>Sprzeda&#380;</b> sheet, entered by hand until Subiekt is connected. One row per <b>job</b>, holding all of its invoices (prepayments and the final one); click a job to see them. The net total of a job&rsquo;s invoices is its sales in Job costs. <b>Orpiszew</b> = producer Acemark PL; everything else is <b>Trade from Poland</b>.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center;flex-wrap:wrap;justify-content:flex-end"><button class="pobtn" id="fs_import" style="display:none">Import from Excel</button><button class="pobtn" id="fs_csv">Export CSV</button><button class="newbtn" id="fs_new">+ Add invoice</button></div>
+      </div>
+      <div class="statgrid" id="fs_stats" style="margin:14px 0"></div>
+      <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <select id="fs_year" class="tinput"></select>
+        <select id="fs_month" class="tinput"></select>
+        <select id="fs_channel" class="tinput"><option value="">Orpiszew + trade</option><option value="production">Sales from Orpiszew</option><option value="trade">Trade from Poland</option></select>
+        <select id="fs_country" class="tinput"></select>
+        <select id="fs_buyer" class="tinput"></select>
+        <select id="fs_state" class="tinput"><option value="">All</option><option value="multi">Jobs with several invoices</option><option value="prepaid">With a prepayment</option><option value="planned">Planned (no invoice number)</option><option value="nojob">Not tied to a job</option></select>
+        <input id="fs_q" class="tinput" placeholder="Search job, invoice no, buyer" style="min-width:220px;flex:1">
+      </div>
+      <div class="card2" style="overflow-x:auto"><table class="fjl fsl"><thead><tr><th>JOB</th><th>BUYER</th><th>COUNTRY</th><th>FROM</th><th style="text-align:right">INVOICES</th><th style="text-align:right">PREPAID NET</th><th style="text-align:right">FINAL NET</th><th style="text-align:right">TOTAL NET</th><th style="text-align:right">TOTAL GROSS</th><th>PERIOD</th></tr></thead><tbody id="fs_rows"></tbody></table></div>
+      <div class="sub" id="fs_more" style="margin:10px 0 30px"></div>
+    </main>
+  </div>
   <div id="finJobsView" style="display:none">
     <main style="max-width:1700px">
       <div class="titlerow">
@@ -3350,7 +3402,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <select id="fj_year" class="tinput"></select>
         <select id="fj_month" class="tinput"></select>
         <select id="fj_cust" class="tinput"></select>
-        <select id="fj_state" class="tinput"><option value="">All jobs</option><option value="open">Not locked</option><option value="locked">Locked</option><option value="nosales">No sales entered</option><option value="nocost">No costs entered</option><option value="loss">Making a loss</option></select>
+        <select id="fj_state" class="tinput"><option value="">All jobs</option><option value="open">Not locked</option><option value="locked">Locked</option><option value="nosales">No sales entered</option><option value="salesdiff">Sales differ from the sheet value</option><option value="nocost">No costs entered</option><option value="loss">Making a loss</option></select>
         <input id="fj_q" class="tinput" placeholder="Search reference or customer" style="min-width:220px;flex:1">
       </div>
       <div class="card2" style="overflow:auto;max-height:calc(100vh - 300px)"><table class="fp fj"><thead id="fj_head"></thead><tbody id="fj_rows"></tbody></table></div>
@@ -3742,8 +3794,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
-    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf'||t==='finjobs')?t:'finperf';
-    var need={fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales')?t:'finperf';
+    var need={fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',finsales:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3798,7 +3850,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','finJobs','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','finJobs','finSales','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4857,6 +4909,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('finCostsView').style.display=name==='fincosts'?'block':'none';
     document.getElementById('finPerfView').style.display=name==='finperf'?'block':'none';
     document.getElementById('finJobsView').style.display=name==='finjobs'?'block':'none';
+    document.getElementById('finSalesView').style.display=name==='finsales'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4904,6 +4957,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='fincosts')loadFinCosts();
     if(name==='finperf')loadFinPerf();
     if(name==='finjobs')loadFinJobs();
+    if(name==='finsales')loadFinSales();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4914,8 +4968,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts','tabFinJobs'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',finjobs:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -5039,6 +5093,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabFinCosts',canCap('finops.view'));
     show('tabFinPerf',canCap('finops.view'));
     show('tabFinJobs',canCap('finops.view'));
+    show('tabFinSales',canCap('finops.view'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -6344,6 +6399,120 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       FC.timer=setTimeout(async function(){ if(sessionStorage.getItem('ace_tab')!=='fincosts')return; try{ var d=await (await api('/api/finops/costs/sync')).json(); if(d.sync&&d.sync.running){ var w=/^Writing/.test(d.sync.phase); if(w&&!FC.shownSaved){ FC.shownSaved=true; loadFinCosts(); } else fcProgress(d.sync); } else { FC.shownSaved=false; loadFinCosts(); } }catch(e){} },2500);
     } else { btn.disabled=false; box.className='podecide bad'; document.getElementById('fc_progress_msg').innerHTML='<b>Last sync failed</b><small>'+esc(s.error)+'</small>'; }
   }
+  // ---- Fin&Ops ▸ Sales (sheet "Sprzedaż"): invoices entered by hand, shown one row per job ----
+  var FS={inv:[],canManage:false,open:{},limit:300,preset:null};
+  var FS_COUNTRY={UK:'UK',DE:'Germany',PL:'Poland',ES:'Spain',NL:'Netherlands'};
+  function fsCountry(c){ return c?(FS_COUNTRY[c]||c):'(no country)'; }
+  async function fsFetch(){ var r=await api('/api/finops/sales'); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load sales'); FS.inv=d.invoices||[]; FS.canManage=!!d.canManage; return d; }
+  async function loadFinSales(){
+    var first=!document.getElementById('fs_new').dataset.ready;
+    if(first){ document.getElementById('fs_new').dataset.ready='1';
+      document.getElementById('fs_new').onclick=function(){ fsEdit(null); };
+      document.getElementById('fs_csv').onclick=fsCsv; document.getElementById('fs_import').onclick=fsImport;
+      ['fs_year','fs_month','fs_channel','fs_country','fs_buyer','fs_state'].forEach(function(id){ document.getElementById(id).onchange=function(){ FS.limit=300; renderFinSales(); }; });
+      document.getElementById('fs_q').oninput=function(){ FS.limit=300; renderFinSales(); };
+    }
+    try{ await fsFetch(); }catch(e){ document.getElementById('fs_rows').innerHTML='<tr><td colspan="10" class="sub" style="padding:18px">'+esc(e.message)+'</td></tr>'; return; }
+    document.getElementById('fs_import').style.display=FS.canManage?'':'none';
+    var years=[]; FS.inv.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
+    fcOpts('fs_year','All years',years.map(function(y){return [y,String(y)];}),!first);
+    if(first&&years.length)document.getElementById('fs_year').value=String(years[0]);
+    fcOpts('fs_month','All months',FC_MONTHS.map(function(m,i){return [i+1,m];}),!first);
+    var u=function(k){ var o={}; FS.inv.forEach(function(r){ if(r[k])o[r[k]]=1; }); return Object.keys(o).sort(function(a,b){return a.localeCompare(b);}); };
+    fcOpts('fs_country','All countries',u('country').map(function(c){return [c,fsCountry(c)];}),!first);
+    fcOpts('fs_buyer','All buyers',u('buyer').map(function(v){return [v,v];}),!first);
+    if(FS.preset){ var ps=FS.preset; FS.preset=null; ['year','month','channel','country','buyer','state'].forEach(function(k){ document.getElementById('fs_'+k).value=ps[k]==null?'':String(ps[k]); }); document.getElementById('fs_q').value=ps.q||''; FS.open={}; if(ps.q)FS.open[String(ps.q).replace(/\s/g,'').toUpperCase()]=true; }
+    renderFinSales();
+  }
+  function fsFilteredInv(){
+    var g=function(id){ return document.getElementById(id).value; };
+    var y=g('fs_year'),m=g('fs_month'),ch=g('fs_channel'),co=g('fs_country'),bu=g('fs_buyer'),st=g('fs_state'),q=g('fs_q').trim().toLowerCase();
+    return FS.inv.filter(function(r){
+      if(y&&String(r.period_year)!==y)return false; if(m&&String(r.period_month)!==m)return false; if(ch&&r.channel!==ch)return false; if(co&&r.country!==co)return false; if(bu&&r.buyer!==bu)return false;
+      if(st==='planned'&&r.invoice_no)return false; if(st==='nojob'&&r.job_key)return false;
+      if(q&&[r.job_ref,r.invoice_no,r.buyer,r.note].join(' ').toLowerCase().indexOf(q)<0)return false;
+      return true;
+    });
+  }
+  function fsGroups(){
+    var st=document.getElementById('fs_state').value, map={}, order=[];
+    fsFilteredInv().forEach(function(r){ var k=r.job_key||'~'; var G=map[k]; if(!G){ G=map[k]={key:k,ref:r.job_key?r.job_ref:'(not tied to a job)',inv:[],net:0,gross:0,prepaid:0,final:0}; order.push(G); }
+      G.inv.push(r); G.net+=r.net; G.gross+=(r.gross||0); if(r.kind==='prepaid')G.prepaid+=r.net; else G.final+=r.net; });
+    if(st==='multi')order=order.filter(function(G){return G.key!=='~'&&G.inv.length>1;}); if(st==='prepaid')order=order.filter(function(G){return G.prepaid!==0;});
+    return order.sort(function(a,b){ if(a.key==='~')return 1; if(b.key==='~')return -1; return String(a.ref).localeCompare(String(b.ref),undefined,{numeric:true,sensitivity:'base'}); });
+  }
+  function fsUniq(G,k,f){ var o={}; G.inv.forEach(function(r){ var v=f?f(r[k]):r[k]; if(v)o[v]=1; }); var a=Object.keys(o); return a.length>2?a.slice(0,2).join(', ')+' +'+(a.length-2):a.join(', '); }
+  function fsPeriod(G){ var a=G.inv.map(function(r){ return r.period_year&&r.period_month?r.period_year*100+r.period_month:null; }).filter(Boolean).sort(); if(!a.length)return ''; var f=function(v){ return FC_MONTHS[v%100-1].slice(0,3)+' '+Math.floor(v/100); }; return a[0]===a[a.length-1]?f(a[0]):f(a[0])+' \u2013 '+f(a[a.length-1]); }
+  function renderFinSales(){
+    var groups=fsGroups(), inv=[]; groups.forEach(function(G){ inv=inv.concat(G.inv); });
+    var sum=function(f){ return inv.reduce(function(s,r){ return s+(f(r)||0); },0); };
+    document.getElementById('fs_stats').innerHTML='<div class="stat"><div class="v">'+groups.filter(function(G){return G.key!=='~';}).length.toLocaleString('en-GB')+'</div><div class="l">Jobs</div></div>'
+      +'<div class="stat"><div class="v">'+inv.length.toLocaleString('en-GB')+'</div><div class="l">Invoices</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(sum(function(r){return r.net;}))+' z\u0142</div><div class="l">Net total</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(sum(function(r){return r.channel==='production'?r.net:0;}))+' z\u0142</div><div class="l">Sales from Orpiszew</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(sum(function(r){return r.channel==='trade'?r.net:0;}))+' z\u0142</div><div class="l">Trade from Poland</div></div>';
+    var shown=groups.slice(0,FS.limit), h='';
+    shown.forEach(function(G){
+      var open=!!FS.open[G.key];
+      h+='<tr class="g" data-g="'+av(G.key)+'"><td>'+(open?'\u25be ':'\u25b8 ')+esc(G.ref)+'</td><td>'+esc(fsUniq(G,'buyer'))+'</td><td>'+esc(fsUniq(G,'country',fsCountry))+'</td><td>'+esc(fsUniq(G,'channel',function(c){return c==='production'?'Orpiszew':'Trade';}))+'</td>'
+        +'<td class="r">'+G.inv.length+'</td><td class="r">'+fjNum(G.prepaid)+'</td><td class="r">'+fjNum(G.final)+'</td><td class="r" style="font-weight:700">'+(fjNum(G.net)||'0.00')+'</td><td class="r" style="color:var(--muted)">'+fjNum(G.gross)+'</td><td>'+esc(fsPeriod(G))+'</td></tr>';
+      if(open) G.inv.slice().sort(function(a,b){ return String(a.invoice_date||'9').localeCompare(String(b.invoice_date||'9')); }).forEach(function(r){
+        h+='<tr class="i"><td>'+(r.invoice_no?esc(r.invoice_no):'<i style="color:#b45309">planned \u2014 no invoice yet</i>')+'<div class="sub" style="margin:0">'+esc(r.invoice_date||'')+'</div></td><td>'+esc(r.buyer||'')+'</td><td>'+esc(fsCountry(r.country))+'</td><td>'+esc(r.producer||'\u2014')+'</td>'
+          +'<td class="r"><span class="pill" style="background:'+(r.kind==='prepaid'?'#fff1e0;color:#b45309':'#dcfce7;color:#15803d')+'">'+(r.kind==='prepaid'?'Prepayment':'Final')+'</span></td><td class="r">'+(r.kind==='prepaid'?fcMoney(r.net):'')+'</td><td class="r">'+(r.kind==='final'?fcMoney(r.net):'')+'</td><td class="r">'+fcMoney(r.net)+'</td><td class="r" style="color:var(--muted)">'+fcMoney(r.gross)+'</td>'
+          +'<td>'+esc(r.period_month?FC_MONTHS[r.period_month-1].slice(0,3)+' '+(r.period_year||''):'')+(r.note?' \u00b7 '+esc(r.note):'')+' \u00b7 <a class="codelink" data-fse="'+av(r.id)+'">edit</a> \u00b7 <a class="codelink" style="color:#b42318" data-fsd="'+av(r.id)+'">delete</a></td></tr>'; });
+    });
+    var tb=document.getElementById('fs_rows');
+    tb.innerHTML=h||'<tr><td colspan="10" class="sub" style="padding:18px">'+(FS.inv.length?'No invoices match these filters.':'No sales invoices yet \u2014 add one with \u201c+ Add invoice\u201d'+(FS.canManage?' or bring in the Sprzeda\u017c sheet with \u201cImport from Excel\u201d.':'.'))+'</td></tr>';
+    tb.querySelectorAll('tr.g').forEach(function(tr){ tr.onclick=function(){ var k=tr.getAttribute('data-g'); FS.open[k]=!FS.open[k]; renderFinSales(); }; });
+    tb.querySelectorAll('[data-fse]').forEach(function(a){ a.onclick=function(e){ e.stopPropagation(); fsEdit(a.getAttribute('data-fse')); }; });
+    tb.querySelectorAll('[data-fsd]').forEach(function(a){ a.onclick=async function(e){ e.stopPropagation(); if(!confirm('Delete this sales invoice?'))return; var r=await api('/api/finops/sales/'+encodeURIComponent(a.getAttribute('data-fsd')),{method:'DELETE'}); var d=await r.json(); if(r.ok&&d.ok){ tShow('Deleted'); loadFinSales(); } else tShow(d.error||'Could not delete'); }; });
+    var more=document.getElementById('fs_more');
+    if(groups.length>shown.length){ more.innerHTML='Showing '+shown.length+' of '+groups.length+' jobs \u2014 <a class="codelink" id="fs_all">show all</a>'; document.getElementById('fs_all').onclick=function(){ FS.limit=100000; renderFinSales(); }; } else more.textContent='';
+  }
+  function fsEdit(id){
+    var r=id?FS.inv.filter(function(x){return x.id===id;})[0]:null; if(id&&!r)return;
+    var v=function(k){ return r&&r[k]!=null?r[k]:''; }, dl=function(k){ var o={}; FS.inv.forEach(function(x){ if(x[k])o[x[k]]=1; }); return Object.keys(o).sort().map(function(c){ return '<option value="'+av(c)+'">'; }).join(''); };
+    var mo='<option value="">(from the date)</option>'+FC_MONTHS.map(function(m,i){ return '<option value="'+(i+1)+'"'+(r&&r.period_month===i+1?' selected':'')+'>'+m+'</option>'; }).join('');
+    openModal(id?'Edit sales invoice':'Add sales invoice','<div class="fgrid">'
+      +'<div class="field"><label>Job</label><input id="fse_job" class="tinput" value="'+av(v('job_ref'))+'" placeholder="e.g. Z.410 (leave empty if none)" list="fse_jobs"><datalist id="fse_jobs">'+dl('job_ref')+'</datalist></div>'
+      +'<div class="field"><label>Invoice no</label><input id="fse_no" class="tinput" value="'+av(v('invoice_no'))+'" placeholder="FS 12/ACE/10/2026 (empty = planned)"></div>'
+      +'<div class="field"><label>Type</label><select id="fse_kind"><option value="final"'+(r&&r.kind==='prepaid'?'':' selected')+'>Final invoice</option><option value="prepaid"'+(r&&r.kind==='prepaid'?' selected':'')+'>Prepayment (zaliczka)</option></select></div>'
+      +'<div class="field"><label>Invoice date</label><input id="fse_date" class="tinput" type="date" value="'+av(v('invoice_date'))+'"></div>'
+      +'<div class="field"><label>Net (z\u0142) *</label><input id="fse_net" class="tinput" inputmode="decimal" value="'+av(v('net'))+'"></div>'
+      +'<div class="field"><label>Gross (z\u0142)</label><input id="fse_gross" class="tinput" inputmode="decimal" value="'+av(v('gross'))+'"></div>'
+      +'<div class="field"><label>Buyer</label><input id="fse_buyer" class="tinput" value="'+av(v('buyer'))+'" list="fse_buyers"><datalist id="fse_buyers">'+dl('buyer')+'</datalist></div>'
+      +'<div class="field"><label>Country</label><input id="fse_country" class="tinput" value="'+av(v('country'))+'" placeholder="UK / DE / PL / ES / NL" list="fse_countries"><datalist id="fse_countries"><option value="UK"><option value="DE"><option value="PL"><option value="ES"><option value="NL"></datalist></div>'
+      +'<div class="field"><label>Producer (Acemark PL = Orpiszew; other = trade)</label><input id="fse_prod" class="tinput" value="'+av(r?v('producer'):'Acemark PL')+'" list="fse_prods"><datalist id="fse_prods"><option value="Acemark PL"><option value="Eko-okna"></datalist></div>'
+      +'<div class="field"><label>Seller</label><input id="fse_seller" class="tinput" value="'+av(r?v('seller'):'Acemark PL')+'"></div>'
+      +'<div class="field"><label>Counted in month</label><select id="fse_month">'+mo+'</select></div>'
+      +'<div class="field"><label>Year</label><input id="fse_year" class="tinput" type="number" value="'+av(v('period_year'))+'" placeholder="(from the date)"></div>'
+      +'<div class="field full"><label>Note</label><input id="fse_note" class="tinput" value="'+av(v('note'))+'"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="fse_save">'+(id?'Save':'Add invoice')+'</button></div>');
+    document.getElementById('fse_save').onclick=async function(){ var g=function(x){ return document.getElementById(x).value; };
+      var b={job_ref:g('fse_job'),invoice_no:g('fse_no'),kind:g('fse_kind'),invoice_date:g('fse_date'),net:g('fse_net'),gross:g('fse_gross'),buyer:g('fse_buyer'),country:g('fse_country'),producer:g('fse_prod'),seller:g('fse_seller'),period_month:g('fse_month'),period_year:g('fse_year'),note:g('fse_note')};
+      var rr=await api(id?'/api/finops/sales/'+encodeURIComponent(id):'/api/finops/sales',{method:id?'PUT':'POST',body:JSON.stringify(b)}); var d=await rr.json();
+      if(rr.ok&&d.ok){ closeModal(); tShow(id?'Saved':'Invoice added'); if(b.job_ref)FS.open[b.job_ref.replace(/\s/g,'').toUpperCase()]=true; loadFinSales(); } else tShow(d.error||'Could not save'); };
+  }
+  function fsCsv(){
+    var q=function(v){ return '"'+String(v==null?'':v).replace(/"/g,'""')+'"'; }, L=[['Job','Invoice no','Type','Invoice date','Month','Year','Producer','Buyer','Net','Gross','Country','From','Note','Seller'].map(q).join(',')];
+    fsGroups().forEach(function(G){ G.inv.forEach(function(r){ L.push([r.job_ref,r.invoice_no,r.kind,r.invoice_date,r.period_month?FC_MONTHS[r.period_month-1]:'',r.period_year,r.producer,r.buyer,r.net.toFixed(2),r.gross==null?'':r.gross.toFixed(2),r.country,r.channel==='production'?'Orpiszew':'Trade',r.note,r.seller].map(q).join(',')); }); });
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='Sales.csv'; document.body.appendChild(a); a.click(); a.remove();
+  }
+  // Paste the Sprzedaż rows from Excel (columns A..L): date, invoice no, job, month, year, producer, buyer, net, gross, country, note, seller.
+  function fsParsePaste(text){
+    var out=[]; String(text).split(String.fromCharCode(10)).forEach(function(ln){ var c=ln.replace(String.fromCharCode(13),'').split(String.fromCharCode(9)); if(c.length<8)return; if(/^data wyst/i.test((c[0]||'').trim())||/^total$/i.test((c[0]||'').trim()))return; if(!(c[7]||'').trim())return;
+      out.push({date:c[0],invoice_no:c[1],job:c[2],month:c[3],year:c[4],producer:c[5],buyer:c[6],net:c[7],gross:c[8],country:c[9],note:c[10],seller:c[11]}); });
+    return out;
+  }
+  function fsImport(){
+    openModal('Import from Excel','<div style="padding:18px 22px"><p class="sub" style="margin:0 0 10px">In the <b>Sprzeda\u017c</b> sheet select the invoice rows from column <b>A (Data wystawienia)</b> to column <b>L (Sprzedawca)</b>, copy, and paste here. Each row becomes one invoice under its job. Lines already here (same invoice number, job and net) are skipped, so it is safe to paste again.</p>'
+      +'<textarea id="fsp_text" style="width:100%;min-height:200px;border:1px solid var(--line);border-radius:10px;padding:10px;font:12px ui-monospace,Menlo,monospace" placeholder="Paste here\u2026"></textarea><div class="sub" id="fsp_info" style="margin:8px 0 0"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="fsp_go" disabled>Import</button></div>');
+    var ta=document.getElementById('fsp_text'), go=document.getElementById('fsp_go'), rows=[];
+    ta.oninput=function(){ rows=fsParsePaste(ta.value); document.getElementById('fsp_info').innerHTML=rows.length?('<b>'+rows.length+'</b> invoice row(s) recognised \u00b7 first: '+esc(rows[0].invoice_no||rows[0].job||'')+', last: '+esc(rows[rows.length-1].invoice_no||rows[rows.length-1].job||'')):'No invoice rows recognised yet \u2014 copy whole rows starting at column A.'; go.disabled=!rows.length; };
+    go.onclick=async function(){ go.disabled=true; var r=await api('/api/finops/sales/import',{method:'POST',body:JSON.stringify({rows:rows})}); var d=await r.json();
+      if(r.ok&&d.ok){ closeModal(); alert('Imported '+d.added+' invoice(s).'+(d.skipped?' Skipped '+d.skipped+' already here.':'')+(d.invalid?' '+d.invalid+' row(s) had no net amount and were left out.':'')); loadFinSales(); } else { tShow(d.error||'Import failed'); go.disabled=false; } };
+  }
   // ---- Fin&Ops ▸ Job costs (sheet "Koszty"): P&L per job, cost lines, admin lock ----
   var FJ={jobs:[],kinds:[],rate:45,canManage:false,limit:400};
   function fjPct(v){ return v==null?'':(v*100).toLocaleString('en-GB',{minimumFractionDigits:1,maximumFractionDigits:1})+'%'; }
@@ -6378,7 +6547,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var y=g('fj_year'),m=g('fj_month'),c=g('fj_cust'),st=g('fj_state'),q=g('fj_q').trim().toLowerCase();
     return FJ.jobs.filter(function(j){
       if(y&&(y==='__none'?!!j.period_year:String(j.period_year)!==y))return false; if(m&&String(j.period_month)!==m)return false; if(c&&j.customer!==c)return false;
-      if(st==='open'&&j.locked)return false; if(st==='locked'&&!j.locked)return false; if(st==='nosales'&&j.sales)return false; if(st==='nocost'&&j.totalCost)return false; if(st==='loss'&&!(j.profit<0))return false;
+      if(st==='open'&&j.locked)return false; if(st==='locked'&&!j.locked)return false; if(st==='nosales'&&j.sales)return false; if(st==='salesdiff'&&!(j.salesSource==='invoices'&&j.salesTyped!=null&&Math.abs(j.salesTyped-j.sales)>=0.01))return false; if(st==='nocost'&&j.totalCost)return false; if(st==='loss'&&!(j.profit<0))return false;
       if(q&&(j.reference+' '+(j.customer||'')).toLowerCase().indexOf(q)<0)return false;
       return true;
     }).sort(fjNat);
@@ -6416,7 +6585,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="field"><label>Customer</label><input id="fjf_cust" class="tinput" value="'+av(job.customer||'')+'" list="fjf_custs"'+dis+'><datalist id="fjf_custs">'+Object.keys(FJ.jobs.reduce(function(o,j){ if(j.customer)o[j.customer]=1; return o; },{})).sort().map(function(c){ return '<option value="'+av(c)+'">'; }).join('')+'</datalist></div>'
       +'<div class="field"><label>Month</label><select id="fjf_month"'+dis+'>'+mo+'</select></div>'
       +'<div class="field"><label>Year</label><input id="fjf_year" class="tinput" type="number" value="'+av(job.period_year||'')+'"'+dis+'></div>'
-      +'<div class="field"><label>Sales (net z\u0142)</label><input id="fjf_sales" class="tinput" value="'+av(job.sales==null?'':job.sales)+'" inputmode="decimal"'+dis+'></div>'
+      +'<div class="field"><label>Sales (net z\u0142)'+(job.salesSource==='invoices'?' \u2014 from '+job.salesInvoices+' sales invoice'+(job.salesInvoices===1?'':'s'):'')+'</label><input id="fjf_sales" class="tinput" value="'+av(job.sales==null?'':job.sales)+'" inputmode="decimal"'+(job.salesSource==='invoices'?' disabled':dis)+'>'
+        +(job.salesSource==='invoices'?'<div class="sub" style="margin:0">Sum of this job\u2019s invoices on the <a class="codelink" id="fjf_tosales">Sales tab</a>'+(job.salesTyped!=null&&Math.abs(job.salesTyped-job.sales)>=0.01?' \u00b7 <span style="color:#b45309">the sheet had '+fcMoney(job.salesTyped)+'</span>':'')+'</div>':(job.salesSource==='locked'&&job.salesInvoiced!=null&&Math.abs(job.salesInvoiced-(job.sales||0))>=0.01?'<div class="sub" style="margin:0;color:#b45309">Frozen at lock. Invoices now add up to '+fcMoney(job.salesInvoiced)+'.</div>':''))+'</div>'
       +'<div class="field"><label>Note</label><input id="fjf_note" class="tinput" value="'+av(job.note||'')+'"'+dis+'></div></div>';
     var body='';
     if(id){
@@ -6441,8 +6611,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal(id?('Job '+esc(job.reference)):'New job',banner+head+body+foot);
     var sheet=document.querySelector('#modal .sheet'); if(sheet)sheet.style.maxWidth='1080px';
     var after=function(nid){ loadFinJobs(); fjOpen(nid||id); };
+    var ts=document.getElementById('fjf_tosales'); if(ts)ts.onclick=function(){ closeModal(true); FS.preset={q:job.reference}; showTab('finsales'); };
     var sv=document.getElementById('fjf_save'); if(sv)sv.onclick=async function(){
-      var b={reference:document.getElementById('fjf_ref').value,customer:document.getElementById('fjf_cust').value,period_month:document.getElementById('fjf_month').value,period_year:document.getElementById('fjf_year').value,sales:document.getElementById('fjf_sales').value,note:document.getElementById('fjf_note').value};
+      var b={reference:document.getElementById('fjf_ref').value,customer:document.getElementById('fjf_cust').value,period_month:document.getElementById('fjf_month').value,period_year:document.getElementById('fjf_year').value,note:document.getElementById('fjf_note').value};
+      if(job.salesSource!=='invoices')b.sales=document.getElementById('fjf_sales').value;
       var r=await api(id?'/api/finops/jobs/'+encodeURIComponent(id):'/api/finops/jobs',{method:id?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json();
       if(r.ok&&d.ok){ tShow(id?'Saved':'Job created'); after(d.id); } else tShow(d.error||'Could not save');
     };
@@ -6519,7 +6691,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       ['fp_year','fp_company','fp_dec'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
     var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fp_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
     FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId; FC.lastRun=d.lastRun;
-    var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
+    try{ await fsFetch(); }catch(e){ FS.inv=[]; }
+    var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); FS.inv.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
     var ys=document.getElementById('fp_year'), cur=ys.value; ys.innerHTML=years.map(function(y){return '<option value="'+y+'">'+y+'</option>';}).join(''); if(cur&&years.indexOf(+cur)>=0)ys.value=cur;
     var run=d.lastRun; document.getElementById('fp_last').textContent=run?('Data as of last sync: '+cfWhen(run.finished_at||run.started_at)):'Never synced \u2014 run Sync from Monday on the Costs tab';
     renderFinPerf();
@@ -6569,14 +6742,36 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         K.lines.forEach(function(l){ h+='<tr class="line" data-of="'+gid+'"><td>'+esc(l.cat)+'</td>'+cells(l.m,kctx+' data-c="'+av(l.cat)+'"')+'</tr>'; });
       });
     });
-    h+='<tr class="ctrl"><td>Control sum \u2014 Monday</td>'+cells(M.total,'')+'</tr>';
+    if(M.depts.length)h+='<tr class="ctrl"><td>Control sum \u2014 Monday</td>'+cells(M.total,'')+'</tr>';
+    // Sales block (Sales tab), as in the sheet: total, then Orpiszew and Trade from Poland by country; UK split by customer.
+    var S=fpSales(M.year);
+    if(S.count){
+      var zero=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; }, sc=function(m,ctx){ return cells(m,'data-s="1" '+ctx); };
+      h+='<tr class="dept"><td>SALES RESULTS</td>'+sc(S.total,'')+'</tr>';
+      [['production','Sales from Orpiszew'],['trade','Trade from Poland']].forEach(function(c){
+        var B=S[c[0]]; h+='<tr class="sec"><td style="padding-left:18px">'+c[1]+'</td>'+sc(B.total,'data-ch="'+c[0]+'"')+'</tr>';
+        B.countries.forEach(function(C){ h+='<tr class="kind"><td style="padding-left:24px;cursor:default">'+esc(fsCountry(C.code))+'</td>'+sc(C.m,'data-ch="'+c[0]+'" data-co="'+av(C.code||'')+'"')+'</tr>';
+          if(C.code==='UK') C.buyers.forEach(function(Bu){ h+='<tr class="line"><td>'+esc(Bu.name)+'</td>'+sc(Bu.m,'data-ch="'+c[0]+'" data-co="UK"')+'</tr>'; }); });
+      });
+    }
     var tb=document.getElementById('fp_rows');
-    tb.innerHTML=M.depts.length?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs for this year / company yet.</td></tr>';
-    tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); fpDrill(td); }; });
+    tb.innerHTML=(M.depts.length||S.count)?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs or sales for this year / company yet.</td></tr>';
+    tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); if(td.getAttribute('data-s')){ FS.preset={year:M.year,month:td.getAttribute('data-m')||'',channel:td.getAttribute('data-ch')||'',country:td.getAttribute('data-co')||''}; showTab('finsales'); } else fpDrill(td); }; });
     tb.querySelectorAll('tr.kind').forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'), hide=!tr.classList.contains('shut'); tr.classList.toggle('shut',hide); tr.querySelector('td').firstChild.textContent=(hide?'\u25b8 ':'\u25be ')+tr.querySelector('td').firstChild.textContent.slice(2); tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=hide?'none':''; }); }; });
     document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.reclass?' \u00b7 <a class="codelink" id="fp_rcl" style="color:#b45309" title="Invoices whose category, department or KONTO looks wrong \u2014 open the list to fix them in monday">'+M.reclass+' to fix in monday \u2192</a>':' \u00b7 nothing to fix')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
     var rc=document.getElementById('fp_rcl'); if(rc)rc.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:'',flag:'reclass'}; showTab('fincosts'); };
     var c=document.getElementById('fp_chg'); if(c)c.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:''}; showTab('fincosts'); setTimeout(function(){ document.getElementById('fc_flag').value='changed'; renderFinCosts(); },900); };
+  }
+  // Sales of a year by channel → country → (UK) customer, month by month.
+  function fpSales(year){
+    var z=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; }, out={count:0,total:z(),production:{total:z(),map:{}},trade:{total:z(),map:{}}};
+    var ukName=function(b){ var s=String(b||'').toLowerCase(); return s.indexOf('acemark glazing')===0?'Acemark Glazing':(s==='pcw'?'PCW':'Others UK'); };
+    FS.inv.forEach(function(r){ if(r.period_year!==year||!r.period_month)return; var i=r.period_month-1, B=out[r.channel]; out.count++; out.total[i]+=r.net; B.total[i]+=r.net;
+      var C=B.map[r.country||'']||(B.map[r.country||'']={code:r.country||'',m:z(),bm:{}}); C.m[i]+=r.net;
+      if(r.country==='UK'){ var n=ukName(r.buyer); (C.bm[n]||(C.bm[n]=z()))[i]+=r.net; } });
+    var ORD=['UK','DE','PL','ES','NL'];
+    ['production','trade'].forEach(function(k){ var B=out[k]; B.countries=Object.keys(B.map).sort(function(a,b){ var x=ORD.indexOf(a),y=ORD.indexOf(b); return (x<0?99:x)-(y<0?99:y)||a.localeCompare(b); }).map(function(c){ var C=B.map[c]; C.buyers=['Acemark Glazing','PCW','Others UK'].filter(function(n){return C.bm[n];}).map(function(n){ return {name:n,m:C.bm[n]}; }); return C; }); });
+    return out;
   }
   function fpDrill(td){
     var M=FP.model, d=td.getAttribute('data-d'), k=td.getAttribute('data-k'), c=td.getAttribute('data-c');

@@ -81,11 +81,31 @@ export async function getLabourRate(): Promise<number> {
 }
 export async function setLabourRate(rate: number): Promise<void> { await setConfig('fin_labour_rate', String(rate)); }
 
+/** Net invoiced per job on the Sales tab (fin_sales), by job key. */
+async function invoicedByJob(tenantId: string): Promise<Map<string, { net: number; count: number }>> {
+  const m = new Map<string, { net: number; count: number }>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db().from('fin_sales').select('job_key,net').eq('tenant_id', tenantId).order('id').range(from, from + 999);
+    if (error) throw error;
+    for (const r of data ?? []) { if (!r.job_key) continue; const e = m.get(r.job_key) ?? { net: 0, count: 0 }; e.net = round2(e.net + (Number(r.net) || 0)); e.count++; m.set(r.job_key, e); }
+    if (!data || data.length < 1000) break;
+  }
+  return m;
+}
+/** A job's sales: the sum of its sales invoices when it has any — unless the job is locked, in which
+ *  case the stored figure stands (it was frozen when the job was locked). */
+export function effectiveSales(job: { sales: any; locked: boolean }, inv: { net: number; count: number } | undefined): { sales: number | null; salesSource: 'invoices' | 'typed' | 'locked'; salesTyped: number | null; salesInvoiced: number | null; salesInvoices: number } {
+  const typed = num(job.sales), invoiced = inv ? inv.net : null, n = inv ? inv.count : 0;
+  if (job.locked) return { sales: typed, salesSource: 'locked', salesTyped: typed, salesInvoiced: invoiced, salesInvoices: n };
+  if (inv && inv.count > 0) return { sales: inv.net, salesSource: 'invoices', salesTyped: typed, salesInvoiced: invoiced, salesInvoices: n };
+  return { sales: typed, salesSource: 'typed', salesTyped: typed, salesInvoiced: null, salesInvoices: 0 };
+}
+
 export async function listJobs(tenantId: string): Promise<any[]> {
-  const [jobs, items] = await Promise.all([selectAll('fin_jobs', '*', tenantId), selectAll('fin_job_items', 'job_id,kind,amount,hours', tenantId)]);
+  const [jobs, items, inv] = await Promise.all([selectAll('fin_jobs', '*', tenantId), selectAll('fin_job_items', 'job_id,kind,amount,hours', tenantId), invoicedByJob(tenantId)]);
   const by = new Map<string, any[]>();
   for (const it of items) { const a = by.get(it.job_id); if (a) a.push(it); else by.set(it.job_id, [it]); }
-  return jobs.map((j) => ({ ...jobOut(j), ...summarizeJob(num(j.sales), by.get(j.id) ?? []) }));
+  return jobs.map((j) => { const e = effectiveSales(j, inv.get(j.reference_key)); return { ...jobOut(j), ...e, ...summarizeJob(e.sales, by.get(j.id) ?? []) }; });
 }
 export async function getJob(tenantId: string, id: string): Promise<{ job: any; items: any[] } | null> {
   const { data: j, error } = await db().from('fin_jobs').select('*').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
@@ -94,7 +114,8 @@ export async function getJob(tenantId: string, id: string): Promise<{ job: any; 
   const it = await db().from('fin_job_items').select('*').eq('job_id', id).order('created_at');
   if (it.error) throw it.error;
   const items = (it.data ?? []).map(itemOut);
-  return { job: { ...jobOut(j), ...summarizeJob(num(j.sales), items) }, items };
+  const e = effectiveSales(j, (await invoicedByJob(tenantId)).get(j.reference_key));
+  return { job: { ...jobOut(j), ...e, ...summarizeJob(e.sales, items) }, items };
 }
 
 export type Result<T = {}> = ({ ok: true } & T) | { ok: false; status: number; error: string };
@@ -106,7 +127,7 @@ function jobFields(b: any): Result<{ fields: Record<string, any> }> {
   const year = b.period_year === '' || b.period_year == null ? null : Number(b.period_year);
   const month = b.period_month === '' || b.period_month == null ? null : parseMonth(b.period_month);
   if (year !== null && (!Number.isInteger(year) || year < 2000 || year > 2100)) return fail(400, 'Year looks wrong.');
-  return { ok: true, fields: { reference: reference.slice(0, 80), reference_key: referenceKey(reference).slice(0, 80), customer: clean(b.customer).slice(0, 120) || null, period_year: year, period_month: month, sales: parseMoney(b.sales), note: clean(b.note).slice(0, 1000) || null } };
+  return { ok: true, fields: { reference: reference.slice(0, 80), reference_key: referenceKey(reference).slice(0, 80), customer: clean(b.customer).slice(0, 120) || null, period_year: year, period_month: month, ...(b.sales === undefined ? {} : { sales: parseMoney(b.sales) }), note: clean(b.note).slice(0, 1000) || null } };
 }
 export async function createJob(tenantId: string, by: string, b: any): Promise<Result<{ id: string }>> {
   const f = jobFields(b); if (!f.ok) return f;
@@ -141,7 +162,16 @@ export async function deleteJob(tenantId: string, id: string): Promise<Result<{ 
   return { ok: true, reference: e.job.reference };
 }
 export async function setJobLock(tenantId: string, id: string, locked: boolean, by: string): Promise<Result<{ reference: string }>> {
-  const { data, error } = await db().from('fin_jobs').update({ locked, locked_by: locked ? by : null, locked_at: locked ? new Date().toISOString() : null }).eq('tenant_id', tenantId).eq('id', id).select('reference').maybeSingle();
+  // Locking freezes the job as it stands: if its sales come from invoices, that sum is stored now,
+  // so invoices added later can't move a locked job's result.
+  const freeze: Record<string, any> = {};
+  if (locked) {
+    const cur = await db().from('fin_jobs').select('reference_key,locked').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
+    if (cur.error) throw cur.error;
+    const inv = cur.data && !cur.data.locked ? (await invoicedByJob(tenantId)).get(cur.data.reference_key) : undefined;
+    if (inv && inv.count > 0) freeze.sales = inv.net;
+  }
+  const { data, error } = await db().from('fin_jobs').update({ ...freeze, locked, locked_by: locked ? by : null, locked_at: locked ? new Date().toISOString() : null }).eq('tenant_id', tenantId).eq('id', id).select('reference').maybeSingle();
   if (error) throw error;
   if (!data) return fail(404, 'Job not found.');
   return { ok: true, reference: data.reference };
