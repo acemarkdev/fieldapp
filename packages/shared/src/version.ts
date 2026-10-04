@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.9.0';
+export const APP_VERSION = '1.10.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.10.0', date: '2026-10-04', changes: [
+    'Fin&Ops \u25b8 Payroll. Each month the finance user enters total salaries and total payroll tax for Office, Sales and Production and ticks Actuals when the figures are final. A month without the tick shows an estimate \u2014 the average of the last 3 months with actuals, per department \u2014 or the user\u2019s own figure if one is typed without ticking. Ticking a month moves the estimate on to the next one. A ticked month is protected until it is unticked.',
+    'Performance: the Salaries and Taxes rows of each department are now filled from Payroll (estimates in orange italics), department totals include payroll, and a new row \u201cTotal costs incl. payroll\u201d sits under the Monday control sum. Requires migration 0059_fin_payroll.sql.',
+  ] },
   { version: '1.9.0', date: '2026-10-04', changes: [
     'Fin&Ops \u25b8 Sales (phase 5.1) \u2014 the \u201cSprzeda\u017c\u201d sheet in the app, entered by hand until Subiekt is connected. One row per job, holding all of its invoices (prepayments and the final one); click a job to see, add, edit or delete them. Invoices without a number are shown as planned; sales not tied to a job have their own group. Filters (year, month, Orpiszew / trade, country, buyer), totals, CSV export, and an admin import that pastes the existing sheet (lines already here are skipped).',
     'Job costs now take a job\u2019s sales from its sales invoices (their net sum) when it has any \u2014 no more copying by hand; the value from the sheet is kept for reference and a filter lists the jobs where the two differ. Locking a job freezes its sales figure, so later invoices cannot move a locked job\u2019s result.',

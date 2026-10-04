@@ -46,8 +46,9 @@ import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
 import { JOB_KINDS, JOB_KIND_LABEL, listJobs, getJob, createJob, updateJob, deleteJob, setJobLock, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
+import { listPayroll, savePayrollMonth, payrollView, PAYROLL_DEPTS } from './finPayroll';
 import { listSales, createSale, updateSale, deleteSale, importSales } from './finSales';
-import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS } from './finCosts';
+import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS, localDayHour, AUTO_SYNC_TZ } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
@@ -527,6 +528,19 @@ const server = createServer(async (req, res) => {
         audit(ctx, 'finjob.item.add', 'fin_job', jobId, `Added a cost line to ${r.reference}`);
         send(res, 200, { ok: true, id: r.id }); return;
       }
+    }
+    // ---- Fin&Ops ▸ Payroll: salaries + payroll tax per department per month; estimates until actuals are ticked. ----
+    if (p === '/api/finops/payroll' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      const [y, m] = localDayHour(new Date(), AUTO_SYNC_TZ).day.split('-').map(Number);
+      send(res, 200, { months: payrollView(await listPayroll(ctx.tenant_id), { year: y, month: m }), departments: PAYROLL_DEPTS, now: { year: y, month: m } }); return;
+    }
+    if (p === '/api/finops/payroll' && req.method === 'PUT') {
+      if (!allow('finops.view')) return;
+      const r = await savePayrollMonth(ctx.tenant_id, ctx.name, await readJson(req));
+      if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+      audit(ctx, 'finpayroll.save', 'fin_payroll', null, `Payroll ${r.year}-${String(r.month).padStart(2, '0')} saved${r.actual ? ' as actuals' : ' (estimate)'}`);
+      send(res, 200, { ok: true }); return;
     }
     // ---- Fin&Ops ▸ Sales (sheet "Sprzedaż"): sales invoices, entered by hand; shown per job. Import = admin. ----
     if (p === '/api/finops/sales' && req.method === 'GET') {
@@ -2943,6 +2957,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .fj td{cursor:pointer}.fj tr:hover td{background:#fbf3f8!important}.fj td:first-child{min-width:130px;font-weight:700}
   .fj tr.lk td{color:#6b6786}.fj tr.ctrl:hover td{background:#fff8eb!important}
   .fjl{width:100%;border-collapse:collapse;font-size:12.5px}.fjl td,.fjl th{padding:6px 8px;border-top:1px solid #f2f0f8;text-align:left;vertical-align:top}.fjl th{font-size:10px;color:#9a97ad;letter-spacing:.04em}
+  .fyt td{vertical-align:middle}.fyt input.tinput{width:110px;padding:6px 8px;text-align:right;font-size:12.5px}.fyt input.tinput::placeholder{color:#b9b6c9;font-style:italic}
+  .fyt input.tinput:disabled{background:#f6f5fa;color:var(--ink)}.fyt tr.fut td{opacity:.75}
+  .fp td.n.est{font-style:italic;color:#b45309}
   .fsl tr.g td{cursor:pointer;font-size:13px;padding:9px 8px}.fsl tr.g:hover td{background:#fbf3f8}.fsl tr.g td:first-child{font-weight:700}
   .fsl tr.i td{background:#faf9fd;font-size:12px}.fsl tr.i td:first-child{padding-left:26px}.fsl th[style*=right]{text-align:right}
   .fjl td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -3080,6 +3097,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabFinCosts" class="tab" style="display:none" onclick="showTab('fincosts')">Costs</button>
         <button id="tabFinJobs" class="tab" style="display:none" onclick="showTab('finjobs')">Job costs</button>
         <button id="tabFinSales" class="tab" style="display:none" onclick="showTab('finsales')">Sales</button>
+        <button id="tabFinPay" class="tab" style="display:none" onclick="showTab('finpay')">Payroll</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
@@ -3370,6 +3388,19 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="finPayView" style="display:none">
+    <main style="max-width:1400px">
+      <div class="titlerow">
+        <div><h2>Payroll</h2><div class="sub">Total salaries and total payroll tax per department, per month. Enter the figures and tick <b>Actuals</b> when they are final. Until then the month shows an <b>estimate</b>: the average of the last 3 months with actuals &mdash; or your own figure, if you type one without ticking the box. Ticking a month moves the estimate on to the next one. These numbers fill the Salaries and Taxes rows on Performance.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center"><select id="fy_year" class="tinput"></select></div>
+      </div>
+      <div class="card2" style="overflow-x:auto;margin-top:14px"><table class="fjl fyt"><thead>
+        <tr><th rowspan="2">MONTH</th><th colspan="2" style="text-align:center">OFFICE</th><th colspan="2" style="text-align:center">SALES</th><th colspan="2" style="text-align:center">PRODUCTION</th><th rowspan="2" style="text-align:right">TOTAL</th><th rowspan="2">STATUS</th><th rowspan="2">ACTUALS</th><th rowspan="2"></th></tr>
+        <tr><th>Salaries</th><th>Taxes</th><th>Salaries</th><th>Taxes</th><th>Salaries</th><th>Taxes</th></tr>
+      </thead><tbody id="fy_rows"></tbody></table></div>
+      <div class="sub" style="margin:10px 0 30px">Grey figures in an empty box are the estimate that will be used. A ticked month is protected: untick <b>Actuals</b> to change it.</div>
+    </main>
+  </div>
   <div id="finSalesView" style="display:none">
     <main style="max-width:1500px">
       <div class="titlerow">
@@ -3794,8 +3825,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
-    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales')?t:'finperf';
-    var need={fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',finsales:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales'||t==='finpay')?t:'finperf';
+    var need={fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',finsales:'finops.view',finpay:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3850,7 +3881,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','finJobs','finSales','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','finJobs','finSales','finPay','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4910,6 +4941,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('finPerfView').style.display=name==='finperf'?'block':'none';
     document.getElementById('finJobsView').style.display=name==='finjobs'?'block':'none';
     document.getElementById('finSalesView').style.display=name==='finsales'?'block':'none';
+    document.getElementById('finPayView').style.display=name==='finpay'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4958,6 +4990,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='finperf')loadFinPerf();
     if(name==='finjobs')loadFinJobs();
     if(name==='finsales')loadFinSales();
+    if(name==='finpay')loadFinPay();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4968,8 +5001,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinPay'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finpay:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -5094,6 +5127,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabFinPerf',canCap('finops.view'));
     show('tabFinJobs',canCap('finops.view'));
     show('tabFinSales',canCap('finops.view'));
+    show('tabFinPay',canCap('finops.view'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -6399,6 +6433,43 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       FC.timer=setTimeout(async function(){ if(sessionStorage.getItem('ace_tab')!=='fincosts')return; try{ var d=await (await api('/api/finops/costs/sync')).json(); if(d.sync&&d.sync.running){ var w=/^Writing/.test(d.sync.phase); if(w&&!FC.shownSaved){ FC.shownSaved=true; loadFinCosts(); } else fcProgress(d.sync); } else { FC.shownSaved=false; loadFinCosts(); } }catch(e){} },2500);
     } else { btn.disabled=false; box.className='podecide bad'; document.getElementById('fc_progress_msg').innerHTML='<b>Last sync failed</b><small>'+esc(s.error)+'</small>'; }
   }
+  // ---- Fin&Ops ▸ Payroll: salaries + tax per department per month; estimate until Actuals is ticked ----
+  var FY={months:[],now:null,depts:['Office','Sales','Production']};
+  async function fyFetch(){ var r=await api('/api/finops/payroll'); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load payroll'); FY.months=d.months||[]; FY.now=d.now; if(d.departments)FY.depts=d.departments; return d; }
+  function fyMonth(y,m){ return FY.months.filter(function(x){ return x.year===y&&x.month===m; })[0]||null; }
+  async function loadFinPay(){
+    var sel=document.getElementById('fy_year'), first=!sel.dataset.ready;
+    if(first){ sel.dataset.ready='1'; sel.onchange=renderFinPay; }
+    try{ await fyFetch(); }catch(e){ document.getElementById('fy_rows').innerHTML='<tr><td colspan="11" class="sub" style="padding:18px">'+esc(e.message)+'</td></tr>'; return; }
+    var cy=FY.now?FY.now.year:new Date().getFullYear(), ys={}; ys[cy]=1; ys[cy-1]=1; FY.months.forEach(function(x){ ys[x.year]=1; });
+    var cur=sel.value; sel.innerHTML=Object.keys(ys).sort().reverse().map(function(y){ return '<option value="'+y+'">'+y+'</option>'; }).join(''); sel.value=(cur&&ys[cur])?cur:(FY.preYear&&ys[FY.preYear]?String(FY.preYear):String(cy)); FY.preYear=null;
+    renderFinPay();
+  }
+  var FY_ST={actual:['Actual','#dcfce7','#15803d'],forecast:['Estimate \u2014 avg of last 3 months','#fff1e0','#b45309'],manual:['Your estimate','#e0effa','#0b6ea8'],mixed:['Estimate (part typed)','#e0effa','#0b6ea8']};
+  function renderFinPay(){
+    var y=+document.getElementById('fy_year').value, h='';
+    for(var m=1;m<=12;m++){
+      var M=fyMonth(y,m), fut=FY.now&&(y*12+m>FY.now.year*12+FY.now.month), act=!!(M&&M.actual), sts={}, total=0, cells='';
+      FY.depts.forEach(function(d){ ['salaries','taxes'].forEach(function(k){ var c=M?M.depts[d]:null, v=c?c[k]:null, st=c?c[k+'Status']:null; if(st)sts[st]=1; if(v!=null)total+=v;
+        cells+='<td><input class="tinput" inputmode="decimal" data-d="'+d+'" data-k="'+k+'" value="'+((st==='actual'||st==='manual')&&v!=null?av(v):'')+'"'+(st==='forecast'&&v!=null?' placeholder="\u2248 '+av(fcMoney(v))+'"':'')+(act?' disabled':'')+'></td>'; }); });
+      var keys=Object.keys(sts), st=act?'actual':(keys.length>1?'mixed':(keys[0]||'')), P=FY_ST[st];
+      h+='<tr data-m="'+m+'"'+(fut?' class="fut"':'')+'><td><b>'+FC_MONTHS[m-1]+'</b></td>'+cells+'<td class="r" style="font-weight:700'+(act?'':';font-style:italic;color:#b45309')+'">'+(total?fcMoney(total):'')+'</td>'
+        +'<td>'+(P?'<span class="pill" style="background:'+P[1]+';color:'+P[2]+'">'+P[0]+'</span>':'<span class="sub" style="margin:0">'+(fut?'future':'no data')+'</span>')+'</td>'
+        +'<td style="text-align:center"><input type="checkbox" class="fy_act" style="width:16px;height:16px"'+(act?' checked':'')+'></td><td><button class="pobtn fy_save" style="padding:5px 12px;font-size:12px">Save</button></td></tr>';
+    }
+    var tb=document.getElementById('fy_rows'); tb.innerHTML=h;
+    tb.querySelectorAll('tr').forEach(function(tr){
+      var cb=tr.querySelector('.fy_act'), was=cb.checked;
+      cb.onchange=function(){ if(was&&!cb.checked)tr.querySelectorAll('input.tinput').forEach(function(i){ i.disabled=false; }); };
+      tr.querySelector('.fy_save').onclick=async function(){
+        var deps={}; tr.querySelectorAll('input.tinput').forEach(function(i){ var d=i.getAttribute('data-d'); (deps[d]||(deps[d]={}))[i.getAttribute('data-k')]=i.value; });
+        var r=await api('/api/finops/payroll',{method:'PUT',body:JSON.stringify({year:y,month:+tr.getAttribute('data-m'),actual:cb.checked,departments:deps})}); var d=await r.json();
+        if(r.ok&&d.ok){ tShow(cb.checked?'Saved as actuals':'Saved as an estimate'); loadFinPay(); } else alert(d.error||'Could not save');
+      };
+    });
+  }
+  // Payroll of one department for a year: [12] values and whether each is an estimate.
+  function fyYear(year,dept,k){ var v=[0,0,0,0,0,0,0,0,0,0,0,0], est=[], has=false; for(var m=1;m<=12;m++){ var M=fyMonth(year,m), c=M?M.depts[dept]:null; if(c&&c[k]!=null){ v[m-1]=c[k]; has=true; est[m-1]=c[k+'Status']!=='actual'; } } return {v:v,est:est,has:has}; }
   // ---- Fin&Ops ▸ Sales (sheet "Sprzedaż"): invoices entered by hand, shown one row per job ----
   var FS={inv:[],canManage:false,open:{},limit:300,preset:null};
   var FS_COUNTRY={UK:'UK',DE:'Germany',PL:'Poland',ES:'Spain',NL:'Netherlands'};
@@ -6692,7 +6763,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fp_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
     FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId; FC.lastRun=d.lastRun;
     try{ await fsFetch(); }catch(e){ FS.inv=[]; }
-    var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); FS.inv.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); years.sort(function(a,b){return b-a;});
+    try{ await fyFetch(); }catch(e){ FY.months=[]; }
+    var years=[]; FC.rows.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); FS.inv.forEach(function(r){ if(r.period_year&&years.indexOf(r.period_year)<0)years.push(r.period_year); }); FY.months.forEach(function(x){ if(years.indexOf(x.year)<0)years.push(x.year); }); years.sort(function(a,b){return b-a;});
     var ys=document.getElementById('fp_year'), cur=ys.value; ys.innerHTML=years.map(function(y){return '<option value="'+y+'">'+y+'</option>';}).join(''); if(cur&&years.indexOf(+cur)>=0)ys.value=cur;
     var run=d.lastRun; document.getElementById('fp_last').textContent=run?('Data as of last sync: '+cfWhen(run.finished_at||run.started_at)):'Never synced \u2014 run Sync from Monday on the Costs tab';
     renderFinPerf();
@@ -6709,6 +6781,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var D=depts[dn]||(depts[dn]={fixed:{},variable:{}}); var L=D[kind][cat]||(D[kind][cat]=[0,0,0,0,0,0,0,0,0,0,0,0]);
       L[r.period_month-1]+=(r.net||0);
     });
+    // Payroll belongs to Acemark: make sure its three departments show even in a month-less year of invoices.
+    if(co===''||co==='acemark') FY.depts.forEach(function(n){ if(!depts[n]&&(fyYear(year,n,'salaries').has||fyYear(year,n,'taxes').has))depts[n]={fixed:{},variable:{}}; });
     var names=FP_DEPTS.filter(function(n){return depts[n];}).concat(Object.keys(depts).filter(function(n){return FP_DEPTS.indexOf(n)<0;}).sort());
     var add=function(a,b){ return a.map(function(v,i){return v+b[i];}); }, zero=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; };
     var out={year:year,company:co,reclass:reclass,depts:[],total:zero(),noMonth:noMonth,changed:chg,count:rows.length};
@@ -6729,12 +6803,19 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var sum=function(a){ return a.reduce(function(s,v){return s+v;},0); };
     var cells=function(m,ctx){ return m.map(function(v,i){ return '<td class="n'+(v<0?' neg':'')+'" data-m="'+(i+1)+'" '+ctx+' title="'+av(Number(v||0).toFixed(2))+'">'+fmt(v)+'</td>'; }).join('')+'<td class="n t'+(sum(m)<0?' neg':'')+'" data-m="" '+ctx+' title="'+av(sum(m).toFixed(2))+'">'+fmt(sum(m))+'</td>'; };
     document.getElementById('fp_head').innerHTML='<tr><th>'+M.year+' \u00b7 net z\u0142</th>'+FC_MONTHS.map(function(m){return '<th>'+m.slice(0,3)+'</th>';}).join('')+'<th>Total</th></tr>';
-    var h='';
+    var h='', grand=[0,0,0,0,0,0,0,0,0,0,0,0], anyPay=false, zeroes=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; };
+    // like cells(), for payroll / totals: estimates in italics; these cells open the Payroll tab or nothing
+    var pcells=function(m,est,ctx){ var t=sum(m), e=(est||[]).some(function(x){return x;}); return m.map(function(v,i){ return '<td class="n'+(est&&est[i]?' est':'')+(v<0?' neg':'')+'" data-m="'+(i+1)+'" '+ctx+' title="'+av(Number(v||0).toFixed(2))+(est&&est[i]?' \u2014 estimate, actuals not entered yet':'')+'">'+fmt(v)+'</td>'; }).join('')+'<td class="n t'+(e?' est':'')+'" data-m="" '+ctx+' title="'+av(t.toFixed(2))+(e?' \u2014 includes estimates':'')+'">'+fmt(t)+'</td>'; };
     M.depts.forEach(function(D){
-      var dctx='data-d="'+av(D.name)+'"';
-      h+='<tr class="dept"><td>'+esc(D.name.toUpperCase())+'</td>'+cells(D.total,dctx)+'</tr>';
-      h+='<tr class="ph"><td style="padding-left:18px">Salaries</td><td colspan="13">from the payroll source \u2014 not connected yet</td></tr>';
-      h+='<tr class="ph"><td style="padding-left:18px">Taxes (payroll)</td><td colspan="13">from the payroll source \u2014 not connected yet</td></tr>';
+      var dctx='data-d="'+av(D.name)+'"', pay=(M.company===''||M.company==='acemark')&&FY.depts.indexOf(D.name)>=0;
+      var sal=pay?fyYear(M.year,D.name,'salaries'):{v:zeroes(),est:[],has:false}, tax=pay?fyYear(M.year,D.name,'taxes'):{v:zeroes(),est:[],has:false};
+      var dtot=D.total.map(function(v,i){ return v+sal.v[i]+tax.v[i]; }); grand=grand.map(function(v,i){ return v+dtot[i]; }); if(sal.has||tax.has)anyPay=true;
+      var anyEst=sal.est.concat(tax.est).some(function(x){return x;});
+      h+='<tr class="dept"><td>'+esc(D.name.toUpperCase())+'</td>'+pcells(dtot,[],'data-d="'+av(D.name)+'" data-all="1"')+'</tr>';
+      if(pay){
+        h+=sal.has?'<tr class="sec"><td style="padding-left:18px">Salaries</td>'+pcells(sal.v,sal.est,'data-pay="1"')+'</tr>':'<tr class="ph"><td style="padding-left:18px">Salaries</td><td colspan="13">not entered yet \u2014 see the Payroll tab</td></tr>';
+        h+=tax.has?'<tr class="sec"><td style="padding-left:18px">Taxes (payroll)</td>'+pcells(tax.v,tax.est,'data-pay="1"')+'</tr>':'<tr class="ph"><td style="padding-left:18px">Taxes (payroll)</td><td colspan="13">not entered yet \u2014 see the Payroll tab</td></tr>';
+      }
       h+='<tr class="sec"><td style="padding-left:18px">Overheads</td>'+cells(D.total,dctx)+'</tr>';
       D.kinds.forEach(function(K){
         var kctx=dctx+' data-k="'+K.kind+'"', gid=av(D.name+'|'+K.kind);
@@ -6742,7 +6823,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         K.lines.forEach(function(l){ h+='<tr class="line" data-of="'+gid+'"><td>'+esc(l.cat)+'</td>'+cells(l.m,kctx+' data-c="'+av(l.cat)+'"')+'</tr>'; });
       });
     });
-    if(M.depts.length)h+='<tr class="ctrl"><td>Control sum \u2014 Monday</td>'+cells(M.total,'')+'</tr>';
+    if(M.depts.length)h+='<tr class="ctrl"><td>Control sum \u2014 Monday (invoices)</td>'+cells(M.total,'')+'</tr>';
+    if(anyPay)h+='<tr class="ctrl"><td>Total costs incl. payroll</td>'+pcells(grand,[],'data-all="1"')+'</tr>';
     // Sales block (Sales tab), as in the sheet: total, then Orpiszew and Trade from Poland by country; UK split by customer.
     var S=fpSales(M.year);
     if(S.count){
@@ -6756,7 +6838,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     }
     var tb=document.getElementById('fp_rows');
     tb.innerHTML=(M.depts.length||S.count)?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs or sales for this year / company yet.</td></tr>';
-    tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); if(td.getAttribute('data-s')){ FS.preset={year:M.year,month:td.getAttribute('data-m')||'',channel:td.getAttribute('data-ch')||'',country:td.getAttribute('data-co')||''}; showTab('finsales'); } else fpDrill(td); }; });
+    tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); if(td.getAttribute('data-pay')){ FY.preYear=M.year; showTab('finpay'); return; } if(td.getAttribute('data-all'))return; if(td.getAttribute('data-s')){ FS.preset={year:M.year,month:td.getAttribute('data-m')||'',channel:td.getAttribute('data-ch')||'',country:td.getAttribute('data-co')||''}; showTab('finsales'); } else fpDrill(td); }; });
     tb.querySelectorAll('tr.kind').forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'), hide=!tr.classList.contains('shut'); tr.classList.toggle('shut',hide); tr.querySelector('td').firstChild.textContent=(hide?'\u25b8 ':'\u25be ')+tr.querySelector('td').firstChild.textContent.slice(2); tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=hide?'none':''; }); }; });
     document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.reclass?' \u00b7 <a class="codelink" id="fp_rcl" style="color:#b45309" title="Invoices whose category, department or KONTO looks wrong \u2014 open the list to fix them in monday">'+M.reclass+' to fix in monday \u2192</a>':' \u00b7 nothing to fix')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
     var rc=document.getElementById('fp_rcl'); if(rc)rc.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:'',flag:'reclass'}; showTab('fincosts'); };
