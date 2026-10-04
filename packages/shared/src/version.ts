@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.10.0';
+export const APP_VERSION = '1.10.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.10.1', date: '2026-10-04', changes: [
+    'Performance: a \u201cCollapse all / Expand all\u201d button for the Fixed / Variable blocks and the UK customer breakdown. Groups you close stay closed when you change the year, company or decimals. Fixed: clicking a country in the Sales block no longer toggles the UK customers or clips its label.',
+  ] },
   { version: '1.10.0', date: '2026-10-04', changes: [
     'Fin&Ops \u25b8 Payroll. Each month the finance user enters total salaries and total payroll tax for Office, Sales and Production and ticks Actuals when the figures are final. A month without the tick shows an estimate \u2014 the average of the last 3 months with actuals, per department \u2014 or the user\u2019s own figure if one is typed without ticking. Ticking a month moves the estimate on to the next one. A ticked month is protected until it is unticked.',
     'Performance: the Salaries and Taxes rows of each department are now filled from Payroll (estimates in orange italics), department totals include payroll, and a new row \u201cTotal costs incl. payroll\u201d sits under the Monday control sum. Requires migration 0059_fin_payroll.sql.',

@@ -3444,7 +3444,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:1600px">
       <div class="titlerow">
         <div><h2>Performance</h2><div class="sub">Costs by department &rarr; fixed / variable &rarr; cost line, month by month &mdash; the structure of the <b>New Performance Sheet</b>, calculated from the synced monday invoices (net). Click any number to see the invoices behind it.</div></div>
-        <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fp_last" style="margin:0;text-align:right"></span><button class="pobtn" id="fp_csv">Export CSV</button></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center"><span class="sub" id="fp_last" style="margin:0;text-align:right"></span><button class="pobtn" id="fp_toggle">Collapse all</button><button class="pobtn" id="fp_csv">Export CSV</button></div>
       </div>
       <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px">
         <select id="fp_year" class="tinput"></select>
@@ -6744,7 +6744,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       if(r.ok&&d.ok){ closeModal(); alert('Imported '+d.added+' job(s) with '+d.items+' cost line(s).'+(d.skipped.length?' Skipped '+d.skipped.length+' that already existed.':'')); loadFinJobs(); } else { tShow(d.error||'Import failed'); go.disabled=false; } };
   }
   // ---- Fin&Ops ▸ Performance: department → fixed/variable → cost line × month (New Performance Sheet layout) ----
-  var FP={model:null};
+  var FP={model:null,shut:{}};
+  // Collapsible groups on Performance: Fixed / Variable blocks and the UK customer breakdown. FP.shut remembers which are closed.
+  function fpGroups(){ return [].slice.call(document.querySelectorAll('#fp_rows tr.kind[data-g]')); }
+  function fpApplyShut(){
+    var tb=document.getElementById('fp_rows'), groups=fpGroups();
+    groups.forEach(function(tr){ var g=tr.getAttribute('data-g'), shut=!!FP.shut[g]; tr.classList.toggle('shut',shut); var ar=tr.querySelector('.fpar'); if(ar)ar.textContent=shut?'\u25b8 ':'\u25be ';
+      tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=shut?'none':''; }); });
+    var b=document.getElementById('fp_toggle'); if(b){ var allShut=groups.length>0&&groups.every(function(tr){ return FP.shut[tr.getAttribute('data-g')]; }); b.textContent=allShut?'Expand all':'Collapse all'; b.style.display=groups.length?'':'none'; }
+  }
   var FP_ORDER=['469','401','412','457','489','463','464','467','429','445','425','449','468','500','TAX','499','631','473','416'];
   var FP_DEPTS=['Office','Sales','Production'];
   // Sheet rule: these categories are fixed costs; their ".V" variants and everything else are variable.
@@ -6759,6 +6767,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var first=!document.getElementById('fp_csv').dataset.ready;
     if(first){ document.getElementById('fp_csv').dataset.ready='1';
       document.getElementById('fp_csv').onclick=fpCsv;
+      document.getElementById('fp_toggle').onclick=function(){ var any=fpGroups().some(function(tr){ return !FP.shut[tr.getAttribute('data-g')]; }); fpGroups().forEach(function(tr){ FP.shut[tr.getAttribute('data-g')]=any; }); fpApplyShut(); };
       ['fp_year','fp_company','fp_dec'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
     var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fp_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
     FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId; FC.lastRun=d.lastRun;
@@ -6819,7 +6828,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       h+='<tr class="sec"><td style="padding-left:18px">Overheads</td>'+cells(D.total,dctx)+'</tr>';
       D.kinds.forEach(function(K){
         var kctx=dctx+' data-k="'+K.kind+'"', gid=av(D.name+'|'+K.kind);
-        h+='<tr class="kind" data-g="'+gid+'"><td style="padding-left:24px">\u25be '+(K.kind==='fixed'?'Fixed / sta\u0142e':'Variable / zmienne')+' <span style="font-weight:500;color:var(--muted)">('+K.lines.length+')</span></td>'+cells(K.total,kctx)+'</tr>';
+        h+='<tr class="kind" data-g="'+gid+'"><td style="padding-left:24px"><span class="fpar">\u25be </span>'+(K.kind==='fixed'?'Fixed / sta\u0142e':'Variable / zmienne')+' <span style="font-weight:500;color:var(--muted)">('+K.lines.length+')</span></td>'+cells(K.total,kctx)+'</tr>';
         K.lines.forEach(function(l){ h+='<tr class="line" data-of="'+gid+'"><td>'+esc(l.cat)+'</td>'+cells(l.m,kctx+' data-c="'+av(l.cat)+'"')+'</tr>'; });
       });
     });
@@ -6832,14 +6841,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       h+='<tr class="dept"><td>SALES RESULTS</td>'+sc(S.total,'')+'</tr>';
       [['production','Sales from Orpiszew'],['trade','Trade from Poland']].forEach(function(c){
         var B=S[c[0]]; h+='<tr class="sec"><td style="padding-left:18px">'+c[1]+'</td>'+sc(B.total,'data-ch="'+c[0]+'"')+'</tr>';
-        B.countries.forEach(function(C){ h+='<tr class="kind"><td style="padding-left:24px;cursor:default">'+esc(fsCountry(C.code))+'</td>'+sc(C.m,'data-ch="'+c[0]+'" data-co="'+av(C.code||'')+'"')+'</tr>';
-          if(C.code==='UK') C.buyers.forEach(function(Bu){ h+='<tr class="line"><td>'+esc(Bu.name)+'</td>'+sc(Bu.m,'data-ch="'+c[0]+'" data-co="UK"')+'</tr>'; }); });
+        B.countries.forEach(function(C){ var grp=C.code==='UK'&&C.buyers.length, gid='sales|'+c[0]+'|UK';
+          h+='<tr class="kind"'+(grp?' data-g="'+gid+'"':'')+'><td style="padding-left:24px;cursor:'+(grp?'pointer':'default')+'">'+(grp?'<span class="fpar">\u25be </span>':'')+esc(fsCountry(C.code))+'</td>'+sc(C.m,'data-ch="'+c[0]+'" data-co="'+av(C.code||'')+'"')+'</tr>';
+          if(grp) C.buyers.forEach(function(Bu){ h+='<tr class="line" data-of="'+gid+'"><td>'+esc(Bu.name)+'</td>'+sc(Bu.m,'data-ch="'+c[0]+'" data-co="UK"')+'</tr>'; }); });
       });
     }
     var tb=document.getElementById('fp_rows');
     tb.innerHTML=(M.depts.length||S.count)?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs or sales for this year / company yet.</td></tr>';
     tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); if(td.getAttribute('data-pay')){ FY.preYear=M.year; showTab('finpay'); return; } if(td.getAttribute('data-all'))return; if(td.getAttribute('data-s')){ FS.preset={year:M.year,month:td.getAttribute('data-m')||'',channel:td.getAttribute('data-ch')||'',country:td.getAttribute('data-co')||''}; showTab('finsales'); } else fpDrill(td); }; });
-    tb.querySelectorAll('tr.kind').forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'), hide=!tr.classList.contains('shut'); tr.classList.toggle('shut',hide); tr.querySelector('td').firstChild.textContent=(hide?'\u25b8 ':'\u25be ')+tr.querySelector('td').firstChild.textContent.slice(2); tb.querySelectorAll('tr.line').forEach(function(l){ if(l.getAttribute('data-of')===g)l.style.display=hide?'none':''; }); }; });
+    fpGroups().forEach(function(tr){ tr.querySelector('td').onclick=function(){ var g=tr.getAttribute('data-g'); FP.shut[g]=!FP.shut[g]; fpApplyShut(); }; });
+    fpApplyShut();
     document.getElementById('fp_note').innerHTML=M.count.toLocaleString('en-GB')+' invoices'+(M.changed?' \u00b7 <a class="codelink" id="fp_chg" style="color:#b42318">'+M.changed+' changed after sync</a>':'')+(M.reclass?' \u00b7 <a class="codelink" id="fp_rcl" style="color:#b45309" title="Invoices whose category, department or KONTO looks wrong \u2014 open the list to fix them in monday">'+M.reclass+' to fix in monday \u2192</a>':' \u00b7 nothing to fix')+(M.noMonth?' \u00b7 '+M.noMonth+' without a month (not shown)':'');
     var rc=document.getElementById('fp_rcl'); if(rc)rc.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:'',flag:'reclass'}; showTab('fincosts'); };
     var c=document.getElementById('fp_chg'); if(c)c.onclick=function(){ FC.preset={year:M.year,month:'',company:M.company,dept:'',cat:'',kind:''}; showTab('fincosts'); setTimeout(function(){ document.getElementById('fc_flag').value='changed'; renderFinCosts(); },900); };
