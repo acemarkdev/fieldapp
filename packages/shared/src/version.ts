@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.7.3';
+export const APP_VERSION = '1.8.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.8.0', date: '2026-10-04', changes: [
+    'Fin&Ops \u25b8 Job costs (phase 4) \u2014 the \u201cKoszty\u201d sheet in the app: profit & loss per job order. One row per job (Z.373, \u201cZ.102 panele\u201d, Z.214B\u2026 are separate jobs) with the sheet\u2019s columns: Material Cost (RW), other cost \u2014 panels, glass, other extras, painting, transport, customs clearance, labour hours and cost, sales, total cost, profit / loss, profitability, customer. Open a job to enter its cost lines \u2014 several per job (e.g. several invoices), each with an optional invoice number, supplier, date and note; labour is hours \u00d7 rate (default rate set by an admin). Filters, totals, CSV export. An admin can lock a job \u2014 it is then read-only for everyone until an admin unlocks it \u2014 and can import the existing sheet by pasting its rows (existing jobs are skipped). Finance and admin only. Requires migration 0057_fin_jobs.sql.',
+  ] },
   { version: '1.7.3', date: '2026-10-04', changes: [
     'Fin&Ops: the Performance Sheet is treated as an open list \u2014 a category under a department that did not have it before (e.g. Internet under Sales) is no longer reported; Performance simply shows it as a line. \u201cTo fix in monday\u201d now lists only KONTO not matching the category, a missing department / category, and an invoice date outside its month group. No migration, no sync needed.',
   ] },

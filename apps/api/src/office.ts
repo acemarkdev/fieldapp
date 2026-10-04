@@ -45,6 +45,7 @@ import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
+import { JOB_KINDS, JOB_KIND_LABEL, listJobs, getJob, createJob, updateJob, deleteJob, setJobLock, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
 import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
@@ -449,6 +450,82 @@ const server = createServer(async (req, res) => {
       if (!allow('finops.view')) return;
       send(res, 200, { sync: syncProgress(ctx.tenant_id), lastRun: await lastSyncRun(ctx.tenant_id) });
       return;
+    }
+    // ---- Fin&Ops ▸ Job costs (sheet "Koszty"): P&L per job. Finance + admin edit; lock/unlock/delete/import = admin. ----
+    if (p === '/api/finops/jobs' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      send(res, 200, { jobs: await listJobs(ctx.tenant_id), kinds: JOB_KINDS.map((k) => ({ key: k, label: JOB_KIND_LABEL[k] })), labourRate: await getLabourRate(), canManage: can(ctx.role, 'finops.manage') });
+      return;
+    }
+    if (p === '/api/finops/jobs' && req.method === 'POST') {
+      if (!allow('finops.view')) return;
+      const r = await createJob(ctx.tenant_id, ctx.name, await readJson(req));
+      if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+      audit(ctx, 'finjob.create', 'fin_job', r.id, 'Created job cost record');
+      send(res, 200, { ok: true, id: r.id }); return;
+    }
+    if (p === '/api/finops/jobs/import' && req.method === 'POST') {
+      if (!allow('finops.manage')) return;
+      const b = await readJson(req);
+      const rows = Array.isArray(b.rows) ? b.rows.slice(0, 5000) : [];
+      if (!rows.length) { send(res, 400, { error: 'Nothing to import.' }); return; }
+      const r = await importJobs(ctx.tenant_id, ctx.name, rows);
+      audit(ctx, 'finjob.import', 'fin_job', null, `Imported ${r.added} job(s), ${r.items} cost line(s); ${r.skipped.length} already existed`);
+      send(res, 200, { ok: true, ...r }); return;
+    }
+    if (p === '/api/finops/labour-rate' && req.method === 'PUT') {
+      if (!allow('finops.manage')) return;
+      const rate = parseJobMoney((await readJson(req)).rate);
+      if (rate === null || rate <= 0 || rate > 10000) { send(res, 400, { error: 'Enter a rate per hour.' }); return; }
+      await setLabourRate(rate);
+      audit(ctx, 'finjob.rate', 'fin_job', null, `Default labour rate set to ${rate.toFixed(2)}`);
+      send(res, 200, { ok: true, labourRate: rate }); return;
+    }
+    if (p.startsWith('/api/finops/job-items/') && (req.method === 'PUT' || req.method === 'DELETE')) {
+      if (!allow('finops.view')) return;
+      const itemId = p.split('/')[4] ?? '';
+      const r = req.method === 'PUT' ? await updateJobItem(ctx.tenant_id, itemId, await readJson(req)) : await deleteJobItem(ctx.tenant_id, itemId);
+      if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+      audit(ctx, req.method === 'PUT' ? 'finjob.item.update' : 'finjob.item.delete', 'fin_job', null, `${req.method === 'PUT' ? 'Edited' : 'Deleted'} a cost line on ${r.reference}`);
+      send(res, 200, { ok: true }); return;
+    }
+    if (p.startsWith('/api/finops/jobs/')) {
+      const jobId = p.split('/')[4] ?? '', sub = p.split('/')[5] ?? '';
+      if (!sub && req.method === 'GET') {
+        if (!allow('finops.view')) return;
+        const j = await getJob(ctx.tenant_id, jobId);
+        if (!j) { send(res, 404, { error: 'Job not found.' }); return; }
+        send(res, 200, j); return;
+      }
+      if (!sub && req.method === 'PUT') {
+        if (!allow('finops.view')) return;
+        const r = await updateJob(ctx.tenant_id, jobId, await readJson(req));
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'finjob.update', 'fin_job', jobId, 'Edited job cost record');
+        send(res, 200, { ok: true }); return;
+      }
+      if (!sub && req.method === 'DELETE') {
+        if (!allow('finops.manage')) return;
+        const r = await deleteJob(ctx.tenant_id, jobId);
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'finjob.delete', 'fin_job', jobId, `Deleted job cost record ${r.reference}`);
+        send(res, 200, { ok: true }); return;
+      }
+      if (sub === 'lock' && req.method === 'POST') {
+        if (!allow('finops.manage')) return;
+        const locked = (await readJson(req)).locked !== false;
+        const r = await setJobLock(ctx.tenant_id, jobId, locked, ctx.name);
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, locked ? 'finjob.lock' : 'finjob.unlock', 'fin_job', jobId, `${locked ? 'Locked' : 'Unlocked'} job ${r.reference}`);
+        send(res, 200, { ok: true }); return;
+      }
+      if (sub === 'items' && req.method === 'POST') {
+        if (!allow('finops.view')) return;
+        const r = await addJobItem(ctx.tenant_id, jobId, ctx.name, await readJson(req));
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'finjob.item.add', 'fin_job', jobId, `Added a cost line to ${r.reference}`);
+        send(res, 200, { ok: true, id: r.id }); return;
+      }
     }
     // Automatic daily sync: on/off + hour (Poland time). Admin only.
     if (p === '/api/finops/auto-sync' && req.method === 'PUT') {
@@ -2834,6 +2911,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .fp tr.kind td{background:#f8f7fc!important;font-weight:700;cursor:pointer}
   .fp tr.line td:first-child{padding-left:30px}
   .fp tr.ph td{color:#9a97ad;font-style:italic}
+  .fj td{cursor:pointer}.fj tr:hover td{background:#fbf3f8!important}.fj td:first-child{min-width:130px;font-weight:700}
+  .fj tr.lk td{color:#6b6786}.fj tr.ctrl:hover td{background:#fff8eb!important}
+  .fjl{width:100%;border-collapse:collapse;font-size:12.5px}.fjl td,.fjl th{padding:6px 8px;border-top:1px solid #f2f0f8;text-align:left;vertical-align:top}.fjl th{font-size:10px;color:#9a97ad;letter-spacing:.04em}
+  .fjl td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .fp tr.ctrl td{background:#fff8eb!important;font-weight:800;border-top:2px solid #f5d9a8}
   .tabbadge{display:inline-block;min-width:16px;padding:0 5px;height:16px;line-height:16px;border-radius:8px;background:var(--magenta);color:#fff;font-size:10px;font-weight:800;text-align:center}
   td{padding:9px 12px;border-top:1px solid #f2f0f8;vertical-align:middle}
@@ -2966,6 +3047,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="grp" id="grp_finops"><button class="grpbtn" onclick="toggleGrp('finops')">Fin&amp;Ops \u25be</button><div class="grpmenu" id="menu_finops">
         <button id="tabFinPerf" class="tab" style="display:none" onclick="showTab('finperf')">Performance</button>
         <button id="tabFinCosts" class="tab" style="display:none" onclick="showTab('fincosts')">Costs</button>
+        <button id="tabFinJobs" class="tab" style="display:none" onclick="showTab('finjobs')">Job costs</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
@@ -3256,6 +3338,25 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     </main>
   </div>
 
+  <div id="finJobsView" style="display:none">
+    <main style="max-width:1700px">
+      <div class="titlerow">
+        <div><h2>Job costs</h2><div class="sub">Profit &amp; loss per job order &mdash; the <b>Koszty</b> sheet. Each job holds cost lines (material, extras, painting, transport, customs, labour = hours &times; rate; several per job, e.g. several invoices). Total cost = all costs added up; profit = sales &minus; total cost. Click a job to open it. A locked job can&rsquo;t be changed until an admin unlocks it.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center;flex-wrap:wrap;justify-content:flex-end"><button class="pobtn" id="fj_import" style="display:none">Import from Excel</button><button class="pobtn" id="fj_csv">Export CSV</button><button class="newbtn" id="fj_new">+ New job</button></div>
+      </div>
+      <div class="sub" id="fj_rate" style="margin:6px 0 0;text-align:right"></div>
+      <div class="statgrid" id="fj_stats" style="margin:14px 0"></div>
+      <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <select id="fj_year" class="tinput"></select>
+        <select id="fj_month" class="tinput"></select>
+        <select id="fj_cust" class="tinput"></select>
+        <select id="fj_state" class="tinput"><option value="">All jobs</option><option value="open">Not locked</option><option value="locked">Locked</option><option value="nosales">No sales entered</option><option value="nocost">No costs entered</option><option value="loss">Making a loss</option></select>
+        <input id="fj_q" class="tinput" placeholder="Search reference or customer" style="min-width:220px;flex:1">
+      </div>
+      <div class="card2" style="overflow:auto;max-height:calc(100vh - 300px)"><table class="fp fj"><thead id="fj_head"></thead><tbody id="fj_rows"></tbody></table></div>
+      <div class="sub" id="fj_more" style="margin:10px 0 30px"></div>
+    </main>
+  </div>
   <div id="finPerfView" style="display:none">
     <main style="max-width:1600px">
       <div class="titlerow">
@@ -3641,8 +3742,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function restoreTab(){
     var t=sessionStorage.getItem('ace_tab')||(myRole==='scanner'?'mapping':'dashboard');
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
-    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf')?t:'finperf';
-    var need={fincosts:'finops.view',finperf:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
+    if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf'||t==='finjobs')?t:'finperf';
+    var need={fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
     return t;
@@ -3697,7 +3798,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
-    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
+    ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','finJobs','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
     document.getElementById('customerView').style.display='block';
     var box=document.getElementById('custJobs'); box.innerHTML='<div class="sub">Loading…</div>';
     var jobs=[]; try{jobs=await (await api('/api/customer/jobs')).json();}catch(e){box.innerHTML='<div class="sub">Could not load your jobs.</div>';return;}
@@ -4755,6 +4856,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('confirmView').style.display=name==='confirm'?'block':'none';
     document.getElementById('finCostsView').style.display=name==='fincosts'?'block':'none';
     document.getElementById('finPerfView').style.display=name==='finperf'?'block':'none';
+    document.getElementById('finJobsView').style.display=name==='finjobs'?'block':'none';
     document.getElementById('testsView').style.display=name==='tests'?'block':'none';
     document.getElementById('usersView').style.display=name==='users'?'block':'none';
     document.getElementById('rolesView').style.display=name==='roles'?'block':'none';
@@ -4801,6 +4903,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='confirm')loadConfirmations();
     if(name==='fincosts')loadFinCosts();
     if(name==='finperf')loadFinPerf();
+    if(name==='finjobs')loadFinJobs();
     if(name==='tests')loadTests();
     if(name==='users')loadUsers();
     if(name==='roles')loadRoles();
@@ -4811,8 +4914,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(name); closeGrps();
   }
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],finops:['tabFinPerf','tabFinCosts','tabFinJobs'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',fincosts:'finops',finperf:'finops',finjobs:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -4935,6 +5038,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabConfirm',canCap('confirmations.manage'));
     show('tabFinCosts',canCap('finops.view'));
     show('tabFinPerf',canCap('finops.view'));
+    show('tabFinJobs',canCap('finops.view'));
     show('tabMapping',canCap('items.create')&&!isCustomer);
     show('tabUsers',isAdmin);
     show('tabRoles',isAdmin);
@@ -6239,6 +6343,162 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       document.getElementById('fc_progress_msg').innerHTML='<b>Syncing\u2026</b><small>'+esc(s.phase)+(s.total?' '+s.done+' / '+s.total:(s.done?' '+s.done+' read':''))+' \u2014 you can leave this page; it keeps running.'+(/^Writing/.test(s.phase)?' The invoices below are already up to date; the Cost IDs are now being copied into monday (the first time takes a while).':'')+'</small>';
       FC.timer=setTimeout(async function(){ if(sessionStorage.getItem('ace_tab')!=='fincosts')return; try{ var d=await (await api('/api/finops/costs/sync')).json(); if(d.sync&&d.sync.running){ var w=/^Writing/.test(d.sync.phase); if(w&&!FC.shownSaved){ FC.shownSaved=true; loadFinCosts(); } else fcProgress(d.sync); } else { FC.shownSaved=false; loadFinCosts(); } }catch(e){} },2500);
     } else { btn.disabled=false; box.className='podecide bad'; document.getElementById('fc_progress_msg').innerHTML='<b>Last sync failed</b><small>'+esc(s.error)+'</small>'; }
+  }
+  // ---- Fin&Ops ▸ Job costs (sheet "Koszty"): P&L per job, cost lines, admin lock ----
+  var FJ={jobs:[],kinds:[],rate:45,canManage:false,limit:400};
+  function fjPct(v){ return v==null?'':(v*100).toLocaleString('en-GB',{minimumFractionDigits:1,maximumFractionDigits:1})+'%'; }
+  function fjNum(v){ return (v==null||Math.abs(v)<0.005)?'':Number(v).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  async function loadFinJobs(){
+    var first=!document.getElementById('fj_new').dataset.ready;
+    if(first){ document.getElementById('fj_new').dataset.ready='1';
+      document.getElementById('fj_new').onclick=function(){ fjOpen(null); };
+      document.getElementById('fj_csv').onclick=fjCsv; document.getElementById('fj_import').onclick=fjImport;
+      ['fj_year','fj_month','fj_cust','fj_state'].forEach(function(id){ document.getElementById(id).onchange=function(){ FJ.limit=400; renderFinJobs(); }; });
+      document.getElementById('fj_q').oninput=function(){ FJ.limit=400; renderFinJobs(); };
+    }
+    var d; try{ var r=await api('/api/finops/jobs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fj_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load job costs')+'</td></tr>'; return; }
+    FJ.jobs=d.jobs||[]; FJ.kinds=d.kinds||[]; FJ.rate=d.labourRate; FJ.canManage=!!d.canManage;
+    document.getElementById('fj_import').style.display=FJ.canManage?'':'none';
+    var years=[]; FJ.jobs.forEach(function(j){ if(j.period_year&&years.indexOf(j.period_year)<0)years.push(j.period_year); }); years.sort(function(a,b){return b-a;});
+    fcOpts('fj_year','All years',years.map(function(y){return [y,String(y)];}).concat([['__none','(no year)']]),!first);
+    fcOpts('fj_month','All months',FC_MONTHS.map(function(m,i){return [i+1,m];}),!first);
+    var cu={}; FJ.jobs.forEach(function(j){ if(j.customer)cu[j.customer]=1; });
+    fcOpts('fj_cust','All customers',Object.keys(cu).sort(function(a,b){return a.localeCompare(b);}).map(function(v){return [v,v];}),!first);
+    fjRateLine(); renderFinJobs();
+  }
+  function fjRateLine(){
+    var el=document.getElementById('fj_rate');
+    el.innerHTML='Default labour rate: <b>'+fcMoney(FJ.rate)+' z\u0142 / hour</b>'+(FJ.canManage?' \u00b7 <a class="codelink" id="fj_rate_edit">change</a>':'');
+    var e=document.getElementById('fj_rate_edit'); if(e)e.onclick=async function(){ var v=prompt('Default labour rate (z\u0142 per hour) \u2014 used when a new labour line is added:',String(FJ.rate)); if(v==null)return;
+      var r=await api('/api/finops/labour-rate',{method:'PUT',body:JSON.stringify({rate:v})}); var d=await r.json(); if(r.ok&&d.ok){ FJ.rate=d.labourRate; fjRateLine(); tShow('Saved'); } else tShow(d.error||'Could not save'); };
+  }
+  function fjNat(a,b){ return String(a.reference).localeCompare(String(b.reference),undefined,{numeric:true,sensitivity:'base'}); }
+  function fjFiltered(){
+    var g=function(id){ return document.getElementById(id).value; };
+    var y=g('fj_year'),m=g('fj_month'),c=g('fj_cust'),st=g('fj_state'),q=g('fj_q').trim().toLowerCase();
+    return FJ.jobs.filter(function(j){
+      if(y&&(y==='__none'?!!j.period_year:String(j.period_year)!==y))return false; if(m&&String(j.period_month)!==m)return false; if(c&&j.customer!==c)return false;
+      if(st==='open'&&j.locked)return false; if(st==='locked'&&!j.locked)return false; if(st==='nosales'&&j.sales)return false; if(st==='nocost'&&j.totalCost)return false; if(st==='loss'&&!(j.profit<0))return false;
+      if(q&&(j.reference+' '+(j.customer||'')).toLowerCase().indexOf(q)<0)return false;
+      return true;
+    }).sort(fjNat);
+  }
+  function renderFinJobs(){
+    var rows=fjFiltered(), K=FJ.kinds, add=function(f){ return rows.reduce(function(s,j){ return s+(f(j)||0); },0); };
+    var sales=add(function(j){return j.sales;}), cost=add(function(j){return j.totalCost;}), prof=sales-cost;
+    document.getElementById('fj_stats').innerHTML='<div class="stat"><div class="v">'+rows.length.toLocaleString('en-GB')+'</div><div class="l">Jobs ('+rows.filter(function(j){return j.locked;}).length+' locked)</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(sales)+' z\u0142</div><div class="l">Sales</div></div>'
+      +'<div class="stat"><div class="v">'+fcMoney(cost)+' z\u0142</div><div class="l">Total cost</div></div>'
+      +'<div class="stat"><div class="v" style="color:'+(prof<0?'#b42318':'#15803d')+'">'+fcMoney(prof)+' z\u0142</div><div class="l">Profit / loss</div></div>'
+      +'<div class="stat"><div class="v">'+(sales?fjPct(prof/sales):'\u2014')+'</div><div class="l">Profitability</div></div>';
+    document.getElementById('fj_head').innerHTML='<tr><th>Reference</th><th style="text-align:left">Month</th><th>Year</th>'+K.map(function(k){ return '<th>'+esc(k.key==='labour'?'Labour cost':k.label)+'</th>'+(k.key==='customs'?'<th>Labour hours</th>':''); }).join('')+'<th>Sales</th><th>Total cost</th><th>Profit / loss</th><th>Profitability</th><th style="text-align:left">Customer</th></tr>';
+    var line=function(cls,ref,j,vals){ return '<tr class="'+cls+'"'+(j?' data-id="'+av(j.id)+'"':'')+'><td>'+ref+'</td>'+vals+'</tr>'; };
+    var cells=function(sums,hours,sl,tc,pr,mg){ return K.map(function(k){ return '<td class="n">'+fjNum(sums[k.key])+'</td>'+(k.key==='customs'?'<td class="n">'+(hours?Number(hours).toLocaleString('en-GB'):'')+'</td>':''); }).join('')
+      +'<td class="n t">'+fjNum(sl)+'</td><td class="n">'+fjNum(tc)+'</td><td class="n'+(pr<0?' neg':'')+'" style="font-weight:700">'+(pr==null?'':fjNum(pr)||'0.00')+'</td><td class="n'+(mg<0?' neg':'')+'">'+fjPct(mg)+'</td>'; };
+    var shown=rows.slice(0,FJ.limit), h='';
+    shown.forEach(function(j){ h+=line(j.locked?'lk':'',(j.locked?'\ud83d\udd12 ':'')+esc(j.reference),j,'<td style="text-align:left">'+(j.period_month?FC_MONTHS[j.period_month-1]:'')+'</td><td class="n">'+(j.period_year||'')+'</td>'+cells(j.sums,j.hours,j.sales,j.totalCost,j.profit,j.margin)+'<td style="text-align:left">'+esc(j.customer||'')+'</td>'); });
+    if(rows.length){ var tot={}; K.forEach(function(k){ tot[k.key]=add(function(j){return j.sums[k.key];}); });
+      h+=line('ctrl','Total ('+rows.length+')',null,'<td></td><td></td>'+cells(tot,add(function(j){return j.hours;}),sales,cost,prof,sales?prof/sales:null)+'<td></td>'); }
+    var tb=document.getElementById('fj_rows');
+    tb.innerHTML=h||'<tr><td class="sub" style="padding:18px" colspan="20">'+(FJ.jobs.length?'No jobs match these filters.':'No jobs yet \u2014 add one with \u201c+ New job\u201d'+(FJ.canManage?' or bring in the Koszty sheet with \u201cImport from Excel\u201d.':'.'))+'</td></tr>';
+    tb.querySelectorAll('tr[data-id]').forEach(function(tr){ tr.onclick=function(){ fjOpen(tr.getAttribute('data-id')); }; });
+    var more=document.getElementById('fj_more');
+    if(rows.length>shown.length){ more.innerHTML='Showing '+shown.length+' of '+rows.length+' \u2014 <a class="codelink" id="fj_all">show all</a>'; document.getElementById('fj_all').onclick=function(){ FJ.limit=100000; renderFinJobs(); }; } else more.textContent='';
+  }
+  async function fjOpen(id){
+    var job={reference:'',customer:'',period_year:new Date().getFullYear(),period_month:new Date().getMonth()+1,sales:null,note:'',locked:false,sums:{},totalCost:0,profit:null,margin:null}, items=[];
+    if(id){ var d; try{ var r=await api('/api/finops/jobs/'+encodeURIComponent(id)); d=await r.json(); if(!r.ok)throw new Error(d.error); }catch(e){ tShow(e.message||'Could not load the job'); return; } job=d.job; items=d.items; }
+    var ro=!!job.locked, dis=ro?' disabled':'';
+    var mo='<option value="">\u2014</option>'+FC_MONTHS.map(function(m,i){ return '<option value="'+(i+1)+'"'+(job.period_month===i+1?' selected':'')+'>'+m+'</option>'; }).join('');
+    var banner=ro?'<div class="podecide" style="margin:14px 22px 0"><div class="msg"><b>\ud83d\udd12 Locked</b>'+(job.locked_by?' by '+esc(job.locked_by):'')+(job.locked_at?' on '+esc(cfWhen(job.locked_at)):'')+'<small>This job can\u2019t be changed. '+(FJ.canManage?'Unlock it to edit.':'Ask an admin to unlock it.')+'</small></div></div>':'';
+    var head='<div class="fgrid">'
+      +'<div class="field"><label>Reference *</label><input id="fjf_ref" class="tinput" value="'+av(job.reference)+'" placeholder="e.g. Z.373"'+dis+'></div>'
+      +'<div class="field"><label>Customer</label><input id="fjf_cust" class="tinput" value="'+av(job.customer||'')+'" list="fjf_custs"'+dis+'><datalist id="fjf_custs">'+Object.keys(FJ.jobs.reduce(function(o,j){ if(j.customer)o[j.customer]=1; return o; },{})).sort().map(function(c){ return '<option value="'+av(c)+'">'; }).join('')+'</datalist></div>'
+      +'<div class="field"><label>Month</label><select id="fjf_month"'+dis+'>'+mo+'</select></div>'
+      +'<div class="field"><label>Year</label><input id="fjf_year" class="tinput" type="number" value="'+av(job.period_year||'')+'"'+dis+'></div>'
+      +'<div class="field"><label>Sales (net z\u0142)</label><input id="fjf_sales" class="tinput" value="'+av(job.sales==null?'':job.sales)+'" inputmode="decimal"'+dis+'></div>'
+      +'<div class="field"><label>Note</label><input id="fjf_note" class="tinput" value="'+av(job.note||'')+'"'+dis+'></div></div>';
+    var body='';
+    if(id){
+      var kl=function(k){ var x=FJ.kinds.filter(function(q){return q.key===k;})[0]; return x?x.label:k; };
+      var sum='<div class="statgrid" style="margin:0 22px 12px;grid-template-columns:repeat(4,1fr)"><div class="stat"><div class="v" style="font-size:18px">'+(fjNum(job.sales)||'\u2014')+'</div><div class="l">Sales</div></div><div class="stat"><div class="v" style="font-size:18px">'+(fjNum(job.totalCost)||'0.00')+'</div><div class="l">Total cost</div></div><div class="stat"><div class="v" style="font-size:18px;color:'+(job.profit<0?'#b42318':'#15803d')+'">'+(job.profit==null?'\u2014':(fjNum(job.profit)||'0.00'))+'</div><div class="l">Profit / loss</div></div><div class="stat"><div class="v" style="font-size:18px">'+(fjPct(job.margin)||'\u2014')+'</div><div class="l">Profitability</div></div></div>';
+      var lines=items.length?items.map(function(it){ return '<tr><td><b>'+esc(kl(it.kind))+'</b></td><td class="r">'+fcMoney(it.amount)+(it.kind==='labour'&&it.hours!=null?'<div class="sub" style="margin:0">'+it.hours+' h \u00d7 '+(it.rate==null?'?':fcMoney(it.rate))+'</div>':'')+'</td><td>'+esc(it.invoice_no||'')+'</td><td>'+esc(it.supplier||'')+'</td><td style="white-space:nowrap">'+esc(it.item_date||'')+'</td><td>'+esc(it.note||'')+'</td><td style="white-space:nowrap">'+(ro?'':'<a class="codelink" data-fje="'+av(it.id)+'">edit</a> \u00b7 <a class="codelink" style="color:#b42318" data-fjd="'+av(it.id)+'">delete</a>')+'</td></tr>'; }).join(''):'<tr><td colspan="7" class="sub">No cost lines yet.</td></tr>';
+      var form=ro?'':'<div class="groupt" style="margin:14px 0 6px" id="fji_title">ADD A COST LINE</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+        +'<div class="field" style="min-width:190px"><label>Type</label><select id="fji_kind">'+FJ.kinds.map(function(k){ return '<option value="'+k.key+'">'+esc(k.label)+'</option>'; }).join('')+'</select></div>'
+        +'<div class="field" id="fji_amt_w" style="width:120px"><label>Amount (z\u0142)</label><input id="fji_amount" class="tinput" inputmode="decimal"></div>'
+        +'<div class="field" id="fji_h_w" style="width:90px;display:none"><label>Hours</label><input id="fji_hours" class="tinput" inputmode="decimal"></div>'
+        +'<div class="field" id="fji_r_w" style="width:100px;display:none"><label>Rate (z\u0142/h)</label><input id="fji_rate" class="tinput" inputmode="decimal"></div>'
+        +'<div class="field" style="width:140px"><label>Invoice no</label><input id="fji_inv" class="tinput"></div>'
+        +'<div class="field" style="width:150px"><label>Supplier</label><input id="fji_sup" class="tinput"></div>'
+        +'<div class="field" style="width:140px"><label>Date</label><input id="fji_date" class="tinput" type="date"></div>'
+        +'<div class="field" style="flex:1;min-width:140px"><label>Note</label><input id="fji_note" class="tinput"></div>'
+        +'<button class="pobtn ok" id="fji_save">Add line</button><button class="pobtn" id="fji_cancel" style="display:none">Cancel</button></div><div class="sub" id="fji_calc" style="margin:6px 0 0"></div>';
+      body='<div class="posec"><div class="groupt">SUMMARY</div></div>'+sum+'<div class="posec"><div class="groupt">COST LINES</div><div class="pofiles"><table class="fjl"><thead><tr><th>TYPE</th><th style="text-align:right">AMOUNT</th><th>INVOICE NO</th><th>SUPPLIER</th><th>DATE</th><th>NOTE</th><th></th></tr></thead><tbody>'+lines+'</tbody></table></div>'+form+'</div>';
+    }
+    var foot='<div class="foot">'+(id&&FJ.canManage&&!ro?'<button class="cancel" id="fjf_del" style="color:#b42318;margin-right:auto">Delete job</button>':'<span style="margin-right:auto"></span>')
+      +(id&&FJ.canManage?'<button class="cancel" id="fjf_lock">'+(ro?'\ud83d\udd13 Unlock':'\ud83d\udd12 Lock job')+'</button>':'')
+      +'<button class="cancel" onclick="closeModal()">Close</button>'+(ro?'':'<button class="save" id="fjf_save">'+(id?'Save job':'Create job')+'</button>')+'</div>';
+    openModal(id?('Job '+esc(job.reference)):'New job',banner+head+body+foot);
+    var sheet=document.querySelector('#modal .sheet'); if(sheet)sheet.style.maxWidth='1080px';
+    var after=function(nid){ loadFinJobs(); fjOpen(nid||id); };
+    var sv=document.getElementById('fjf_save'); if(sv)sv.onclick=async function(){
+      var b={reference:document.getElementById('fjf_ref').value,customer:document.getElementById('fjf_cust').value,period_month:document.getElementById('fjf_month').value,period_year:document.getElementById('fjf_year').value,sales:document.getElementById('fjf_sales').value,note:document.getElementById('fjf_note').value};
+      var r=await api(id?'/api/finops/jobs/'+encodeURIComponent(id):'/api/finops/jobs',{method:id?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json();
+      if(r.ok&&d.ok){ tShow(id?'Saved':'Job created'); after(d.id); } else tShow(d.error||'Could not save');
+    };
+    var lk=document.getElementById('fjf_lock'); if(lk)lk.onclick=async function(){
+      if(!ro&&!confirm('Lock job '+job.reference+'? Nobody can change it until an admin unlocks it.'))return;
+      var r=await api('/api/finops/jobs/'+encodeURIComponent(id)+'/lock',{method:'POST',body:JSON.stringify({locked:!ro})}); var d=await r.json();
+      if(r.ok&&d.ok){ tShow(ro?'Unlocked':'Locked'); after(); } else tShow(d.error||'Could not change the lock');
+    };
+    var dl=document.getElementById('fjf_del'); if(dl)dl.onclick=async function(){
+      if(!confirm('Delete job '+job.reference+' and its '+items.length+' cost line(s)? This cannot be undone.'))return;
+      var r=await api('/api/finops/jobs/'+encodeURIComponent(id),{method:'DELETE'}); var d=await r.json();
+      if(r.ok&&d.ok){ closeModal(); tShow('Deleted'); loadFinJobs(); } else tShow(d.error||'Could not delete');
+    };
+    if(!id||ro)return;
+    var editing=null, kindEl=document.getElementById('fji_kind');
+    var sync=function(){ var lab=kindEl.value==='labour'; document.getElementById('fji_amt_w').style.display=lab?'none':''; document.getElementById('fji_h_w').style.display=lab?'':'none'; document.getElementById('fji_r_w').style.display=lab?'':'none';
+      if(lab&&!document.getElementById('fji_rate').value)document.getElementById('fji_rate').value=FJ.rate;
+      var h=parseFloat(String(document.getElementById('fji_hours').value).replace(',','.')), rt=parseFloat(String(document.getElementById('fji_rate').value).replace(',','.'));
+      document.getElementById('fji_calc').textContent=lab&&h>0&&rt>0?('Labour cost = '+h+' h \u00d7 '+fcMoney(rt)+' = '+fcMoney(Math.round(h*rt*100)/100)+' z\u0142'):''; };
+    kindEl.onchange=sync; document.getElementById('fji_hours').oninput=sync; document.getElementById('fji_rate').oninput=sync; sync();
+    var reset=function(){ editing=null; ['fji_amount','fji_hours','fji_rate','fji_inv','fji_sup','fji_date','fji_note'].forEach(function(x){ document.getElementById(x).value=''; }); document.getElementById('fji_save').textContent='Add line'; document.getElementById('fji_cancel').style.display='none'; document.getElementById('fji_title').textContent='ADD A COST LINE'; sync(); };
+    document.getElementById('fji_cancel').onclick=reset;
+    document.getElementById('fji_save').onclick=async function(){
+      var b={kind:kindEl.value,amount:document.getElementById('fji_amount').value,hours:document.getElementById('fji_hours').value,rate:document.getElementById('fji_rate').value,invoice_no:document.getElementById('fji_inv').value,supplier:document.getElementById('fji_sup').value,item_date:document.getElementById('fji_date').value,note:document.getElementById('fji_note').value};
+      var r=await api(editing?'/api/finops/job-items/'+encodeURIComponent(editing):'/api/finops/jobs/'+encodeURIComponent(id)+'/items',{method:editing?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json();
+      if(r.ok&&d.ok){ tShow(editing?'Line saved':'Line added'); after(); } else tShow(d.error||'Could not save the line');
+    };
+    document.querySelectorAll('[data-fje]').forEach(function(a){ a.onclick=function(){ var it=items.filter(function(x){return x.id===a.getAttribute('data-fje');})[0]; if(!it)return; editing=it.id;
+      kindEl.value=it.kind; document.getElementById('fji_amount').value=it.kind==='labour'&&it.hours!=null?'':it.amount; document.getElementById('fji_hours').value=it.hours==null?'':it.hours; document.getElementById('fji_rate').value=it.rate==null?'':it.rate;
+      if(it.kind==='labour'&&it.hours==null){ document.getElementById('fji_hours').value=''; document.getElementById('fji_rate').value=''; }
+      document.getElementById('fji_inv').value=it.invoice_no||''; document.getElementById('fji_sup').value=it.supplier||''; document.getElementById('fji_date').value=it.item_date||''; document.getElementById('fji_note').value=it.note||'';
+      document.getElementById('fji_save').textContent='Save line'; document.getElementById('fji_cancel').style.display=''; document.getElementById('fji_title').textContent='EDIT COST LINE'; sync(); document.getElementById('fji_title').scrollIntoView({block:'nearest'}); }; });
+    document.querySelectorAll('[data-fjd]').forEach(function(a){ a.onclick=async function(){ if(!confirm('Delete this cost line?'))return;
+      var r=await api('/api/finops/job-items/'+encodeURIComponent(a.getAttribute('data-fjd')),{method:'DELETE'}); var d=await r.json(); if(r.ok&&d.ok){ tShow('Line deleted'); after(); } else tShow(d.error||'Could not delete'); }; });
+  }
+  function fjCsv(){
+    var rows=fjFiltered(), q=function(v){ return '"'+String(v==null?'':v).replace(/"/g,'""')+'"'; }, n=function(v){ return v==null?'':Number(v).toFixed(2); };
+    var L=[['Reference','Month','Year'].concat(FJ.kinds.map(function(k){ return k.key==='labour'?'Labour cost':k.label; })).concat(['Labour hours','Sales','Total cost','Profit / loss','Profitability %','Customer','Locked']).map(q).join(',')];
+    rows.forEach(function(j){ L.push([q(j.reference),q(j.period_month?FC_MONTHS[j.period_month-1]:''),j.period_year||''].concat(FJ.kinds.map(function(k){ return n(j.sums[k.key]); })).concat([j.hours||'',n(j.sales),n(j.totalCost),n(j.profit),j.margin==null?'':(j.margin*100).toFixed(2),q(j.customer),j.locked?'yes':'']).join(',')); });
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='Job costs.csv'; document.body.appendChild(a); a.click(); a.remove();
+  }
+  // Paste the Koszty rows copied from Excel (columns A..U): LP, Referencja, Miesiac, Rok, material, panele, szklo, inne, malowanie, transport, odprawa, godziny, koszt pracownikow, sprzedaz, …, customer in U.
+  function fjParsePaste(text){
+    var out=[]; String(text).split(String.fromCharCode(10)).forEach(function(ln){ var c=ln.replace(String.fromCharCode(13),'').split(String.fromCharCode(9)); if(c.length<14)return; var ref=(c[1]||'').trim(); if(!ref||/^referencja$/i.test(ref))return;
+      out.push({reference:ref,month:c[2],year:c[3],customer:c[20]||'',hours:c[11],sales:c[13],costs:{material:c[4],panels:c[5],glass:c[6],extras:c[7],painting:c[8],transport:c[9],customs:c[10],labour:c[12]}}); });
+    return out;
+  }
+  function fjImport(){
+    openModal('Import from Excel','<div style="padding:18px 22px"><p class="sub" style="margin:0 0 10px">In the <b>Koszty</b> sheet select the job rows from column <b>A (LP.)</b> to column <b>U (customer)</b>, copy, and paste here. Each row becomes a job with one cost line per filled column; labour keeps its hours and cost. Jobs that already exist are skipped, so it is safe to paste again.</p>'
+      +'<textarea id="fjp_text" style="width:100%;min-height:200px;border:1px solid var(--line);border-radius:10px;padding:10px;font:12px ui-monospace,Menlo,monospace" placeholder="Paste here\u2026"></textarea><div class="sub" id="fjp_info" style="margin:8px 0 0"></div></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" id="fjp_go" disabled>Import</button></div>');
+    var ta=document.getElementById('fjp_text'), go=document.getElementById('fjp_go'), rows=[];
+    ta.oninput=function(){ rows=fjParsePaste(ta.value); var have={}; FJ.jobs.forEach(function(j){ have[String(j.reference).replace(/\s/g,'').toUpperCase()]=1; }); var dup=rows.filter(function(r){ return have[r.reference.replace(/\s/g,'').toUpperCase()]; }).length;
+      document.getElementById('fjp_info').innerHTML=rows.length?('<b>'+rows.length+'</b> job row(s) recognised'+(dup?' \u00b7 '+dup+' already exist and will be skipped':'')+' \u00b7 first: '+esc(rows[0].reference)+', last: '+esc(rows[rows.length-1].reference)):'No job rows recognised yet \u2014 copy whole rows starting at column A.'; go.disabled=!rows.length; };
+    go.onclick=async function(){ go.disabled=true; var r=await api('/api/finops/jobs/import',{method:'POST',body:JSON.stringify({rows:rows})}); var d=await r.json();
+      if(r.ok&&d.ok){ closeModal(); alert('Imported '+d.added+' job(s) with '+d.items+' cost line(s).'+(d.skipped.length?' Skipped '+d.skipped.length+' that already existed.':'')); loadFinJobs(); } else { tShow(d.error||'Import failed'); go.disabled=false; } };
   }
   // ---- Fin&Ops ▸ Performance: department → fixed/variable → cost line × month (New Performance Sheet layout) ----
   var FP={model:null};
