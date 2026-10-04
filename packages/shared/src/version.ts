@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.11.0';
+export const APP_VERSION = '1.12.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.12.0', date: '2026-10-04', changes: [
+    'Fin&Ops \u25b8 Performance: new Result block at the bottom, built like the Performance Sheet. Sales \u2212 Materials (RW of the jobs counted in the month, from Job costs) \u2212 Sales costs (the whole Sales department incl. payroll) = Gross margin; \u2212 Overheads (Office incl. payroll + Production payroll) = EBITDA. Every line shows its % of sales underneath, per month and for the year.',
+    'Months that still use a payroll estimate are shown in italics in the Result rows too. Click a Materials cell to open Job costs for that month; click Sales to open the Sales tab.',
+    'A reference row shows the Production invoice overheads, which are not part of the result (materials are counted as RW instead). The Result rows are included in the CSV export and are available in Polish.',
+  ] },
   { version: '1.11.0', date: '2026-10-04', changes: [
     'Language per user. Admin \u25b8 Users has a new Language column: Default (EN), English or Polski. A user set to Polski sees the whole Fin&Ops menu in Polish \u2014 Wyniki (Performance), Koszty (Costs), Koszty zlece\u0144 (Job costs), Sprzeda\u017c (Sales) and P\u0142ace (Payroll): screens, windows, messages, month names, number format (1 234,56) and CSV headers. Everyone else, and the rest of the app, stays in English. Data from monday and the sheets (suppliers, categories, statuses) is shown as it is. Requires migration 0060_user_language.sql to set a language; without it everyone stays in English.',
   ] },
