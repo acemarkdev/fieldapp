@@ -17,6 +17,10 @@
 - **Report confirmations** (Logistics ▸ Confirmations, capability `confirmations.manage`) — logistics and admin. The shared link `/c/<token>` needs no login: the token is the key, the report runs in a sandboxed frame, and `confirmations` has RLS on with no policies (server-only access).
 - **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
 
+## Language
+
+Each user has an interface language (**Admin ▸ Users ▸ Language**): Default (EN), English or Polski, stored in `app_users.language` (migration `0060_user_language.sql`). Polish currently covers the **Fin&Ops** screens only; everything else is English. Texts are written in English in the office page and swapped for a Polish user as they reach the screen (dictionary `I18N_PL`, patterns `I18N_RX`, marked-up blocks `I18N_HTML` in `apps/api/src/office.ts`) — when adding Fin&Ops text, add its Polish there too. The language is read fault-tolerantly, so a missing column just means English for everyone.
+
 ## Capability matrix
 
 | Capability | admin | office | surveyor | scanner | fitter |

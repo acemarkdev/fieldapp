@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.10.1';
+export const APP_VERSION = '1.11.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.11.0', date: '2026-10-04', changes: [
+    'Language per user. Admin \u25b8 Users has a new Language column: Default (EN), English or Polski. A user set to Polski sees the whole Fin&Ops menu in Polish \u2014 Wyniki (Performance), Koszty (Costs), Koszty zlece\u0144 (Job costs), Sprzeda\u017c (Sales) and P\u0142ace (Payroll): screens, windows, messages, month names, number format (1 234,56) and CSV headers. Everyone else, and the rest of the app, stays in English. Data from monday and the sheets (suppliers, categories, statuses) is shown as it is. Requires migration 0060_user_language.sql to set a language; without it everyone stays in English.',
+  ] },
   { version: '1.10.1', date: '2026-10-04', changes: [
     'Performance: a \u201cCollapse all / Expand all\u201d button for the Fixed / Variable blocks and the UK customer breakdown. Groups you close stay closed when you change the year, company or decimals. Fixed: clicking a country in the Sales block no longer toggles the UK customers or clips its label.',
   ] },

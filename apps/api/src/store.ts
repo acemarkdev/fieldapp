@@ -423,6 +423,29 @@ export async function listAppUsers(tenantId: string): Promise<AppUserRow[]> {
   return (data ?? []) as AppUserRow[];
 }
 
+// Interface language per user ('en' | 'pl' | null = default English). Read separately and
+// fault-tolerantly: if the column doesn't exist yet (migration 0060 not run) everyone is simply
+// English — the core user queries never depend on it, so login can't break.
+export const USER_LANGUAGES = ['en', 'pl'] as const;
+export async function getUserLanguage(appUserId: string): Promise<string | null> {
+  try {
+    const { data, error } = await db().from('app_users').select('language').eq('id', appUserId).maybeSingle();
+    if (error) return null;
+    return (data as any)?.language ?? null;
+  } catch { return null; }
+}
+export async function getUserLanguages(tenantId: string): Promise<Record<string, string | null>> {
+  try {
+    const { data, error } = await db().from('app_users').select('id,language').eq('tenant_id', tenantId);
+    if (error) return {};
+    return Object.fromEntries((data ?? []).map((r: any) => [r.id, r.language ?? null]));
+  } catch { return {}; }
+}
+export async function setUserLanguage(id: string, tenantId: string, language: string | null): Promise<void> {
+  const { error } = await db().from('app_users').update({ language }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) throw new Error(/language/i.test(error.message) ? 'The language setting needs database migration 0060_user_language.sql to be run first.' : error.message);
+}
+
 export async function getAppUser(id: string): Promise<AppUserRow | null> {
   const { data, error } = await db().from('app_users')
     .select('id,tenant_id,auth_user_id,name,email,role,active,team_id,client_code').eq('id', id).maybeSingle();
