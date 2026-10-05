@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.13.0';
+export const APP_VERSION = '1.13.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.13.1', date: '2026-10-05', changes: [
+    'Fin&Ops \u25b8 Performance \u25b8 Result: new line Other income (Trade from Poland) with its % of sales, between Operating profit and Financial cost. As in the Performance Sheet it is subtracted: Profit before tax = Operating profit \u2212 Other income \u2212 Financial cost (trade is already inside Sales, but the cost of those goods is not in Materials). Click a month to open those trade invoices. Included in the CSV export and in Polish.',
+  ] },
   { version: '1.13.0', date: '2026-10-04', changes: [
     'Fin&Ops \u25b8 Performance \u25b8 Result: Depreciation and Financial cost can now be typed in per month \u2014 click a month in those rows, enter the amount (empty clears it). Two new lines follow: Operating profit (EBITDA \u2212 Depreciation) and Profit before tax (Operating profit \u2212 Financial cost), each with its % of sales. The RESULT header now shows Profit before tax.',
     'The new rows are in the CSV export and in Polish; every change is recorded in the audit log.',
