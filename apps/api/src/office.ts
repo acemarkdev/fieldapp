@@ -70,6 +70,8 @@ function pickDateColumn(cols: { id: string; title: string; type: string }[]): { 
   if (!dates.length) return null;
   const rank = (t: string) => {
     const n = normTitle(t);
+    if (n.includes('actual') || n.includes('done')) return -1;         // when it happened, not when it is planned
+    if (n.includes('install') && n.includes('plan')) return 6;         // "Plan Install Date" beats any other install date
     if (n.includes('install')) return 5;
     if (n.includes('fit')) return 4;
     if (n.includes('plan')) return 3;

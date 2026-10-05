@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.13.2';
+export const APP_VERSION = '1.13.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.13.3', date: '2026-10-05', changes: [
+    'Sync \u25b8 Pull fitters + dates: when a board has several install dates, the planned one (\u201cPlan Install Date\u201d) is always used for the calendar; \u201cActual Install Date\u201d and \u201cJob Done Date\u201d are never picked.',
+  ] },
   { version: '1.13.2', date: '2026-10-05', changes: [
     'Fix: Operations showed \u201cundefined.undefined\u201d instead of jobs, and New job, delete job, item details, snags and sign-off PDFs could fail. Since Job costs was added (v1.8.0), four Fin&Ops functions had the same names as the office job functions and silently replaced them. They are now named apart, and a new test stops this from happening again. No data was changed or lost.',
   ] },
