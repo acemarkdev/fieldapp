@@ -1,0 +1,30 @@
+# Runs the same full check as the local pre-push hook (npm run check) on GitHub for every push,
+# so a push made without the hook (another machine, --no-verify) still gets checked.
+# Note: Render deploys main/release on its own — a red check here does not stop that deploy;
+# it is the signal to fix or roll back.
+name: Check
+
+on:
+  push:
+    branches: [main, release]
+  pull_request:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check

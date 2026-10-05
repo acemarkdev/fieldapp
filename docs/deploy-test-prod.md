@@ -158,6 +158,10 @@ git config core.hooksPath .githooks
 
 A failed check stops the push. `git push --no-verify` skips it — for emergencies only.
 
+The same check also runs **on GitHub** for every push to `main` and `release` (`.github/workflows/check.yml`,
+shown as a ✓ or ✗ next to the commit and under the repo's *Actions* tab; GitHub emails the pusher when it fails).
+Render deploys on its own, so a red ✗ does not stop a deploy — it is the signal to fix or roll back.
+
 Why it exists: the server runs through `tsx`, which does not type-check. A name imported twice is not an error
 there — the later import silently wins. That is how a Fin&Ops `listJobs` once replaced the office `listJobs`
 and Operations showed job-cost rows instead of jobs (fixed in v1.13.2).
