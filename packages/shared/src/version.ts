@@ -7,6 +7,8 @@ export interface ChangelogEntry { version: string; date: string; changes: string
 
 export const CHANGELOG: ChangelogEntry[] = [
   { version: '1.13.3', date: '2026-10-05', changes: [
+    'Calendar: fitters and planned install dates are now pulled from Monday automatically every morning (from 05:00 Poland time) for every job linked to a board, so the calendar no longer depends on someone clicking Pull. If the server was asleep or restarting at that time it runs as soon as it is back, once a day. The Calendar shows when the last automatic pull ran; hover it to see any jobs with a problem (no Fitters column, unknown team name). The Sync tab button still pulls on demand.',
+    'Fix: items given a planned install date in Monday did not appear in the phone app\u2019s schedule, because they had no install status in the app. The pull now marks an item with a planned date as Scheduled (and clears that if the date is removed); a status recorded by a fitter is never changed.',
     'Sync \u25b8 Pull fitters + dates: when a board has several install dates, the planned one (\u201cPlan Install Date\u201d) is always used for the calendar; \u201cActual Install Date\u201d and \u201cJob Done Date\u201d are never picked.',
   ] },
   { version: '1.13.2', date: '2026-10-05', changes: [

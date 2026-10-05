@@ -84,6 +84,91 @@ function pickDateColumn(cols: { id: string; title: string; type: string }[]): { 
   if (ranked.length) return ranked[0].c;
   return dates.length === 1 ? dates[0] : null;
 }
+// Pull the team assignment and planned install date FROM Monday for one job (Monday is master for
+// scheduling). Used by the Sync tab button and by the automatic morning pull.
+interface SchedulePull { ok: true; total: number; assigned: number; cleared: number; datesSet: number; datesCleared: number; dateColumn: string | null; unchanged: number; unmatched: string[] }
+async function pullScheduleForJob(job: { id: string; monday_board_id: string }, tenantId: string): Promise<SchedulePull | { ok: false; error: string }> {
+  const mon = new Monday();
+  const cols = await mon.getColumns(job.monday_board_id);
+  const fittersCol = cols.find((col) => normTitle(col.title) === 'fitters');
+  if (!fittersCol) return { ok: false, error: 'No "Fitters" column found on this board.' };
+
+  const teams = await listTeams(tenantId);
+  const teamByName = new Map(teams.map((t) => [t.name.trim().toLowerCase(), t.id]));
+  const rows = await mon.getColumnTextForItems(job.monday_board_id, fittersCol.id);
+  const textByMondayId = new Map(rows.map((r) => [r.id, (r.text ?? '').trim()]));
+
+  // Also pull the planned install date, if the board has a suitable date column.
+  const dateCol = pickDateColumn(cols);
+  const dateByMondayId = new Map<string, string | null>();
+  if (dateCol) {
+    const drows = await mon.getColumnTextForItems(job.monday_board_id, dateCol.id);
+    for (const r of drows) dateByMondayId.set(r.id, parseMondayDate(r.text));
+  }
+
+  const items = await listSurveyItems(job.id);
+  let assigned = 0, cleared = 0, datesSet = 0, datesCleared = 0, unchanged = 0; const unmatched = new Set<string>();
+  for (const it of items) {
+    if (!it.monday_item_id) { unchanged++; continue; }
+    const patch: Record<string, unknown> = {};
+    // team assignment
+    const text = textByMondayId.get(it.monday_item_id) ?? '';
+    if (text) {
+      const match = teamByName.get(text.toLowerCase());
+      if (!match) unmatched.add(text);                                   // unknown team name — leave as is
+      else if ((it.team_id ?? null) !== match) patch.team_id = match;
+    } else if (it.team_id != null) {
+      patch.team_id = null;                                             // cleared on Monday
+    }
+    // planned install date
+    if (dateCol) {
+      const nd = dateByMondayId.get(it.monday_item_id) ?? null;
+      if (nd !== ((it as any).planned_install_date ?? null)) patch.planned_install_date = nd;
+      // A planned date means the item is scheduled: the phone app's schedule only lists items that have
+      // an install status. Never touches a status a fitter has recorded (installed, snag, …).
+      const st = (it as any).install_status ?? null;
+      if (nd && st === null) patch.install_status = 'scheduled';
+      else if (!nd && st === 'scheduled') patch.install_status = null;
+    }
+    if (Object.keys(patch).length === 0) { unchanged++; continue; }
+    await applyMondayPull(it.id, patch, tenantId);
+    if ('team_id' in patch) (patch.team_id ? assigned++ : cleared++);
+    if ('planned_install_date' in patch) (patch.planned_install_date ? datesSet++ : datesCleared++);
+  }
+  return { ok: true, total: items.length, assigned, cleared, datesSet, datesCleared, dateColumn: dateCol?.title ?? null, unchanged, unmatched: [...unmatched] };
+}
+
+// Automatic morning pull: once a day from SCHEDULE_PULL_HOUR (Poland time), every job linked to a Monday
+// board gets its fitters + planned dates pulled, so the calendar does not depend on someone clicking.
+// A restart (or a sleeping instance waking) after the hour still catches up; it never runs twice in a day.
+const SCHEDULE_PULL_HOUR = 5;
+let schedulePullRunning = false;
+async function schedulePullTick(now = new Date()): Promise<boolean> {
+  if (schedulePullRunning) return false;
+  const n = localDayHour(now, AUTO_SYNC_TZ);
+  if (n.hour < SCHEDULE_PULL_HOUR) return false;
+  if ((await getConfig('schedule_pull_enabled')) === 'false') return false;
+  if ((await getConfig('schedule_pull_last_day')) === n.day) return false;
+  schedulePullRunning = true;
+  try {
+    await setConfig('schedule_pull_last_day', n.day);                    // first, so a crash mid-run cannot loop it
+    const jobs = (await listJobs(ACE_TENANT)).filter((j) => !!j.monday_board_id);
+    let done = 0, failed = 0, assigned = 0, dates = 0; const problems: string[] = [];
+    for (const j of jobs) {
+      const code = `${j.client_code}.${j.job_code}`;
+      try {
+        const r = await pullScheduleForJob(j as any, ACE_TENANT);
+        if ('error' in r) { failed++; problems.push(`${code}: ${r.error}`); continue; }
+        done++; assigned += r.assigned + r.cleared; dates += r.datesSet + r.datesCleared;
+        if (r.unmatched.length) problems.push(`${code}: unknown team ${r.unmatched.join(', ')}`);
+      } catch (e: any) { failed++; problems.push(`${code}: ${e?.message ?? e}`); }
+    }
+    const summary = { at: new Date().toISOString(), jobs: done, failed, teamChanges: assigned, dateChanges: dates, problems: problems.slice(0, 20) };
+    await setConfig('schedule_pull_last_result', JSON.stringify(summary));
+    console.log(`[schedule pull] automatic: ${done} job(s), ${dates} date change(s), ${assigned} team change(s), ${failed} failed`);
+    return true;
+  } finally { schedulePullRunning = false; }
+}
 // Monday date cells read back as "YYYY-MM-DD" (optionally with a time) — keep the date.
 function parseMondayDate(text: string | null): string | null {
   const m = (text ?? '').trim().match(/^(\d{4}-\d{2}-\d{2})/);
@@ -658,7 +743,8 @@ const server = createServer(async (req, res) => {
         job: r.jobs ? `${r.jobs.client_code}.${r.jobs.job_code}` : '', jobName: r.jobs?.name ?? '',
         team: r.team_id ? (tname.get(r.team_id) ?? '') : '', team_id: r.team_id ?? '',
       }));
-      send(res, 200, { items, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })) });
+      let autoPull: any = null; try { autoPull = JSON.parse((await getConfig('schedule_pull_last_result')) || 'null'); } catch { /* none yet */ }
+      send(res, 200, { items, teams: teams.map((t) => ({ id: t.id, name: t.name, active: t.active })), autoPull });
       return;
     }
 
@@ -2406,52 +2492,9 @@ const server = createServer(async (req, res) => {
       if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       if (!job.monday_board_id) { send(res, 400, { error: 'Link a Monday board for this job first.' }); return; }
 
-      const mon = new Monday();
-      const cols = await mon.getColumns(job.monday_board_id);
-      const fittersCol = cols.find((col) => normTitle(col.title) === 'fitters');
-      if (!fittersCol) { send(res, 400, { error: 'No "Fitters" column found on this board.' }); return; }
-
-      const teams = await listTeams(ctx.tenant_id);
-      const teamByName = new Map(teams.map((t) => [t.name.trim().toLowerCase(), t.id]));
-      const rows = await mon.getColumnTextForItems(job.monday_board_id, fittersCol.id);
-      const textByMondayId = new Map(rows.map((r) => [r.id, (r.text ?? '').trim()]));
-
-      // Also pull the planned install date, if the board has a suitable date column.
-      const dateCol = pickDateColumn(cols);
-      const dateByMondayId = new Map<string, string | null>();
-      if (dateCol) {
-        const drows = await mon.getColumnTextForItems(job.monday_board_id, dateCol.id);
-        for (const r of drows) dateByMondayId.set(r.id, parseMondayDate(r.text));
-      }
-
-      const items = await listSurveyItems(job.id);
-      let assigned = 0, cleared = 0, datesSet = 0, datesCleared = 0, unchanged = 0; const unmatched = new Set<string>();
-      for (const it of items) {
-        if (!it.monday_item_id) { unchanged++; continue; }
-        const patch: Record<string, unknown> = {};
-        // team assignment
-        const text = textByMondayId.get(it.monday_item_id) ?? '';
-        if (text) {
-          const match = teamByName.get(text.toLowerCase());
-          if (!match) unmatched.add(text);                                   // unknown team name — leave as is
-          else if ((it.team_id ?? null) !== match) patch.team_id = match;
-        } else if (it.team_id != null) {
-          patch.team_id = null;                                             // cleared on Monday
-        }
-        // planned install date
-        if (dateCol) {
-          const nd = dateByMondayId.get(it.monday_item_id) ?? null;
-          if (nd !== ((it as any).planned_install_date ?? null)) patch.planned_install_date = nd;
-        }
-        if (Object.keys(patch).length === 0) { unchanged++; continue; }
-        await applyMondayPull(it.id, patch, ctx.tenant_id);
-        if ('team_id' in patch) (patch.team_id ? assigned++ : cleared++);
-        if ('planned_install_date' in patch) (patch.planned_install_date ? datesSet++ : datesCleared++);
-      }
-      send(res, 200, {
-        ok: true, total: items.length, assigned, cleared, datesSet, datesCleared,
-        dateColumn: dateCol?.title ?? null, unchanged, unmatched: [...unmatched],
-      });
+      const r = await pullScheduleForJob(job as any, ctx.tenant_id);
+      if ('error' in r) { send(res, 400, { error: r.error }); return; }
+      send(res, 200, r);
       return;
     }
 
@@ -2706,8 +2749,14 @@ if (process.env.SUPABASE_URL && process.env.MONDAY_API_TOKEN) {
       if (await autoSyncTick(ACE_TENANT, boardId)) console.log('[fin sync] automatic daily sync started');
     } catch (e: any) { console.warn('[fin sync] auto tick failed:', e?.message ?? e); }
   };
+  // Calendar: automatic morning pull of fitters + planned dates (see schedulePullTick).
+  const pullTick = async () => {
+    try { await schedulePullTick(); } catch (e: any) { console.warn('[schedule pull] auto tick failed:', e?.message ?? e); }
+  };
   setTimeout(tick, 60_000).unref();
   setInterval(tick, 5 * 60_000).unref();
+  setTimeout(pullTick, 90_000).unref();
+  setInterval(pullTick, 5 * 60_000).unref();
 }
 
 const RATE = 'rate_override_pennies', ISTAT = 'install_status', TEAM = 'team_id';
@@ -3294,7 +3343,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="calView" style="display:none">
     <main style="max-width:1100px">
       <h2>Install calendar</h2>
-      <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday (Sync tab → Pull fitters + dates). Filter by team, page months, click a day to see what's on.</div>
+      <div class="sub">Every scheduled install across all jobs and teams. Dates come from Monday: pulled automatically every morning (05:00 Poland time), or right away with Sync tab → Pull fitters + dates. Filter by team, page months, click a day to see what's on.</div>
       <div class="calbar">
         <div style="display:flex;gap:6px;margin-right:10px">
           <button id="calModeMonth" onclick="calSetMode('month')" style="border:1px solid var(--line);background:var(--magenta);color:#fff;border-radius:9px;height:34px;padding:0 16px;font-size:13px;font-weight:600;cursor:pointer">Month</button>
@@ -5675,7 +5724,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var pill=list.length?'<span class="calpill" style="background:'+calDayColor(list)+'">'+list.length+'</span>':'';
       return '<div class="'+cls+'" onclick="calPick(\\''+day+'\\')"><span class="caldd">'+Number(day.slice(8,10))+'</span>'+pill+'</div>';
     }).join('');
-    document.getElementById('calMsg').textContent=calFiltered().length+' scheduled';
+    var ap=CAL_DATA.autoPull; document.getElementById('calMsg').textContent=calFiltered().length+' scheduled'+(ap&&ap.at?' · last automatic pull '+new Date(ap.at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+(ap.failed?' ('+ap.failed+' job'+(ap.failed===1?'':'s')+' failed)':''):'');
+    document.getElementById('calMsg').title=(ap&&ap.problems&&ap.problems.length)?ap.problems.join(' | '):'';
     renderCalSel();
   }
   function calPick(day){calSel=day;renderCalendar();}
