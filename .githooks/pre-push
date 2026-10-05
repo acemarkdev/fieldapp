@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs the full check before anything is pushed (main = test, release = prod).
+# Enable once per clone:  git config core.hooksPath .githooks      Skip in an emergency:  git push --no-verify
+npm run --silent check || { echo "\npush stopped: fix the failed check(s) above, or use --no-verify to push anyway."; exit 1; }

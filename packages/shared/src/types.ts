@@ -133,6 +133,11 @@ export interface SurveyItem {
   // integration
   monday_item_id: string | null;
 
+  // later columns — optional here so older fixtures stay valid
+  incomplete?: boolean;                 // imported with required data missing ("Unfinished")
+  po_ready_at?: string | null;          // marked ready for a purchase order
+  po_ready_by?: string | null;
+
   created_at: string;
   updated_at: string;
 }

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.13.3';
+export const APP_VERSION = '1.13.4';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.13.4', date: '2026-10-05', changes: [
+    'Internal: a full check now runs before every push \u2014 strict type check of the server and the mobile app, the office page check and all rule tests (npm run check). No change to how the app behaves.',
+  ] },
   { version: '1.13.3', date: '2026-10-05', changes: [
     'Calendar: fitters and planned install dates are now pulled from Monday automatically every morning (from 05:00 Poland time) for every job linked to a board, so the calendar no longer depends on someone clicking Pull. If the server was asleep or restarting at that time it runs as soon as it is back, once a day. The Calendar shows when the last automatic pull ran; hover it to see any jobs with a problem (no Fitters column, unknown team name). The Sync tab button still pulls on demand.',
     'Fix: items given a planned install date in Monday did not appear in the phone app\u2019s schedule, because they had no install status in the app. The pull now marks an item with a planned date as Scheduled (and clears that if the date is removed); a status recorded by a fitter is never changed.',

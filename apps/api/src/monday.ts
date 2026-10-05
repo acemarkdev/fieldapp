@@ -82,7 +82,7 @@ export class Monday {
             `query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 200) { cursor items { id name column_values(ids: $col) { text } } } } }`,
             { b: [boardId], col: [columnId] },
           );
-      const pageData = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
       const items = pageData?.items ?? [];
       for (const i of items) out.push({ id: i.id, name: i.name, text: i.column_values?.[0]?.text ?? null });
       cursor = pageData?.cursor ?? null;
@@ -230,7 +230,7 @@ export class Monday {
     const form = new FormData();
     form.append('query',
       `mutation ($file: File!) { add_file_to_column(item_id: ${itemId}, column_id: "${columnId}", file: $file) { id } }`);
-    form.append('variables[file]', new Blob([bytes], { type: contentType }), fileName);
+    form.append('variables[file]', new Blob([bytes as BlobPart], { type: contentType }), fileName);
     const res = await fetch('https://api.monday.com/v2/file', {
       method: 'POST',
       headers: { Authorization: this.token },

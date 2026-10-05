@@ -25,5 +25,5 @@ export function sampleSurveyItem(): SurveyItem {
     install_status: 'scheduled',
     monday_item_id: null,
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-  };
+  } as SurveyItem;   // a fixture: fields added to the type later are left out
 }

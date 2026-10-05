@@ -236,7 +236,7 @@ export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: num
   // If the phase has been marked "ready for PO", show who did it and when.
   const readyRow = items.find((it: any) => it.po_ready_at);
   let readyBy: string | null = null;
-  const readyAt: string | null = readyRow ? readyRow.po_ready_at : null;
+  const readyAt: string | null = readyRow?.po_ready_at ?? null;
   if (readyRow?.po_ready_by) { const nm = await userNames([readyRow.po_ready_by]); readyBy = nm[readyRow.po_ready_by] ?? null; }
   const requirements = await requirementNamesForClientCode(tenantId, job.client_code);
   const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date(), generatedBy: generatedBy ?? null, readyBy, readyAt, requirements });

@@ -45,8 +45,8 @@ export default function App() {
   const isTablet = width >= 768; // phones get the stepper, tablets the full grid
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => { setSession(data.session); setReady(true); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e: unknown, s: Session | null) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
 

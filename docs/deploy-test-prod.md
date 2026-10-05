@@ -136,3 +136,28 @@ The app already builds its redirect from the current address, so nothing in code
   (`EXPO_PUBLIC_SUPABASE_URL` / `ANON`) at the **test** Supabase project.
 - **Cost.** Test = free. Prod = Render's small "Starter" instance (a few $/month) so it stays
   warm. No database cost — Supabase's free tier covers early usage.
+
+## Before every push: `npm run check`
+
+One command runs everything that guards a release:
+
+```
+npm run check
+```
+
+1. **Type check** — the server (`apps/api` + `packages/shared`, strict; config in `apps/api/tsconfig.json`) and the mobile app.
+2. **Office page check** — renders the office web page from `apps/api/src/office.ts` and parses its inline scripts
+   (an escaping slip there breaks the page, and with it login).
+3. **Every `*.test.ts`** in `apps/api/src` and `packages/shared/src`.
+
+It also runs automatically on `git push` through `.githooks/pre-push`. Enable that once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+A failed check stops the push. `git push --no-verify` skips it — for emergencies only.
+
+Why it exists: the server runs through `tsx`, which does not type-check. A name imported twice is not an error
+there — the later import silently wins. That is how a Fin&Ops `listJobs` once replaced the office `listJobs`
+and Operations showed job-cost rows instead of jobs (fixed in v1.13.2).

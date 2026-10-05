@@ -43,7 +43,7 @@ try {
   const rows = JSON.parse(readFileSync((process.env.TMPDIR ?? '') + '/fin/koszty-rows.json', 'utf8'));
   let cmp = 0, bad: any[] = [];
   for (const r of rows) {
-    const x = importRowToJob(r)!; const s = summarizeJob(x.job.sales, x.items);
+    const x = importRowToJob(r)!; const s = summarizeJob(x.job.sales, x.items as any);
     const st = Number(r.sheet.total) || 0, sp = Number(r.sheet.profit) || 0;
     cmp++;
     // "Z.290 pop" has sales but its total/profit formulas are missing in the sheet (shows no profit); the app's 2,100 is right.

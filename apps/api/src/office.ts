@@ -2403,7 +2403,7 @@ const server = createServer(async (req, res) => {
 
       if (req.method === 'PUT') {
         const body = await readJson(req);
-        const patch: { name?: string; default_rate_pennies?: number; door_rate_pennies?: number } = {};
+        const patch: { name?: string; default_rate_pennies?: number; door_rate_pennies?: number; active?: boolean } = {};
         if ('name' in body) { if (!String(body.name).trim()) { send(res, 400, { error: 'Team name is required' }); return; } patch.name = String(body.name).trim(); }
         if ('rate_pennies' in body) { const v = Math.round(Number(body.rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Rate must be a positive number' }); return; } patch.default_rate_pennies = v; }
         if ('door_rate_pennies' in body) { const v = Math.round(Number(body.door_rate_pennies)); if (!Number.isFinite(v) || v < 0) { send(res, 400, { error: 'Doors rate must be a positive number' }); return; } patch.door_rate_pennies = v; }
