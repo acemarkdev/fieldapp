@@ -46,7 +46,7 @@ import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf } from './labels';
-import { JOB_KINDS, JOB_KIND_LABEL, listJobs, getJob, createJob, updateJob, deleteJob, setJobLock, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
+import { JOB_KINDS, JOB_KIND_LABEL, listJobs as listFinJobs, getJob as getFinJob, createJob as createFinJob, updateJob as updateFinJob, deleteJob as deleteFinJob, setJobLock, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
 import { listPayroll, savePayrollMonth, payrollView, PAYROLL_DEPTS, listResultItems, saveResultItem } from './finPayroll';
 import { listSales, createSale, updateSale, deleteSale, importSales } from './finSales';
 import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS, localDayHour, AUTO_SYNC_TZ } from './finCosts';
@@ -457,12 +457,12 @@ const server = createServer(async (req, res) => {
     // ---- Fin&Ops ▸ Job costs (sheet "Koszty"): P&L per job. Finance + admin edit; lock/unlock/delete/import = admin. ----
     if (p === '/api/finops/jobs' && req.method === 'GET') {
       if (!allow('finops.view')) return;
-      send(res, 200, { jobs: await listJobs(ctx.tenant_id), kinds: JOB_KINDS.map((k) => ({ key: k, label: JOB_KIND_LABEL[k] })), labourRate: await getLabourRate(), canManage: can(ctx.role, 'finops.manage') });
+      send(res, 200, { jobs: await listFinJobs(ctx.tenant_id), kinds: JOB_KINDS.map((k) => ({ key: k, label: JOB_KIND_LABEL[k] })), labourRate: await getLabourRate(), canManage: can(ctx.role, 'finops.manage') });
       return;
     }
     if (p === '/api/finops/jobs' && req.method === 'POST') {
       if (!allow('finops.view')) return;
-      const r = await createJob(ctx.tenant_id, ctx.name, await readJson(req));
+      const r = await createFinJob(ctx.tenant_id, ctx.name, await readJson(req));
       if (!r.ok) { send(res, r.status, { error: r.error }); return; }
       audit(ctx, 'finjob.create', 'fin_job', r.id, 'Created job cost record');
       send(res, 200, { ok: true, id: r.id }); return;
@@ -496,20 +496,20 @@ const server = createServer(async (req, res) => {
       const jobId = p.split('/')[4] ?? '', sub = p.split('/')[5] ?? '';
       if (!sub && req.method === 'GET') {
         if (!allow('finops.view')) return;
-        const j = await getJob(ctx.tenant_id, jobId);
+        const j = await getFinJob(ctx.tenant_id, jobId);
         if (!j) { send(res, 404, { error: 'Job not found.' }); return; }
         send(res, 200, j); return;
       }
       if (!sub && req.method === 'PUT') {
         if (!allow('finops.view')) return;
-        const r = await updateJob(ctx.tenant_id, jobId, await readJson(req));
+        const r = await updateFinJob(ctx.tenant_id, jobId, await readJson(req));
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
         audit(ctx, 'finjob.update', 'fin_job', jobId, 'Edited job cost record');
         send(res, 200, { ok: true }); return;
       }
       if (!sub && req.method === 'DELETE') {
         if (!allow('finops.manage')) return;
-        const r = await deleteJob(ctx.tenant_id, jobId);
+        const r = await deleteFinJob(ctx.tenant_id, jobId);
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
         audit(ctx, 'finjob.delete', 'fin_job', jobId, `Deleted job cost record ${r.reference}`);
         send(res, 200, { ok: true }); return;
