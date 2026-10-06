@@ -1,11 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, Modal, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, Modal, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { C } from '../lib/theme';
 import { enqueuePhoto, flushPhotos, getPendingPhotos, getPhotoDataUri } from '../lib/offline';
 import { isDemo } from '../lib/supabase';
-import { can } from '../lib/permissions';
+import { can, isFitter } from '../lib/permissions';
+import { poShortName, poLocationLine, styleKey } from '../lib/itemName';
+import { fitterTap, afterSnagRaised, isInstalledStatus } from '../lib/fitterStatus';
+import { STYLE_ASSETS } from '../lib/styleAssets';
+import PlanCanvas, { type CanvasPin } from '../components/PlanCanvas';
 
 const INSTALL_LABEL: Record<string, string> = {
   scheduled: 'Scheduled', installed_no_snag: 'Installed', installed_snag: 'Installed + snag',
@@ -22,6 +26,11 @@ const STATUS_OPTS: [string, string][] = [
 ];
 const INSTALLED = new Set(['installed_no_snag', 'installed_snag']);
 const money = (p?: number | null) => (p == null ? '—' : '£' + (p / 100).toFixed(2));
+const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const pinColor = (st: string | null) =>
+  st === 'installed_no_snag' ? C.green : (st === 'snag' || st === 'installed_snag' || st === 'misfit') ? C.magenta : st ? C.amber : '#8b88a3';
+
+interface PlanInfo { id: string; name: string; url: string | null }
 
 interface Full {
   id: string; tenant_id: string; full_code: string | null; kind: string | null; snag_comment: string | null;
@@ -35,10 +44,12 @@ interface Full {
   open_in_out: string | null; add_ons: string | null; coupled: string | null; comments: string | null;
   stage: string; install_status: string | null; actual_install_date: string | null;
   team_id: string | null; rate_override_pennies: number | null; monday_item_id: string | null;
+  job_id: string; plan_id: string | null; plan_x: number | null; plan_y: number | null;
 }
 
-export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditItem }: { id: string; role?: string | null; onBack: () => void; onChanged: () => void; onEditItem?: (row: any) => void }) {
+export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditItem, onOpenItem }: { id: string; role?: string | null; onBack: () => void; onChanged: () => void; onEditItem?: (row: any) => void; onOpenItem?: (id: string) => void }) {
   const canFit = can(role, 'items.fit');   // only these roles may change install status
+  const fitterView = isFitter(role);       // fitters get two big buttons instead of the full status list
   const canAddPhoto = can(role, 'photos.add');
   const canEditSpec = can(role, 'items.edit'); // surveyor/office may fill in the spec
   const canSnag = can(role, 'snags.raise');
@@ -52,6 +63,10 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
   const [saving, setSaving] = useState(false);
   const [photos, setPhotos] = useState<{ id: string; url: string; pending?: boolean }[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [hasSnag, setHasSnag] = useState(false);          // a snag has been raised against this item
+  const [plans, setPlans] = useState<PlanInfo[]>([]);     // the job's plans (empty = none uploaded)
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [pins, setPins] = useState<CanvasPin[]>([]);
 
   const loadPhotos = useCallback(async (fullCode?: string) => {
     const out: { id: string; url: string; pending?: boolean }[] = [];
@@ -80,9 +95,41 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
     } else setTeam(null);
     await loadPhotos(it?.full_code ?? undefined);
     setLoading(false);
+    // Extras, each best-effort (offline or an older database must not blank the screen).
+    try {
+      const { data: kids } = await supabase.from('survey_items').select('id,kind').eq('parent_item_id', id);
+      setHasSnag(((kids ?? []) as any[]).some((k) => k.kind === 'snag'));
+    } catch { /* keep the last known value */ }
+    try {
+      if (!it?.job_id) { setPlans([]); return; }
+      const { data: pl } = await supabase.from('job_plans').select('id,name,storage_path').eq('job_id', it.job_id).order('sort');
+      const out: PlanInfo[] = [];
+      for (const pr of (pl ?? []) as any[]) {
+        const { data: sg } = await supabase.storage.from('plans').createSignedUrl(pr.storage_path, 3600);
+        out.push({ id: pr.id, name: pr.name, url: sg?.signedUrl ?? null });
+      }
+      setPlans(out);
+      // Open on the plan this item is pinned to; otherwise the job's first plan.
+      setPlanId((prev) => (it.plan_id && out.some((x) => x.id === it.plan_id)) ? it.plan_id : (prev && out.some((x) => x.id === prev)) ? prev : (out[0]?.id ?? null));
+    } catch { setPlans([]); }
   }, [id, loadPhotos]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Pins on the plan being shown (a fitter only receives their own team's items).
+  useEffect(() => {
+    if (!planId) { setPins([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.from('survey_items').select('id,full_code,item_code,install_status,plan_id,plan_x,plan_y').eq('plan_id', planId);
+        if (cancelled) return;
+        setPins(((data ?? []) as any[]).filter((r) => r.plan_x != null && r.plan_y != null)
+          .map((r) => ({ id: r.id, label: r.item_code || r.full_code || '', x: Number(r.plan_x), y: Number(r.plan_y), color: pinColor(r.install_status) })));
+      } catch { if (!cancelled) setPins([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [planId, item?.plan_x, item?.plan_y]);
 
   async function addPhoto(fromCamera: boolean) {
     if (isDemo()) { Alert.alert('Demo mode', 'Adding photos is disabled in the demo.'); return; }
@@ -109,16 +156,30 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
     setUploading(false);
   }
 
-  async function setStatus(status: string) {
-    if (!item || saving) return;
+  // `installDate` (a date or null) is saved as given; left out, an installed status stamps today.
+  async function setStatus(status: string, installDate?: string | null): Promise<boolean> {
+    if (!item || saving) return false;
     setSaving(true);
     const patch: Record<string, unknown> = { install_status: status };
-    if (INSTALLED.has(status)) patch.actual_install_date = new Date().toISOString().slice(0, 10);
+    if (installDate !== undefined) patch.actual_install_date = installDate;
+    else if (INSTALLED.has(status)) patch.actual_install_date = new Date().toISOString().slice(0, 10);
     const { error } = await supabase.from('survey_items').update(patch).eq('id', item.id);
     setSaving(false);
-    if (error) { Alert.alert('Could not save', error.message); return; }
-    setItem({ ...item, install_status: status, actual_install_date: (patch.actual_install_date as string) ?? item.actual_install_date });
+    if (error) { Alert.alert('Could not save', /network|fetch/i.test(error.message || '') ? 'You appear to be offline. Changing the status needs a connection.' : error.message); return false; }
+    setItem({ ...item, install_status: status, actual_install_date: 'actual_install_date' in patch ? (patch.actual_install_date as string | null) : item.actual_install_date });
     onChanged();
+    return true;
+  }
+
+  // Fitter buttons: Installed / Delayed. Tapping the one that is already on offers to undo it.
+  function fitterPress(action: 'installed' | 'delayed') {
+    if (!item || saving) return;
+    const r = fitterTap(action, item.install_status, hasSnag, todayIso());
+    if (!r.undo) { setStatus(r.change.install_status, r.change.actual_install_date ?? null); return; }
+    Alert.alert(action === 'installed' ? 'Not installed after all?' : 'No longer delayed?', 'This puts the item back to Scheduled.', [
+      { text: 'Keep as it is', style: 'cancel' },
+      { text: 'Back to Scheduled', onPress: () => { setStatus(r.change.install_status, r.change.actual_install_date ?? null); } },
+    ]);
   }
 
   async function addSnagShot(fromCamera: boolean) {
@@ -154,8 +215,16 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
       // Snag defect photos stay on Design Sketch (kind 'sketch'), unchanged.
       for (const sh of snagShots) await enqueuePhoto({ tenant_id: item.tenant_id, itemId: (created as any).id, kind: 'sketch' }, sh.base64);
       await flushPhotos();
+      // Whoever fits (fitter / office) raising a snag means the item is in, with a defect: Installed + snag.
+      let statusNote = '';
+      if (canFit) {
+        const ch = afterSnagRaised(item.actual_install_date, todayIso());
+        const { error: se } = await supabase.from('survey_items').update(ch).eq('id', item.id);
+        statusNote = se ? '\n\nThe snag is saved, but the item\u2019s status could not be changed: ' + se.message : '\n\nThe item is now \u201cInstalled + snag\u201d.';
+      }
+      setHasSnag(true);
       setSnagSaving(false); setSnagOpen(false); setSnagComment(''); setSnagShots([]);
-      Alert.alert('Snag raised', full_code);
+      Alert.alert('Snag raised', full_code + statusNote);
       onChanged(); load();
     } catch (e: any) {
       setSnagSaving(false);
@@ -176,6 +245,15 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
   const teamRate = team ? (isDoor ? (team.door_rate_pennies ?? team.default_rate_pennies) : team.default_rate_pennies) : null;
   const rate = item.rate_override_pennies ?? teamRate ?? null;
   const isSnag = item.kind === 'snag';
+  const shortName = poShortName(item);
+  const locLine = poLocationLine(item);
+  const sketchKey = styleKey(item.design_code, STYLE_ASSETS);
+  const statusLabel = item.install_status ? (INSTALL_LABEL[item.install_status] ?? item.install_status) : 'Not scheduled';
+  const installedOn = isInstalledStatus(item.install_status);
+  const delayedOn = item.install_status === 'delayed';
+  const curPlan = plans.find((x) => x.id === planId) ?? null;
+  const pinnedHere = !!curPlan && item.plan_id === curPlan.id && item.plan_x != null && item.plan_y != null;
+  const planWidth = Dimensions.get('window').width - 32 - 28;   // screen padding + card padding
 
   return (
     <View style={{ flex: 1 }}>
@@ -191,8 +269,32 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
             <Text style={s.snagBtnText}>⚠ Raise a snag</Text>
           </TouchableOpacity>
         )}
+        {!!shortName && (
+          <View style={s.nameBox}>
+            <Text style={s.nameBig}>{shortName}</Text>
+            {!!locLine && <Text style={s.nameLoc}>{locLine}</Text>}
+          </View>
+        )}
         <Section title="INSTALL STATUS">
-          {canFit ? (
+          {fitterView && item.install_status === 'omit' ? (
+            <View style={s.readonlyBox}>
+              <Text style={s.readonlyVal}>Omitted</Text>
+              <Text style={s.note}>This item is not being fitted. Ask the office if that looks wrong.</Text>
+            </View>
+          ) : fitterView ? (
+            <View style={{ paddingVertical: 12 }}>
+              <Text style={s.curStatus}>{statusLabel}</Text>
+              <View style={s.bigRow}>
+                <TouchableOpacity style={[s.bigBtn, s.bigGreen, installedOn && s.bigGreenOn]} onPress={() => fitterPress('installed')} disabled={saving} activeOpacity={0.8}>
+                  <Text style={[s.bigTxt, { color: installedOn ? '#fff' : C.green }]}>{installedOn ? '\u2713 Installed' : 'Installed'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.bigBtn, s.bigAmber, delayedOn && s.bigAmberOn]} onPress={() => fitterPress('delayed')} disabled={saving} activeOpacity={0.8}>
+                  <Text style={[s.bigTxt, { color: delayedOn ? '#fff' : C.amber }]}>Delayed</Text>
+                </TouchableOpacity>
+              </View>
+              {saving && <ActivityIndicator color={C.magenta} style={{ marginTop: 10 }} />}
+            </View>
+          ) : canFit ? (
             <View style={s.opts}>
               {STATUS_OPTS.map(([val, label]) => {
                 const on = item.install_status === val;
@@ -238,6 +340,41 @@ export default function ItemDetailScreen({ id, role, onBack, onChanged, onEditIt
 
         {isSnag && !!item.snag_comment && (
           <Section title="SNAG"><Text style={s.big}>{item.snag_comment}</Text></Section>
+        )}
+
+        {(!!sketchKey || !!item.window_type || !!item.design_code) && (
+          <Section title="WINDOW TYPE & STYLE">
+            <View style={s.sketchBox}>
+              {!!sketchKey && <Image source={STYLE_ASSETS[sketchKey]} style={s.sketch} resizeMode="contain" />}
+              <Text style={s.sketchCap}>
+                {[item.window_type || item.item_type, item.design_code ? 'Style ' + String(item.design_code).replace(/^style\s*/i, '') : null,
+                  (item.width_mm || item.height_mm) ? `${item.width_mm ?? '?'} \u00d7 ${item.height_mm ?? '?'} mm` : null,
+                  item.open_in_out ? 'Opens ' + item.open_in_out : null].filter(Boolean).join('  \u00b7  ')}
+              </Text>
+              {!sketchKey && !!item.design_code && <Text style={s.note}>No sketch on this phone for style {item.design_code}.</Text>}
+            </View>
+          </Section>
+        )}
+
+        {plans.length > 0 && !!curPlan && (
+          <Section title="PLAN">
+            <View style={{ paddingVertical: 12 }}>
+              {plans.length > 1 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                  {plans.map((pl) => (
+                    <TouchableOpacity key={pl.id} style={[s.opt, { marginRight: 8 }, planId === pl.id && s.optOn]} onPress={() => setPlanId(pl.id)} activeOpacity={0.8}>
+                      <Text style={[s.optText, planId === pl.id && s.optTextOn]}>{pl.name}{item.plan_id === pl.id ? ' \u2022' : ''}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+              <PlanCanvas url={curPlan.url} width={planWidth} pins={pins} highlightId={pinnedHere ? item.id : null} onPinPress={onOpenItem} />
+              <Text style={s.note}>
+                {pinnedHere ? 'The large pink pin is this item.' : item.plan_id ? 'This item is pinned on another plan (marked \u2022).' : 'This item has no pin on the plan yet.'}
+                {onOpenItem && pins.length > (pinnedHere ? 1 : 0) ? ' Tap another pin to open that item.' : ''}
+              </Text>
+            </View>
+          </Section>
         )}
 
         <Section title="LOCATION">
@@ -372,6 +509,20 @@ const s = StyleSheet.create({
   v: { flex: 1, color: C.ink, fontSize: 13 },
   big: { paddingVertical: 12, color: C.ink, fontSize: 15 },
   note: { color: C.muted, fontSize: 12, marginTop: 8 },
+  nameBox: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.line, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 16 },
+  nameBig: { fontSize: 20, fontWeight: '800', color: C.ink },
+  nameLoc: { fontSize: 12.5, color: C.muted, marginTop: 4 },
+  curStatus: { fontSize: 14, fontWeight: '800', color: C.ink, marginBottom: 10 },
+  bigRow: { flexDirection: 'row', gap: 10 },
+  bigBtn: { flex: 1, minHeight: 64, borderRadius: 14, borderWidth: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  bigGreen: { borderColor: C.green, backgroundColor: C.greenSoft },
+  bigGreenOn: { backgroundColor: C.green },
+  bigAmber: { borderColor: C.amber, backgroundColor: C.amberSoft },
+  bigAmberOn: { backgroundColor: C.amber },
+  bigTxt: { fontSize: 18, fontWeight: '800' },
+  sketchBox: { paddingVertical: 12, alignItems: 'center' },
+  sketch: { width: '100%', height: 170 },
+  sketchCap: { fontSize: 13, fontWeight: '700', color: C.ink, marginTop: 8, textAlign: 'center' },
   readonlyBox: { paddingVertical: 12 },
   readonlyVal: { fontSize: 16, fontWeight: '800', color: C.ink },
   opts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 12 },

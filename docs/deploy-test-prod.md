@@ -148,7 +148,7 @@ npm run check
 1. **Type check** — the server (`apps/api` + `packages/shared`, strict; config in `apps/api/tsconfig.json`) and the mobile app.
 2. **Office page check** — renders the office web page from `apps/api/src/office.ts` and parses its inline scripts
    (an escaping slip there breaks the page, and with it login).
-3. **Every `*.test.ts`** in `apps/api/src` and `packages/shared/src`.
+3. **Every `*.test.ts`** in `apps/api/src`, `packages/shared/src` and `apps/mobile/src/lib`.
 
 It also runs automatically on `git push` through `.githooks/pre-push`. Enable that once per clone:
 

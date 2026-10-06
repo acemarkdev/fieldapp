@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, SectionList, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, AppState } from 'react-native';
+import { View, Text, TextInput, SectionList, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { C, INSTALL_LABEL } from '../lib/theme';
 import { cacheGet, cacheSet } from '../lib/offline';
 import { buildSections, monthGrid, isoDate, type SchedRow as Row, type SchedSection as Section } from '../lib/scheduleGrouping';
+import { searchByFlat, groupByJobFlat, customersIn } from '../lib/scheduleSearch';
 
 function statusColor(s: string | null): string {
   if (s === 'installed_no_snag') return C.green;
@@ -49,6 +50,19 @@ export default function ScheduleScreen({ teamId, onOpenItem, onBrowseJobs }: {
   const todayIso = isoDate(new Date());
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [selectedDay, setSelectedDay] = useState<string>(todayIso);
+  // Flat search: everything still to fit in a flat, across all the team's jobs (for swapping when a tenant is out).
+  const [flatQuery, setFlatQuery] = useState('');
+  const [flatCustomer, setFlatCustomer] = useState<string | null>(null);
+  const searching = flatQuery.trim().length > 0;
+  const flatHitsAll = searching ? searchByFlat(rows, flatQuery) : [];
+  const flatCustomers = customersIn(flatHitsAll);
+  const flatHits = flatCustomer && flatCustomers.includes(flatCustomer) ? flatHitsAll.filter((r) => r.jobs?.client_code === flatCustomer) : flatHitsAll;
+  const flatGroups = groupByJobFlat(flatHits);
+  const planned = (d: string | null) => {
+    if (!d) return 'No date yet';
+    const [y, m, dd] = d.split('-').map(Number);
+    return (d === todayIso ? 'Today \u00b7 ' : '') + new Date(y, m - 1, dd).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
 
   const { sections, counts } = buildSections(rows);
 
@@ -66,7 +80,7 @@ export default function ScheduleScreen({ teamId, onOpenItem, onBrowseJobs }: {
     return C.amber;
   };
 
-  const Card = (item: Row) => {
+  const Card = (item: Row, withDate = false) => {
     const isSnag = item.kind === 'snag';
     const st = item.install_status ? INSTALL_LABEL[item.install_status] ?? item.install_status : null;
     return (
@@ -81,6 +95,7 @@ export default function ScheduleScreen({ teamId, onOpenItem, onBrowseJobs }: {
           <Text style={s.meta} numberOfLines={1}>
             {[where(item), `${item.room_code || '—'} · ${item.item_code || '—'}`, item.item_type || null].filter(Boolean).join('  ·  ')}
           </Text>
+          {withDate && <Text style={s.when} numberOfLines={1}>Planned: {planned(item.planned_install_date)}</Text>}
         </View>
         {st && <Text style={[s.stTag, { color: statusColor(item.install_status), borderColor: statusColor(item.install_status) }]}>{st}</Text>}
       </TouchableOpacity>
@@ -103,17 +118,54 @@ export default function ScheduleScreen({ teamId, onOpenItem, onBrowseJobs }: {
           </TouchableOpacity>
         </View>
         <Text style={s.hsummary}>{counts.today} today · {counts.tomorrow} tomorrow · {counts.week} this week</Text>
-        <View style={s.seg}>
+        <View style={s.searchBox}>
+          <TextInput
+            style={s.searchInput} value={flatQuery} onChangeText={(t) => { setFlatQuery(t); setFlatCustomer(null); }}
+            placeholder="Search a flat number…" placeholderTextColor="#9a97ad"
+            autoCapitalize="characters" autoCorrect={false} returnKeyType="search" clearButtonMode="while-editing"
+          />
+          {searching && (
+            <TouchableOpacity onPress={() => { setFlatQuery(''); setFlatCustomer(null); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={s.searchClear}>✕</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        {!searching && <View style={s.seg}>
           {(['agenda', 'month'] as const).map((mo) => (
             <TouchableOpacity key={mo} style={[s.segBtn, mode === mo && s.segBtnOn]} onPress={() => setMode(mo)} activeOpacity={0.8}>
               <Text style={[s.segTxt, mode === mo && s.segTxtOn]}>{mo === 'agenda' ? 'Agenda' : 'Month'}</Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </View>}
       </View>
 
       {loading ? (
         <View style={s.center}><ActivityIndicator color={C.magenta} /></View>
+      ) : searching ? (
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={C.magenta} />}
+        >
+          {offline && <Text style={s.banner}>Offline — showing saved data.</Text>}
+          <Text style={s.searchHead}>Still to fit in flat “{flatQuery.trim()}”  ·  {flatHits.length}</Text>
+          {flatCustomers.length > 1 && (
+            <View style={s.chipRow}>
+              {[null, ...flatCustomers].map((c) => (
+                <TouchableOpacity key={c ?? 'all'} style={[s.chip, flatCustomer === c && s.chipOn]} onPress={() => setFlatCustomer(c)} activeOpacity={0.8}>
+                  <Text style={[s.chipTxt, flatCustomer === c && s.chipTxtOn]}>{c ?? 'All customers'}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          {flatGroups.length === 0
+            ? <Text style={s.empty}>No scheduled items for that flat in your team’s jobs.{'\n'}Check the number, or ask the office — the flat may be given to another team.</Text>
+            : flatGroups.map((g) => (
+                <View key={g.key}>
+                  <View style={s.secHead}><Text style={s.secTitle}>{g.title}  ·  {g.data.length}</Text></View>
+                  {g.data.map((it) => Card(it, true))}
+                </View>
+              ))}
+        </ScrollView>
       ) : mode === 'agenda' ? (
         <SectionList
           sections={sections}
@@ -210,5 +262,15 @@ const s = StyleSheet.create({
   snag: { fontSize: 10, fontWeight: '800', color: '#fff', backgroundColor: C.magenta, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, overflow: 'hidden', marginLeft: 6 },
   site: { fontSize: 12.5, fontWeight: '600', color: C.purple, marginTop: 3 },
   meta: { fontSize: 12, color: C.muted, marginTop: 3 },
+  when: { fontSize: 12, fontWeight: '700', color: C.ink, marginTop: 3 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, marginTop: 12 },
+  searchInput: { flex: 1, fontSize: 15, color: C.ink, paddingVertical: 9 },
+  searchClear: { color: C.muted, fontSize: 16, fontWeight: '800', paddingLeft: 10 },
+  searchHead: { fontSize: 14, fontWeight: '800', color: C.ink, marginBottom: 10 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  chip: { borderWidth: 1, borderColor: C.line, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 7, backgroundColor: '#fff' },
+  chipOn: { backgroundColor: C.purple, borderColor: C.purple },
+  chipTxt: { fontSize: 12.5, fontWeight: '700', color: C.muted },
+  chipTxtOn: { color: '#fff' },
   stTag: { fontSize: 10, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, borderWidth: 1, overflow: 'hidden', marginLeft: 8, alignSelf: 'flex-start' },
 });

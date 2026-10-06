@@ -1,7 +1,7 @@
 // One command before every push:  npm run check
 //   1. type check — server (apps/api + packages/shared, strict) and mobile app
 //   2. office page check — the inline scripts of the office web page must parse
-//   3. every *.test.ts in apps/api/src and packages/shared/src
+//   3. every *.test.ts in apps/api/src, packages/shared/src and apps/mobile/src/lib
 // Exits non-zero on the first kind of failure it finds, after running everything.
 import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
@@ -13,7 +13,7 @@ const steps = [
   ['types: mobile', join('apps', 'mobile', 'node_modules', '.bin', 'tsc'), ['--noEmit', '-p', 'apps/mobile']],
   ['office page', process.execPath, ['scripts/check-office-page.mjs']],
 ];
-for (const dir of ['apps/api/src', 'packages/shared/src'])
+for (const dir of ['apps/api/src', 'packages/shared/src', 'apps/mobile/src/lib'])
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.test.ts')).sort())
     steps.push([`test: ${f}`, bin('tsx'), [join(dir, f)]]);
 

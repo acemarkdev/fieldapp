@@ -23,4 +23,14 @@
 // 0.71.1 — Same Preload-button fix for the iPhone step-by-step flow: on the Review step the
 //   Preload button is now pinned to a fixed footer instead of the bottom of a flex:1 scroll
 //   view, so it's reachable and tappable with any number of elevations. No migration.
-export const APP_VERSION = '0.71.1';
+// 0.72.0 — Fitter and surveyor changes from site feedback.
+//   Fitter: (1) My schedule has a flat search — type a flat number to see everything still
+//   Scheduled there across all the team's jobs (for swapping when a tenant is out). (2) The item
+//   screen shows two big buttons, Installed and Delayed, instead of the status list; raising a
+//   snag sets the item to Installed + snag. (3) The window type + style sketch and (4) the plan
+//   with pins are shown on the item. (5) The item's name as on the PO ("Flat 12 Bathroom") sits
+//   under Raise a snag.
+//   Surveyor: (6) Plan screen — add a plan by photo, gallery or file, place mapped items as pins,
+//   tap a pin to open the item and add its details.
+//   Requires migration 0062_plans_surveyor.sql (surveyor may create plans).
+export const APP_VERSION = '0.72.0';

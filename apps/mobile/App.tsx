@@ -102,7 +102,7 @@ export default function App() {
         {!job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
-              ? <ItemDetailScreen id={itemId} role={role} onEditItem={setEditingItem} onBack={() => setItemId(null)} onChanged={() => {}} />
+              ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />
               : (isFitter(role) && !browsingJobs)
                 ? <ScheduleScreen teamId={teamId} onOpenItem={(id) => setItemId(id)} onBrowseJobs={() => setBrowsingJobs(true)} />
                 : creatingJob
@@ -125,7 +125,7 @@ export default function App() {
               : viewingPlan && !itemId
                 ? <PlanScreen job={job} role={role} onBack={() => setViewingPlan(false)} onOpenItem={(id) => setItemId(id)} />
               : itemId
-                ? <ItemDetailScreen id={itemId} role={role} onEditItem={setEditingItem} onBack={() => setItemId(null)} onChanged={() => {}} />
+                ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />
                 : <ItemsScreen job={job} role={role} teamId={teamId} onBack={() => { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); setMapping(false); }} onOpen={setItemId} onNew={() => (demo ? demoBlock('Creating items') : setCreating(true))} onEditPending={setEditingPending} onPlan={() => setViewingPlan(true)} onMap={() => (demo ? demoBlock('Mapping') : setMapping(true))} />}
       </View>
       {quoting && <QuoteModal email={demoEmail || ''} onClose={() => setQuoting(false)} />}

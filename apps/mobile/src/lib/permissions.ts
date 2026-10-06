@@ -7,12 +7,13 @@ export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'inv
 
 export type Capability =
   | 'jobs.manage' | 'items.create' | 'items.edit' | 'items.fit'
-  | 'snags.raise' | 'photos.add';
+  | 'snags.raise' | 'photos.add'
+  | 'plans.manage';   // add a plan image from the phone (pins themselves need items.edit)
 
 const ROLE_CAPS: Record<Role, Capability[]> = {
-  admin: ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add'],
-  office: ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add'],
-  surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add'],
+  admin: ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.manage'],
+  office: ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.manage'],
+  surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.manage'],
   scanner: ['items.create', 'photos.add'],
   fitter: ['items.fit', 'snags.raise', 'photos.add'],
   invoice_manager: [], // finance-only; no field capabilities on the phone
