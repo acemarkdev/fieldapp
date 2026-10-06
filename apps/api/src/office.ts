@@ -3051,7 +3051,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .calcell.today{border-color:var(--purple);border-width:2px}
   .calcell.sel{background:var(--soft);border-color:var(--purple)}
   .caldd{font-size:12px;font-weight:700;color:var(--ink)}
-  .calpill{align-self:flex-start;color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:1px 7px}
+  .calpill{align-self:flex-start;color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:1px 7px;white-space:nowrap}
+  .calpills{display:flex;flex-wrap:wrap;gap:3px}
+  .callegend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+  .callegend span.k{display:inline-flex;align-items:center;gap:6px}
+  .callegend i{width:11px;height:11px;border-radius:3px;display:inline-block}
   .calsel-h{font-size:14px;font-weight:800;color:var(--ink);margin:18px 0 8px}
   .calitem{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:11px;background:#fff;margin-bottom:8px;cursor:pointer}
   .calitem:hover{border-color:var(--purple)}
@@ -3359,6 +3363,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="calgridwrap">
         <div class="calweek"></div>
         <div class="calgrid" id="calGrid"></div>
+        <div class="callegend" id="calLegend"></div>
       </div>
       <div class="calsel-h" id="calSelHead"></div>
       <div id="calSel"></div>
@@ -5709,19 +5714,28 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function calShift(n){calCursor=new Date(calCursor.getFullYear(),calCursor.getMonth()+n,1);renderCalendar();}
   function calFiltered(){return CAL_DATA.items.filter(function(it){return !calTeamId||it.team_id===calTeamId;});}
   function calByDay(){var m={};calFiltered().forEach(function(it){(m[it.date]=m[it.date]||[]).push(it);});return m;}
-  function calDayColor(list){
-    if(list.some(function(x){return x.install_status==='snag'||x.install_status==='misfit'||x.install_status==='installed_snag';}))return '#e6187e';
-    if(list.every(function(x){return x.install_status==='installed_no_snag';}))return '#16a34a';
-    return '#d97706';
+  // One colour per job, so a day shows who is where: a pill per job with its item count.
+  var CAL_PALETTE=['#6d28d9','#0e7490','#b45309','#be185d','#15803d','#1d4ed8','#b91c1c','#4d7c0f','#7c3aed','#0f766e','#c2410c','#475569'];
+  function calJobColors(){ var codes={}; CAL_DATA.items.forEach(function(it){codes[it.job||'']=1;}); var m={}; Object.keys(codes).sort().forEach(function(c,i){m[c]=CAL_PALETTE[i%CAL_PALETTE.length];}); return m; }
+  function calGroupJobs(list){ var g={}, order=[]; list.forEach(function(it){ var k=it.job||''; if(!g[k]){g[k]={job:k,name:it.jobName||'',items:[],teams:{}};order.push(k);} g[k].items.push(it); var t=it.team||'No team'; g[k].teams[t]=(g[k].teams[t]||0)+1; }); return order.sort().map(function(k){return g[k];}); }
+  function calTeamsText(teams){ return Object.keys(teams).sort().map(function(t){return t+' '+teams[t];}).join(', '); }
+  function calPillMark(items){
+    if(items.some(function(x){return x.install_status==='snag'||x.install_status==='misfit'||x.install_status==='installed_snag';}))return ' !';
+    if(items.every(function(x){return x.install_status==='installed_no_snag';}))return ' \u2713';
+    return '';
   }
   function renderCalendar(){
     calTeamId=document.getElementById('calTeam').value;
     document.getElementById('calMonth').textContent=calCursor.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
-    var byDay=calByDay(); var todayIso=calIso(new Date()); var mo=calCursor.getMonth();
+    var byDay=calByDay(); var todayIso=calIso(new Date()); var mo=calCursor.getMonth(); var jc=calJobColors();
+    var ym=calCursor.getFullYear()+'-'+String(mo+1).padStart(2,'0');
+    var inMo=calGroupJobs(calFiltered().filter(function(it){return String(it.date||'').slice(0,7)===ym;}));
+    document.getElementById('calLegend').innerHTML=inMo.length?inMo.map(function(g){ return '<span class="k" title="'+esc(calTeamsText(g.teams))+'"><i style="background:'+(jc[g.job]||'#475569')+'"></i><b class="mono" style="color:var(--ink)">'+esc(g.job||'(no job)')+'</b>'+(g.name?' '+esc(g.name):'')+' \u00b7 '+g.items.length+'</span>'; }).join('')+'<span class="k">\u2713 all installed \u00b7 ! snag or misfit</span>':'';
+    document.getElementById('calLegend').style.display=inMo.length?'flex':'none';
     document.getElementById('calGrid').innerHTML=calMonthGrid(calCursor).map(function(day){
       var list=byDay[day]||[]; var inMonth=Number(day.slice(5,7))===mo+1;
       var cls='calcell'+(inMonth?'':' out')+(day===todayIso?' today':'')+(day===calSel?' sel':'');
-      var pill=list.length?'<span class="calpill" style="background:'+calDayColor(list)+'">'+list.length+'</span>':'';
+      var pill=list.length?'<div class="calpills">'+calGroupJobs(list).map(function(g){ return '<span class="calpill" style="background:'+(jc[g.job]||'#475569')+'" title="'+esc((g.job||'(no job)')+(g.name?' \u2014 '+g.name:'')+': '+g.items.length+' \u00b7 '+calTeamsText(g.teams))+'">'+g.items.length+calPillMark(g.items)+'</span>'; }).join('')+'</div>':'';
       return '<div class="'+cls+'" onclick="calPick(\\''+day+'\\')"><span class="caldd">'+Number(day.slice(8,10))+'</span>'+pill+'</div>';
     }).join('');
     var ap=CAL_DATA.autoPull; document.getElementById('calMsg').textContent=calFiltered().length+' scheduled'+(ap&&ap.at?' · last automatic pull '+new Date(ap.at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+(ap.failed?' ('+ap.failed+' job'+(ap.failed===1?'':'s')+' failed)':''):'');
@@ -5802,10 +5816,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!calSel){head.textContent='';document.getElementById('calSel').innerHTML='';return;}
     var byDay=calByDay(); var list=(byDay[calSel]||[]).slice().sort(function(a,b){return (a.job+a.full_code).localeCompare(b.job+b.full_code);});
     var d=new Date(calSel+'T00:00:00');
-    head.textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})+(list.length?('  \\u00b7  '+list.length):'');
+    var jc=calJobColors(), groups=calGroupJobs(list);
+    head.textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})+(list.length?('  \\u00b7  '+list.length):'')+(groups.length?'  \\u00b7  '+groups.map(function(g){return (g.job||'(no job)')+': '+calTeamsText(g.teams);}).join('  |  '):'');
     document.getElementById('calSel').innerHTML=list.length?list.map(function(it){
       var col=statusColor(it.install_status);
-      return '<div class="calitem" onclick="openDetail(\\''+it.id+'\\')"><span class="caldot" style="background:'+col+'"></span>'
+      return '<div class="calitem" style="border-left:4px solid '+(jc[it.job||'']||'#475569')+'" onclick="openDetail(\\''+it.id+'\\')"><span class="caldot" style="background:'+col+'"></span>'
         +'<div class="cimain"><div class="ccode">'+esc(it.full_code||'')+'</div>'
         +'<div class="cmeta">'+esc(it.job)+(it.jobName?(' \\u00b7 '+esc(it.jobName)):'')+' \\u00b7 '+esc(it.room_code||'—')+'/'+esc(it.item_code||'—')+(it.team?(' \\u00b7 '+esc(it.team)):'')+'</div></div>'
         +'<span class="cstat" style="color:'+col+';border-color:'+col+'">'+esc(istatLabel(it.install_status))+'</span></div>';

@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.13.4';
+export const APP_VERSION = '1.14.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.14.0', date: '2026-10-06', changes: [
+    'Calendar: each day now shows one coloured number per job instead of a single total, so you can see at a glance which jobs are on a day. A legend under the month lists each job\u2019s colour, name and item count. Hover a number for the job and how many items each team has; \u2713 means all installed, ! means a snag or misfit.',
+    'Calendar day list: the heading shows items per team for each job, and every row carries its job colour on the left edge.',
+  ] },
   { version: '1.13.4', date: '2026-10-05', changes: [
     'Internal: a full check now runs before every push \u2014 strict type check of the server and the mobile app, the office page check and all rule tests (npm run check). No change to how the app behaves.',
   ] },
