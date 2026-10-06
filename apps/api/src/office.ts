@@ -340,7 +340,19 @@ function audit(ctx: any, action: string, entity: string | null, entityId: string
     .catch((e) => console.warn('[audit]', e?.message ?? e));
 }
 
+// Browser security headers sent on every response. A route that passes the same header to
+// writeHead (the confirmation pages set their own, stricter, policy) overrides the default here.
+const SECURITY_HEADERS: Record<string, string> = {
+  'strict-transport-security': 'max-age=31536000',                           // always HTTPS for this host
+  'x-content-type-options': 'nosniff',                                       // never guess a file's type
+  'x-frame-options': 'SAMEORIGIN',                                           // cannot be embedded in another site
+  'content-security-policy': "frame-ancestors 'self'; base-uri 'self'",      // same, for modern browsers
+  'referrer-policy': 'strict-origin-when-cross-origin',                      // other sites never see paths or tokens
+  'permissions-policy': 'camera=(), microphone=(), geolocation=()',          // the office page uses none of these
+};
+
 const server = createServer(async (req, res) => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   try {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
     const p = url.pathname;

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.14.0';
+export const APP_VERSION = '1.14.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.14.1', date: '2026-10-06', changes: [
+    'Security: the office site now sends standard browser security headers \u2014 it cannot be embedded inside another website, browsers are told to always use HTTPS, and other sites no longer see page addresses when you follow a link out. No change to how the app looks or works.',
+  ] },
   { version: '1.14.0', date: '2026-10-06', changes: [
     'Calendar: each day now shows one coloured number per job instead of a single total, so you can see at a glance which jobs are on a day. A legend under the month lists each job\u2019s colour, name and item count. Hover a number for the job and how many items each team has; \u2713 means all installed, ! means a snag or misfit.',
     'Calendar day list: the heading shows items per team for each job, and every row carries its job colour on the left edge.',
