@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.14.1';
+export const APP_VERSION = '1.14.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.14.2', date: '2026-10-06', changes: [
+    'Security: server settings (board ids, sync times, labour rate, the automatic pull summary, QA checklists) move to a table that cannot be read without the server\u2019s own key. Only the demo quote e-mail address stays in the publicly readable settings table. Works before and after migration 0066_server_config.sql; run that migration after this version is deployed.',
+  ] },
   { version: '1.14.1', date: '2026-10-06', changes: [
     'Security: the office site now sends standard browser security headers \u2014 it cannot be embedded inside another website, browsers are told to always use HTTPS, and other sites no longer see page addresses when you follow a link out. No change to how the app looks or works.',
   ] },

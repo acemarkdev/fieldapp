@@ -686,13 +686,37 @@ export async function setPinsMultiPlan(tenantId: string, value: boolean): Promis
 
 
 // Global key/value app config (e.g. the demo leads destination email). Not tenant-scoped.
+// Settings are split in two tables:
+//   app_config    — readable WITHOUT signing in (the phone's demo reads it). Only the keys listed in
+//                   PUBLIC_CONFIG_KEYS belong there.
+//   server_config — everything else; no access for the phone/browser keys at all (migration 0066).
+// Until 0066 has run (table missing) — and for any key it has not moved — we fall back to app_config,
+// so the server works the same before and after the migration, in either order.
+export const PUBLIC_CONFIG_KEYS = new Set(['demo_leads_email']);
+const tableMissing = (e: any) => e?.code === '42P01' || e?.code === 'PGRST205' || /does not exist|schema cache/i.test(String(e?.message ?? ''));
+
+async function readConfig(table: string, key: string): Promise<{ value: string | null; found: boolean; missing: boolean }> {
+  const { data, error } = await db().from(table).select('value').eq('key', key).limit(1);
+  if (error) { if (tableMissing(error)) return { value: null, found: false, missing: true }; throw error; }
+  const row = (data ?? [])[0] as { value: string | null } | undefined;
+  return { value: row?.value ?? null, found: !!row, missing: false };
+}
 export async function getConfig(key: string): Promise<string | null> {
-  const { data, error } = await db().from('app_config').select('value').eq('key', key).maybeSingle();
-  if (error) throw error;
-  return (data as any)?.value ?? null;
+  if (!PUBLIC_CONFIG_KEYS.has(key)) {
+    const s = await readConfig('server_config', key);
+    if (s.found) return s.value;
+  }
+  const legacy = await readConfig('app_config', key);
+  return legacy.missing ? null : legacy.value;
 }
 export async function setConfig(key: string, value: string): Promise<void> {
-  const { error } = await db().from('app_config').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  const row = { key, value, updated_at: new Date().toISOString() };
+  if (!PUBLIC_CONFIG_KEYS.has(key)) {
+    const { error } = await db().from('server_config').upsert(row, { onConflict: 'key' });
+    if (!error) return;
+    if (!tableMissing(error)) throw error;       // 0066 not run yet → keep using app_config below
+  }
+  const { error } = await db().from('app_config').upsert(row, { onConflict: 'key' });
   if (error) throw error;
 }
 

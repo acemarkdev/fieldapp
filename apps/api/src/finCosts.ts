@@ -277,7 +277,7 @@ export async function acceptCostChange(tenantId: string, id: string, boardId: st
 }
 
 // ---- automatic daily sync ----------------------------------------------------------------------
-// Settings live in app_config (not secret): on/off + the hour of day, in Poland time.
+// Settings live in server_config (via getConfig/setConfig): on/off + the hour of day, in Poland time.
 export const AUTO_SYNC_TZ = 'Europe/Warsaw';
 export const AUTO_SYNC_BY = 'Automatic (daily)';
 export interface AutoSyncSettings { enabled: boolean; hour: number; tz: string }
