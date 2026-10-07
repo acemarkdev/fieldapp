@@ -33,4 +33,6 @@
 //   Surveyor: (6) Plan screen — add a plan by photo, gallery or file, place mapped items as pins,
 //   tap a pin to open the item and add its details.
 //   Requires migration 0062_plans_surveyor.sql (surveyor may create plans).
-export const APP_VERSION = '0.72.0';
+// 0.72.1 — Build only, no change to screens: release builds now shrink and obfuscate the Android
+//   code (R8), which Google Play asks for ("DEX code optimisation"). Needs a new store build.
+export const APP_VERSION = '0.72.1';

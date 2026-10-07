@@ -2,7 +2,7 @@
   "expo": {
     "name": "FitAWindow",
     "slug": "ace-field",
-    "version": "0.72.0",
+    "version": "0.72.1",
     "orientation": "portrait",
     "scheme": "acefield",
     "userInterfaceStyle": "light",
@@ -39,6 +39,14 @@
         {
           "photosPermission": "FitAWindow needs access to your photos to attach survey images.",
           "cameraPermission": "FitAWindow needs the camera to take survey photos."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true
+          }
         }
       ]
     ],

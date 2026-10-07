@@ -1,6 +1,6 @@
 {
   "name": "@ace/mobile",
-  "version": "0.72.0",
+  "version": "0.72.1",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -15,6 +15,7 @@
     "base64-arraybuffer": "^1.0.2",
     "expo": "~57.0.9",
     "expo-auth-session": "~57.0.12",
+    "expo-build-properties": "~57.0.22",
     "expo-crypto": "~57.0.3",
     "expo-document-picker": "~57.0.2",
     "expo-file-system": "~57.0.7",
