@@ -2,7 +2,8 @@
 // job's Monday board, then record the Monday id and flip the item's stage to 'synced'.
 import { Monday } from './monday';
 import { upsertSurveyItem as upsertToMonday } from './syncItem';
-import { getSurveyItem, getJob, getTeam, markItemSynced, listItemPhotos, downloadPhoto, setJobBoard, markPhotoPushed } from './store';
+import { getSurveyItem, getJob, getTeam, markItemSynced, listItemPhotos, downloadPhoto, setJobBoard, markPhotoPushed, markStyleSketchPushed } from './store';
+import { sketchToPush, readStyleSketch } from './styleSketch';
 import { effectiveRatePennies } from '@ace/shared';
 
 export interface PromoteResult {
@@ -11,6 +12,8 @@ export interface PromoteResult {
   boardId: string;
   photosPushed?: number;
   photoError?: string;
+  sketchPushed?: string;   // style code whose drawing was uploaded to Design Sketch in this sync
+  sketchError?: string;
 }
 
 export async function promoteItem(itemId: string): Promise<PromoteResult> {
@@ -72,5 +75,25 @@ export async function promoteItem(itemId: string): Promise<PromoteResult> {
     console.warn(`[promote] photo push failed for ${itemId}: ${photoError}`);
   }
 
-  return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id, photosPushed, photoError };
+  // Style drawing -> "Design Sketch", once per item and style (see styleSketch.ts). Best-effort:
+  // a failure here never fails the sync itself.
+  let sketchPushed: string | undefined; let sketchError: string | undefined;
+  try {
+    const key = sketchToPush(item as any);
+    if (key) {
+      const cols = await monday.getColumns(job.monday_board_id);
+      const col = cols.find((c) => c.title.trim().toLowerCase().replace(/\s+/g, ' ') === 'design sketch' && c.type === 'file');
+      if (!col) sketchError = `No file column named "Design Sketch" on board ${job.monday_board_id}.`;
+      else {
+        await monday.addFileToColumn(res.itemId, col.id, readStyleSketch(key), `Style ${key}.png`, 'image/png');
+        await markStyleSketchPushed(itemId, key);
+        sketchPushed = key;
+      }
+    }
+  } catch (e: any) {
+    sketchError = e?.message ?? String(e);
+    console.warn(`[promote] style sketch push failed for ${itemId}: ${sketchError}`);
+  }
+
+  return { mondayItemId: res.itemId, action: res.action, boardId: job.monday_board_id, photosPushed, photoError, sketchPushed, sketchError };
 }

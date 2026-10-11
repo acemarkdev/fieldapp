@@ -2321,7 +2321,7 @@ const server = createServer(async (req, res) => {
       if (item.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
       const r = await promoteItem(id);
       audit(ctx, 'item.sync', 'item', id, `Synced ${item.full_code} to Monday (${r.action})`);
-      send(res, 200, { ok: true, action: r.action, mondayItemId: r.mondayItemId, photosPushed: r.photosPushed, photoError: r.photoError });
+      send(res, 200, { ok: true, action: r.action, mondayItemId: r.mondayItemId, photosPushed: r.photosPushed, photoError: r.photoError, sketchPushed: r.sketchPushed, sketchError: r.sketchError });
       return;
     }
 
@@ -4920,7 +4920,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(d.ok)tShow('Code updated'); else tShow(d.error||'Update failed');
     loadItems(); // refresh full code + Floor column
   }
-  async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' · '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'');tShow(d.photoError?('Synced · photo issue: '+d.photoError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
+  async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' · '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'')+(d.sketchPushed?' · style '+d.sketchPushed+' drawing':'');tShow(d.photoError?('Synced · photo issue: '+d.photoError):d.sketchError?('Synced · style drawing not sent: '+d.sketchError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
 
   // ---- bulk selection / multi-line processing ----
   function selectedIds(){return Object.keys(sel);}

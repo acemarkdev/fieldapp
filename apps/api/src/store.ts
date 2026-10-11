@@ -512,6 +512,13 @@ export async function markItemSynced(id: string, mondayItemId: string): Promise<
   if (error) throw error;
 }
 
+// Remember which style's drawing was last uploaded to Monday for this item. Uses its own update so
+// the "needs re-sync" trigger (which watches spec fields) is not tripped by it.
+export async function markStyleSketchPushed(id: string, styleKey: string): Promise<void> {
+  const { error } = await db().from('survey_items').update({ style_sketch_pushed: styleKey }).eq('id', id);
+  if (error) throw error;
+}
+
 export async function markItemInstalled(id: string, status: string, date: string): Promise<void> {
   const { error } = await db()
     .from('survey_items')

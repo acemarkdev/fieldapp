@@ -137,6 +137,7 @@ export interface SurveyItem {
   incomplete?: boolean;                 // imported with required data missing ("Unfinished")
   po_ready_at?: string | null;          // marked ready for a purchase order
   po_ready_by?: string | null;
+  style_sketch_pushed?: string | null;  // style code whose drawing was last uploaded to Monday
 
   created_at: string;
   updated_at: string;
