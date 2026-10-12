@@ -57,33 +57,13 @@ import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
 import { Monday } from './monday';
-import { REQUIRED_MONDAY_COLUMNS, norm as normColTitle } from './mapItem';
+import { REQUIRED_MONDAY_COLUMNS, norm as normColTitle, pickPlanDateColumn as pickDateColumn, scheduleColumnValues } from './mapItem';
+import { proposeInstallPlan, validatePlanParams, daysFromItems, UK_BANK_HOLIDAYS } from './installPlan';
+import { renderInstallCalendarPdf } from './installCalendarPdf';
 
 // Normalise a column title for loose matching (Fitters pull, etc.).
 const normTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-// Pick the Monday date column that most likely holds the planned install date.
-// Ranks by title keyword (install > fit > plan > schedule > due > date). If several
-// date columns exist and none matches a keyword we return null rather than guess.
-function pickDateColumn(cols: { id: string; title: string; type: string }[]): { id: string; title: string } | null {
-  const dates = cols.filter((c) => c.type === 'date');
-  if (!dates.length) return null;
-  const rank = (t: string) => {
-    const n = normTitle(t);
-    if (n.includes('actual') || n.includes('done')) return -1;         // when it happened, not when it is planned
-    if (n.includes('install') && n.includes('plan')) return 6;         // "Plan Install Date" beats any other install date
-    if (n.includes('install')) return 5;
-    if (n.includes('fit')) return 4;
-    if (n.includes('plan')) return 3;
-    if (n.includes('schedule')) return 2;
-    if (n.includes('due')) return 1;
-    if (n.includes('date')) return 0;
-    return -1;
-  };
-  const ranked = dates.map((c) => ({ c, r: rank(c.title) })).filter((x) => x.r >= 0).sort((a, b) => b.r - a.r);
-  if (ranked.length) return ranked[0].c;
-  return dates.length === 1 ? dates[0] : null;
-}
 // Pull the team assignment and planned install date FROM Monday for one job (Monday is master for
 // scheduling). Used by the Sync tab button and by the automatic morning pull.
 interface SchedulePull { ok: true; total: number; assigned: number; cleared: number; datesSet: number; datesCleared: number; dateColumn: string | null; unchanged: number; unmatched: string[] }
@@ -2510,6 +2490,92 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- Install plan proposal: teams + planned dates for the selected items of a job ----
+    // POST { ids, params, apply? }. Without `apply` it only returns the proposal. With it, the plan is
+    // recomputed from the same inputs and written: team + planned date on each item (and Install status
+    // Scheduled where there was none), in the app and — for items already on Monday — on the board,
+    // because Monday is the master for scheduling and the morning pull would otherwise undo it.
+    if (p.startsWith('/api/job/') && p.endsWith('/install-plan') && req.method === 'POST') {
+      if (!allow('items.edit')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      let job: any; try { job = await getJobByRef(code); } catch { send(res, 404, { error: 'Job not found' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const body = await readJson(req);
+      const ids = new Set<string>(Array.isArray(body.ids) ? body.ids.map(String) : []);
+      if (!ids.size) { send(res, 400, { error: 'Select the items to plan first.' }); return; }
+      const teams = (await listTeams(ctx.tenant_id)).filter((t) => t.active !== false);
+      const v = validatePlanParams(body.params, new Set(teams.map((t) => t.id)));
+      if (!v.ok) { send(res, 400, { error: v.error }); return; }
+      const nameOf = new Map(teams.map((t) => [t.id, t.name]));
+      v.params.teams.forEach((t) => { t.name = nameOf.get(t.id) ?? t.name; });        // names come from the database, not the browser
+      const all: any[] = await listSurveyItems(job.id);
+      const chosen = all.filter((it) => ids.has(it.id));
+      if (!chosen.length) { send(res, 400, { error: 'None of the selected items belong to this job.' }); return; }
+      const plan = proposeInstallPlan(chosen, v.params);
+      const byId = new Map(chosen.map((it) => [it.id, it]));
+      const replanned = plan.assignments.filter((a) => { const it = byId.get(a.id); return !!it?.planned_install_date || !!it?.team_id; }).length;
+      if (body.apply !== true) { send(res, 200, { ok: true, plan, selected: chosen.length, replanned, onMonday: plan.assignments.filter((a) => !!byId.get(a.id)?.monday_item_id).length, board: !!job.monday_board_id }); return; }
+      if (!plan.assignments.length) { send(res, 400, { error: plan.warnings[0] ?? 'Nothing to plan.' }); return; }
+
+      // 1. the app's own records
+      const groups = new Map<string, string[]>();
+      for (const a of plan.assignments) (groups.get(a.team_id + '|' + a.date) ?? groups.set(a.team_id + '|' + a.date, []).get(a.team_id + '|' + a.date)!).push(a.id);
+      const chunks = <T,>(xs: T[], n = 100) => { const out: T[][] = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out; };
+      let updated = 0;
+      for (const [key, list] of groups) {
+        const [team_id, date] = key.split('|');
+        for (const c of chunks(list)) updated += await bulkUpdateItems(c, { team_id, planned_install_date: date }, ctx.tenant_id);
+      }
+      const newlyScheduled = plan.assignments.filter((a) => !byId.get(a.id)?.install_status).map((a) => a.id);
+      for (const c of chunks(newlyScheduled)) await bulkUpdateItems(c, { install_status: 'scheduled' }, ctx.tenant_id);
+
+      // 2. Monday, for the items that are already there
+      const onBoard = plan.assignments.filter((a) => !!byId.get(a.id)?.monday_item_id);
+      let mondayUpdated = 0, mondayFailed = 0; let mondayNote: string | null = null;
+      if (onBoard.length && job.monday_board_id) {
+        try {
+          const mon = new Monday();
+          const cols = await mon.getColumns(job.monday_board_id);
+          const wasScheduled = new Set(newlyScheduled);
+          let missing: string[] = [];
+          const rows = onBoard.map((a) => {
+            const r = scheduleColumnValues(cols, { teamName: nameOf.get(a.team_id) ?? '', date: a.date, markScheduled: wasScheduled.has(a.id) });
+            missing = r.missing; return { itemId: String(byId.get(a.id).monday_item_id), values: r.values, id: a.id };
+          });
+          if (missing.length) mondayNote = `The Monday board has no ${missing.join(' or ')} column, so that part was not written there.`;
+          const writable = rows.filter((r) => Object.keys(r.values).length > 0);
+          const res2 = await mon.changeColumnValuesBatch(job.monday_board_id, writable);
+          const failed = new Set(res2.failed);
+          mondayFailed = failed.size + (rows.length - writable.length); mondayUpdated = writable.length - failed.size;
+          if (res2.error) mondayNote = `Monday refused some updates: ${res2.error}`;
+          // These rows now match Monday; clear "needs re-sync" only where this plan was the only reason for it.
+          const clean = writable.filter((r) => !failed.has(r.itemId) && !missing.length && !byId.get(r.id).needs_resync).map((r) => r.id);
+          for (const c of chunks(clean)) await bulkUpdateItems(c, { needs_resync: false }, ctx.tenant_id);
+        } catch (e: any) { mondayFailed = onBoard.length; mondayNote = `Could not reach Monday: ${e?.message ?? e}`; }
+      }
+      audit(ctx, 'installplan.apply', 'job', code, `Install plan applied to ${updated} item(s) of ${code}: ${v.params.teams.map((t) => t.name).join(', ')} from ${plan.summary.first} to ${plan.summary.last}`, { params: v.params, mondayUpdated, mondayFailed });
+      send(res, 200, { ok: true, updated, summary: plan.summary, mondayUpdated, mondayFailed, mondayNote, notOnMonday: plan.assignments.length - onBoard.length, unplaced: plan.unplaced.length });
+      return;
+    }
+    // Installation calendar PDF for a job, from the planned dates and teams as they stand now.
+    if (p.startsWith('/api/job/') && p.endsWith('/install-calendar.pdf') && req.method === 'GET') {
+      if (!allow('calendar.view')) return;
+      const code = decodeURIComponent(p.split('/')[3] ?? '');
+      let job: any; try { job = await getJobByRef(code); } catch { send(res, 404, { error: 'Job not found' }); return; }
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const teams = await listTeams(ctx.tenant_id);
+      const d = daysFromItems(await listSurveyItems(job.id) as any[], new Map(teams.map((t) => [t.id, t.name])));
+      if (!d.days.length) { send(res, 400, { error: 'No item on this job has a planned install date yet.' }); return; }
+      const pdf = await renderInstallCalendarPdf({ job: { code: `${job.client_code}.${job.job_code}`, name: job.name || '' }, ...d, generatedAt: new Date(), generatedBy: ctx.name });
+      res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${job.client_code}.${job.job_code}-install-calendar.pdf"`, 'cache-control': 'no-store' });
+      res.end(pdf); return;
+    }
+    if (p === '/api/install-plan/defaults' && req.method === 'GET') {
+      if (!allow('items.edit')) return;
+      const today = localDayHour(new Date(), AUTO_SYNC_TZ).day;
+      send(res, 200, { daysOff: UK_BANK_HOLIDAYS.filter((x) => x >= today) }); return;
+    }
+
     // ---- Plans (plan view with item pins) ----
     // Per-job PDF: survey sheet or install report. Browser downloads it (authed via bearer).
     if (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET') {
@@ -3223,6 +3289,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
             <button id="filesBtn" class="segbtn" onclick="openJobFiles(current)" title="Job files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Files</button>
             <button id="editJobBtn" class="segbtn" style="display:none" onclick="openEditJob(current)" title="Edit job"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Edit</button>
             <button id="delJobBtn" class="segbtn danger" style="display:none" onclick="delJob()" title="Delete job" aria-label="Delete job"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg></button>
+            <button id="calPdfBtn" class="segbtn" onclick="ipPdf(\'calPdfBtn\')" title="Installation calendar PDF: planned install dates and teams for this job, one page per month plus a day-by-day list" style="width:auto;padding:0 10px;font-size:12px;font-weight:700">Calendar PDF</button>
           </span>
           <span id="poPdfWrap" class="segbar" style="display:none">
             <span class="seglabel">PO</span>
@@ -3253,6 +3320,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <button class="bulk bsync" onclick="bulkSync()">Sync selected</button>
           <button class="bulk bapply" onclick="bulkFinish()" title="Promote selected items to Surveyed when all mandatory fields are complete (incomplete ones are skipped)">Mark surveyed</button>
           <button id="bulkDelBtn" class="bulk bdel" style="display:none" onclick="bulkDelete()">Delete</button>
+          <button class="bulk bapply" onclick="ipOpen()" title="Work out teams and planned install dates for the selected items, review the proposal, then apply it">Propose install plan…</button>
           <button class="bulk bclear" onclick="clearSel()">Clear selection</button>
         </div>
         <div class="bulkrow">
@@ -4923,6 +4991,113 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' · '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'')+(d.sketchPushed?' · style '+d.sketchPushed+' drawing':'');tShow(d.photoError?('Synced · photo issue: '+d.photoError):d.sketchError?('Synced · style drawing not sent: '+d.sketchError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
 
   // ---- bulk selection / multi-line processing ----
+  // ---- Install plan proposal (Items ▸ select items ▸ "Propose install plan…") ----
+  var IP={ids:[],daysOff:null,plan:null,applied:false};
+  var IP_WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], IP_MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function ipDate(iso){ if(!iso)return '—'; var p=iso.split('-'); var d=new Date(Date.UTC(+p[0],+p[1]-1,+p[2])); return IP_WD[d.getUTCDay()]+' '+d.getUTCDate()+' '+IP_MO[d.getUTCMonth()]+' '+p[0]; }
+  function ipNextMonday(){ var d=new Date(); d.setDate(d.getDate()+((8-d.getDay())%7||7)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  function ipSaved(){ try{ return JSON.parse(localStorage.getItem('ace_install_plan')||'null')||{}; }catch(e){ return {}; } }
+  async function ipOpen(){
+    if(current==='ALL'||!current){ tShow('Open one job first — a plan is made per job'); return; }
+    IP.ids=selectedIds(); if(!IP.ids.length){ tShow('Select the items to plan first'); return; }
+    if(IP.daysOff===null){ try{ var dd=await (await api('/api/install-plan/defaults')).json(); IP.daysOff=dd.daysOff||[]; }catch(e){ IP.daysOff=[]; } }
+    IP.plan=null; IP.applied=false;
+    var sv=ipSaved(), st=sv.teams||{}, act=teams.filter(function(t){return t.active!==false;});
+    var rows=act.map(function(t){ var s=st[t.id]||{};
+      return '<tr><td><label style="display:flex;align-items:center;gap:8px;font-weight:600"><input type="checkbox" class="ip_on" data-id="'+av(t.id)+'"'+(s.on?' checked':'')+'> '+esc(t.name)+'</label></td>'
+        +'<td><input class="tinput ip_cap" data-id="'+av(t.id)+'" type="number" min="1" max="100" step="1" value="'+av(s.capacity||5)+'" style="width:74px"></td>'
+        +'<td><input class="tinput ip_from" data-id="'+av(t.id)+'" type="date" value="" style="width:140px"></td>'
+        +'<td><input class="tinput ip_until" data-id="'+av(t.id)+'" type="date" value="" style="width:140px"></td></tr>'; }).join('');
+    var sel=function(id,opts,cur){ return '<select id="'+id+'">'+opts.map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===cur?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select>'; };
+    var chk=function(id,label,on,tip){ return '<label style="display:flex;align-items:flex-start;gap:8px;font-size:13px" title="'+av(tip)+'"><input type="checkbox" id="'+id+'"'+(on?' checked':'')+' style="margin-top:2px"> <span>'+label+'</span></label>'; };
+    openModal('Propose install plan <span class="mono">'+esc(curCode())+'</span>','<div style="padding:18px 22px">'
+      +'<div class="sub" style="margin:0 0 14px">'+IP.ids.length+' item'+(IP.ids.length===1?'':'s')+' selected. Installed, omitted and snag rows are left as they are. Nothing is saved until you click Apply.</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:13px 18px">'
+        +'<div class="field"><label>Start date</label><input id="ip_start" class="tinput" type="date" value="'+av(ipNextMonday())+'"></div>'
+        +'<div class="field"><label>Order of floors</label>'+sel('ip_order',[['top_down','Top floor first, down to ground'],['bottom_up','Ground floor first, up to the top']],sv.order||'top_down')+'</div>'
+        +'<div class="field"><label>Communal items (Comm.)</label>'+sel('ip_comm',[['end','Leave for the end'],['with_flats','Add to flats — fill spare capacity each day']],sv.communal||'end')+'</div>'
+        +'<div class="field"><label>Days off (bank holidays), comma-separated</label><input id="ip_off" class="tinput" value="'+av((IP.daysOff||[]).join(', '))+'" placeholder="2026-12-25, 2026-12-28"></div>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0 4px">'
+        +chk('ip_keep','Keep a flat on one day when it fits',sv.keepFlatTogether!==false,'On: a flat that fits in one day is never started on a day that cannot finish it. Off: every day is filled to capacity, splitting flats across days.')
+        +chk('ip_block','Finish one block before the next',sv.byBlock!==false,'On: block by block, each in floor order. Off: floor by floor across all blocks.')
+        +chk('ip_sat','Work Saturdays',sv.workSaturday===true,'Sundays are never planned.')
+      +'</div>'
+      +'<div style="margin-top:14px;font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">TEAMS — tick at least one; a team never shares a flat with another</div>'
+      +'<div style="overflow:auto"><table class="itable" style="margin-top:6px;min-width:0;width:100%"><thead><tr><th>TEAM</th><th>ITEMS PER DAY</th><th>AVAILABLE FROM (optional)</th><th>UNTIL (optional)</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="sub" style="padding:12px">No active teams. Add them in Admin ▸ Teams.</td></tr>')+'</tbody></table></div>'
+      +'<div style="display:flex;gap:10px;align-items:center;margin-top:16px"><button class="add" id="ip_calc" onclick="ipCalc()">Calculate proposal</button><span class="sub" id="ip_msg" style="margin:0"></span></div>'
+      +'<div id="ip_out" style="margin-top:16px"></div></div>');
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='900px';
+  }
+  function ipParams(){
+    var g=function(id){ return document.getElementById(id); }, ts=[], mem={};
+    document.querySelectorAll('.ip_on').forEach(function(cb){ var id=cb.getAttribute('data-id'), q=function(c){ return document.querySelector('.'+c+'[data-id="'+id+'"]').value; };
+      mem[id]={on:cb.checked,capacity:Number(q('ip_cap'))||5};
+      if(cb.checked){ var t=teams.filter(function(x){return x.id===id;})[0]; ts.push({id:id,name:t?t.name:'',capacity:Number(q('ip_cap')),from:q('ip_from')||null,until:q('ip_until')||null}); } });
+    var p={startDate:g('ip_start').value,teams:ts,order:g('ip_order').value,communal:g('ip_comm').value,keepFlatTogether:g('ip_keep').checked,byBlock:g('ip_block').checked,workSaturday:g('ip_sat').checked,
+      daysOff:g('ip_off').value.split(/[,;]+/).map(function(x){return x.trim();}).filter(function(x){return x;})};
+    try{ localStorage.setItem('ace_install_plan',JSON.stringify({teams:mem,order:p.order,communal:p.communal,keepFlatTogether:p.keepFlatTogether,byBlock:p.byBlock,workSaturday:p.workSaturday})); }catch(e){}
+    return p;
+  }
+  async function ipCalc(){
+    var p=ipParams(), msg=document.getElementById('ip_msg'), out=document.getElementById('ip_out');
+    if(!p.teams.length){ msg.textContent='Tick at least one team.'; return; }
+    msg.textContent='Calculating…'; IP.plan=null; IP.applied=false;
+    try{
+      var r=await api('/api/job/'+encodeURIComponent(curCode())+'/install-plan',{method:'POST',body:JSON.stringify({ids:IP.ids,params:p})}); var d=await r.json();
+      if(!r.ok||!d.ok){ msg.textContent=d.error||'Could not calculate'; out.innerHTML=''; return; }
+      msg.textContent=''; IP.plan=d; IP.params=p; ipRender();
+    }catch(e){ msg.textContent='Could not calculate'; }
+  }
+  function ipRender(){
+    var d=IP.plan, pl=d.plan, s=pl.summary, out=document.getElementById('ip_out');
+    var sk=pl.skipped, skN=sk.installed+sk.omitted+sk.snags;
+    var h='<div style="border-top:1px solid var(--line);padding-top:14px">';
+    h+='<div style="font-size:15px;font-weight:800;color:var(--ink)">'+s.items+' item'+(s.items===1?'':'s')+' in '+s.flats+' flat'+(s.flats===1?'':'s')+(s.communalItems?' + '+s.communalItems+' communal':'')+' · '+s.workingDays+' working day'+(s.workingDays===1?'':'s')+' · '+esc(ipDate(s.first))+' → '+esc(ipDate(s.last))+'</div>';
+    var notes=[];
+    if(skN)notes.push(skN+' left out ('+[sk.installed?sk.installed+' installed':'',sk.omitted?sk.omitted+' omitted':'',sk.snags?sk.snags+' snag rows':''].filter(function(x){return x;}).join(', ')+')');
+    if(s.splitFlats)notes.push(s.splitFlats+' flat'+(s.splitFlats===1?'':'s')+' take more than one day');
+    if(d.replanned)notes.push(d.replanned+' already had a team or date and will be changed');
+    notes.push(d.board?(d.onMonday+' are on Monday and will be updated there too'):'this job has no Monday board linked');
+    h+='<div class="sub" style="margin:6px 0 0">'+esc(notes.join(' · '))+'</div>';
+    pl.warnings.forEach(function(w){ h+='<div style="margin-top:8px;background:#fef3e2;color:#b45309;font-weight:700;font-size:12.5px;padding:9px 11px;border-radius:9px">'+esc(w)+'</div>'; });
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'+s.perTeam.map(function(t){ return '<span style="border:1px solid var(--line);border-radius:10px;padding:7px 11px;font-size:12.5px"><b>'+esc(t.team)+'</b> · '+t.items+' items · '+t.flats+' flats · '+t.days+' days'+(t.last?' · ends '+esc(ipDate(t.last)):'')+'</span>'; }).join('')+'</div>';
+    var prev='';
+    h+='<div style="max-height:320px;overflow:auto;margin-top:12px;border:1px solid var(--line);border-radius:10px"><table class="itable" style="min-width:0;width:100%"><thead><tr><th>DATE</th><th>TEAM</th><th>FLATS</th><th style="text-align:right">ITEMS</th></tr></thead><tbody>'
+      +pl.days.map(function(x){ var first=x.date!==prev; prev=x.date; return '<tr'+(first?' style="border-top:2px solid var(--line)"':'')+'><td style="white-space:nowrap;font-weight:700">'+(first?esc(ipDate(x.date)):'')+'</td><td style="white-space:nowrap">'+esc(x.team)+'</td><td>'+esc(x.flats.join(', '))+'</td><td style="text-align:right">'+x.items+'</td></tr>'; }).join('')
+      +'</tbody></table></div>';
+    h+='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">'
+      +(IP.applied?'<button class="add" id="ip_pdf" onclick="ipPdf()">Calendar PDF</button><button class="segbtn" onclick="closeModal(true)" style="padding:9px 14px">Close</button>'
+        :'<button class="add" id="ip_apply" onclick="ipApply()"'+(s.items?'':' disabled')+'>Apply to '+s.items+' item'+(s.items===1?'':'s')+'</button><span class="sub" style="margin:0">Sets the team and planned install date. Change a setting and calculate again to compare.</span>')
+      +'<span class="sub" id="ip_done" style="margin:0"></span></div></div>';
+    out.innerHTML=h;
+  }
+  async function ipApply(){
+    var s=IP.plan.plan.summary;
+    if(!confirm('Set the team and planned install date on '+s.items+' item'+(s.items===1?'':'s')+'?'+(IP.plan.replanned?String.fromCharCode(13,10)+IP.plan.replanned+' of them already have a team or date and will be changed.':'')))return;
+    var b=document.getElementById('ip_apply'); b.disabled=true; b.textContent='Applying…';
+    try{
+      var r=await api('/api/job/'+encodeURIComponent(curCode())+'/install-plan',{method:'POST',body:JSON.stringify({ids:IP.ids,params:IP.params,apply:true})}); var d=await r.json();
+      if(!r.ok||!d.ok){ b.disabled=false; b.textContent='Apply'; tShow(d.error||'Could not apply the plan'); return; }
+      IP.applied=true; ipRender();
+      var m=d.updated+' item'+(d.updated===1?'':'s')+' updated'+(d.mondayUpdated?' · '+d.mondayUpdated+' on Monday':'')+(d.notOnMonday?' · '+d.notOnMonday+' not on Monday yet (they get the date when first synced)':'');
+      if(d.mondayFailed)m+=' · '+d.mondayFailed+' could NOT be written to Monday — apply again, or the morning pull will undo them';
+      if(d.mondayNote)m+=' · '+d.mondayNote;
+      document.getElementById('ip_done').textContent=m; tShow(d.mondayFailed?'Plan saved, but Monday was not fully updated':'Install plan applied');
+      clearSel(); loadItems();
+    }catch(e){ b.disabled=false; b.textContent='Apply'; tShow('Could not apply the plan'); }
+  }
+  async function ipPdf(btnId){
+    var code=curCode(); if(current==='ALL'||!code){ tShow('Open one job first'); return; }
+    var b=document.getElementById(btnId||'ip_pdf'), was=b?b.textContent:''; if(b){ b.disabled=true; b.textContent='Building…'; }
+    try{
+      var r=await fetch('/api/job/'+encodeURIComponent(code)+'/install-calendar.pdf',{headers:{Authorization:'Bearer '+token}});
+      if(!r.ok){ var e={}; try{ e=await r.json(); }catch(_){ } tShow(e.error||'Calendar failed'); return; }
+      var blob=await r.blob(), u=URL.createObjectURL(blob), a=document.createElement('a'); a.href=u; a.download=code+'-install-calendar.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(u); },4000); tShow('Install calendar downloaded');
+    }catch(err){ tShow('Calendar failed'); }
+    finally{ if(b){ b.disabled=false; b.textContent=was; } }
+  }
   function selectedIds(){return Object.keys(sel);}
   function renderBar(){
     var n=selectedIds().length;
@@ -5631,7 +5806,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- modal, create item, item detail ----
   function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   var modalDirty=null; // function -> bool, set by modals that need an unsaved-changes guard
-  function openModal(title,html){modalDirty=null;document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
+  function openModal(title,html){modalDirty=null;var sh0=document.querySelector('#modal .sheet');if(sh0)sh0.style.width='';document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
   function closeModal(force){
     if(force!==true && typeof modalDirty==='function'){ try{ if(modalDirty() && !confirm('You have unsaved changes on this job. Discard them?'))return; }catch(e){} }
     modalDirty=null; document.getElementById('modal').style.display='none';

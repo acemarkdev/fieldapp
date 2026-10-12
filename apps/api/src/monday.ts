@@ -179,6 +179,20 @@ export class Monday {
     await this.gqlRetry(`mutation { ${body} }`);
   }
 
+  /** Set several columns on many items (aliased mutations, a chunk per request). Missing dropdown/status
+   *  labels are created. Returns the item ids that could not be written (their chunk failed). */
+  async changeColumnValuesBatch(boardId: string, rows: { itemId: string; values: Record<string, unknown> }[], chunkSize = 20): Promise<{ failed: string[]; error?: string }> {
+    if (!/^\d+$/.test(boardId) || rows.some((r) => !/^\d+$/.test(r.itemId))) throw new Error('Invalid monday id.');
+    const failed: string[] = []; let error: string | undefined;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const body = chunk.map((r, j) => `m${j}: change_multiple_column_values(board_id: ${boardId}, item_id: ${r.itemId}, column_values: ${JSON.stringify(JSON.stringify(r.values))}, create_labels_if_missing: true) { id }`).join('\n');
+      try { await this.gqlRetry(`mutation { ${body} }`); }
+      catch (e: any) { failed.push(...chunk.map((r) => r.itemId)); error = e?.message ?? String(e); }
+    }
+    return { failed, error };
+  }
+
   /** gql() that waits and retries when monday rate-limits (complexity budget / too many requests). */
   gqlRetry<T = any>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
     return withMondayRetry(() => this.gql<T>(query, variables));

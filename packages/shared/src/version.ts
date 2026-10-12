@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.15.0';
+export const APP_VERSION = '1.16.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.16.0', date: '2026-10-12', changes: [
+    'Items: new \u201cPropose install plan\u2026\u201d. Select the items of a job (all or some), click it in the selection bar and set: start date, the teams to use with each team\u2019s items per day (and optionally the dates a team joins or leaves), top floor down or ground floor up, communal items at the end or filling spare capacity on the flats\u2019 days, keep a flat on one day when it fits, block by block, Saturdays, and days off (UK bank holidays are pre-filled). Calculate shows the proposal day by day \u2014 team, flats, item count, end date per team \u2014 and nothing is saved until you click Apply.',
+    'Rules: one team per flat (teams never share a flat, and a flat stays with its team if it takes more than a day); a team\u2019s daily capacity is never exceeded; weekends and days off are skipped; installed, omitted and snag rows are left as they are.',
+    'Apply sets only the team and the planned install date on each item (and Install status Scheduled where there was none). Items already on Monday are updated there too \u2014 Fitters and the planned date \u2014 so the morning pull keeps the plan; items not on Monday yet take their date with them when first synced.',
+    'New \u201cCalendar PDF\u201d for a job (in the plan window after Apply, and next to the job buttons on Items): the installation calendar, one page per month with each planned day listing its flats by team, followed by a day-by-day list.',
+  ] },
   { version: '1.15.0', date: '2026-10-11', changes: [
     'Sync to Monday now also sends the item\u2019s style drawing: the sketch for its Design Code is uploaded to the board\u2019s \u201cDesign Sketch\u201d file column as \u201cStyle <code>.png\u201d. It is sent once per item; if the style is changed later, the new drawing is added on the next sync. Snag rows do not get one. The sync message says when a drawing was sent, or why it could not be (for example no \u201cDesign Sketch\u201d column on the board). Requires migration 0067_style_sketch_pushed.sql \u2014 until it has run, no drawings are sent.',
   ] },

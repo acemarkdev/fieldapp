@@ -145,3 +145,47 @@ export function buildColumnValues(
   }
   return out;
 }
+
+// Pick the Monday date column that most likely holds the PLANNED install date.
+// Ranks by title keyword (plan+install > install > fit > plan > schedule > due > date); dates that
+// say when it happened ("Actual…", "…Done…") or belong to ordering/paying ("…Delivery…", "…Pay…") are
+// never picked. If several date columns exist and none matches a keyword we return null rather than
+// guess. `forWriting` is stricter: only a column that clearly is the plan (install / fit / plan /
+// schedule in its title) — we never write a planned date into a column we merely guessed.
+export function pickPlanDateColumn<T extends { id: string; title: string; type: string }>(cols: T[], forWriting = false): T | null {
+  const dates = cols.filter((c) => c.type === 'date');
+  if (!dates.length) return null;
+  const rank = (t: string) => {
+    const n = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (n.includes('actual') || n.includes('done') || n.includes('delivery') || n.includes('pay') || n.includes('order')) return -2;   // never
+    if (n.includes('install') && n.includes('plan')) return 6;
+    if (n.includes('install')) return 5;
+    if (n.includes('fit')) return 4;
+    if (n.includes('plan')) return 3;
+    if (n.includes('schedule')) return 2;
+    if (n.includes('due')) return 1;
+    if (n.includes('date')) return 0;
+    return -1;
+  };
+  const ranked = dates.map((c) => ({ c, r: rank(c.title) })).filter((x) => x.r >= (forWriting ? 2 : 0)).sort((a, b) => b.r - a.r);
+  if (ranked.length) return ranked[0].c;
+  return !forWriting && dates.length === 1 && rank(dates[0].title) > -2 ? dates[0] : null;
+}
+
+/** Column values that put an item's schedule on its Monday row: the team (Fitters), the planned
+ *  install date and, when asked, Install Status = Scheduled. `missing` lists what the board lacks. */
+export function scheduleColumnValues(
+  cols: MondayColumn[],
+  s: { teamName: string; date: string; markScheduled: boolean },
+): { values: Record<string, unknown>; missing: string[] } {
+  const map = byTitle(cols); const values: Record<string, unknown> = {}; const missing: string[] = [];
+  const fit = map.get('fitters');
+  if (fit && fit.type === 'dropdown') values[fit.id] = { labels: [matchLabel(fit, s.teamName)] }; else missing.push('Fitters');
+  const dc = pickPlanDateColumn(cols.filter((c) => !NON_WRITABLE.has(c.type)), true);
+  if (dc) values[dc.id] = { date: s.date }; else missing.push('Plan Install Date');
+  if (s.markScheduled) {
+    const st = map.get('install status');
+    if (st && (st.type === 'status' || st.type === 'color')) values[st.id] = { label: matchLabel(st, INSTALL_STATUS_LABEL.scheduled ?? 'Scheduled') };
+  }
+  return { values, missing };
+}
