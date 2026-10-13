@@ -161,6 +161,18 @@ export async function deleteJob(tenantId: string, id: string): Promise<Result<{ 
   if (error) throw error;
   return { ok: true, reference: e.job.reference };
 }
+/** Admin clean-up: remove many job cost records at once (their cost lines go with them). Locked jobs
+ *  are removed too — only an admin can call this, and the screen says how many are locked first. */
+export async function deleteJobs(tenantId: string, ids: string[]): Promise<{ deleted: number; references: string[] }> {
+  const uniq = [...new Set(ids.map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+  const references: string[] = [];
+  for (let i = 0; i < uniq.length; i += 100) {
+    const { data, error } = await db().from('fin_jobs').delete().eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 100)).select('reference');
+    if (error) throw error;
+    for (const r of data ?? []) references.push((r as any).reference);
+  }
+  return { deleted: references.length, references };
+}
 export async function setJobLock(tenantId: string, id: string, locked: boolean, by: string): Promise<Result<{ reference: string }>> {
   // Locking freezes the job as it stands: if its sales come from invoices, that sum is stored now,
   // so invoices added later can't move a locked job's result.

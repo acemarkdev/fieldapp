@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.16.1';
+export const APP_VERSION = '1.16.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.16.2', date: '2026-10-13', changes: [
+    'Fin&Ops \u25b8 Job costs (admin only): delete several records at once to clean the page before loading new data. Tick jobs (or the box in the header for all the jobs shown) and click \u201cDelete selected\u201d; with nothing ticked the button is \u201cDelete all shown\u201d and removes every job matching the current filters \u2014 no filters means all of them. You confirm by typing the number of records; locked jobs are included and counted in the warning. Cost lines go with their job. Sales invoices are not touched.',
+  ] },
   { version: '1.16.1', date: '2026-10-13', changes: [
     'Logistics \u25b8 Labels: the sheet now matches the label paper \u2014 8 labels of 103 \u00d7 72 mm, centred on A4. Logo and all text are drawn inside each label with a 5 mm safety margin and cannot print outside it; a long size line shrinks to fit and a long job name wraps within the label. Print at 100% / Actual size, not \u201cFit to page\u201d.',
   ] },
