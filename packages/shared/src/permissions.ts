@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter',
 };
 
 export type Capability =
@@ -83,6 +83,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   // Fin&Ops menu only (company cost control) — no jobs, items or anything else.
   acemark_finance: ['finops.view', 'sales.orders'],
   sales_rep: ['sales.orders'],
+  // Cost reports form only (extra installation costs on a sales order) — nothing else, no mobile app.
+  acemark_fitter: ['expenses.report'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

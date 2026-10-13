@@ -19,6 +19,8 @@
 
 - **Cost reports** (`expenses.report`: fitter, surveyor, office, admin) — report an extra installation cost against an accepted sales order (`/api/expenses`); the reporter sees order number + customer and their own reports only. The order's sales rep approves / rejects, finance (or admin) marks paid — `/api/finops/orders/expenses/:id/<approve|reject|pay|unpay>`, rules in `finExpenses.ts` (`expenseStep`). Table `fin_order_expenses` is server-only (0071).
 
+- **acemark_fitter** ("Acemark Fitter") — the office app's **Cost reports** form only (`expenses.report`). Confined like logistics: the server refuses every endpoint outside `/api/me` and `/api/expenses*`, and `0073_acemark_fitter_scope.sql` blocks all tables for the role. No access in the mobile app.
+
 - **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
 
 ## Language

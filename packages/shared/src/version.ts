@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.20.0';
+export const APP_VERSION = '1.21.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.21.0', date: '2026-10-13', changes: [
+    'New role \u201cAcemark Fitter\u201d: sees only the Cost reports form (extra installation costs on a sales order) and their own reports \u2014 no jobs, items, calendar or anything else, and nothing in the mobile app. Set it in Admin \u25b8 Users. Needs migrations 0072 and 0073.',
+  ] },
   { version: '1.20.0', date: '2026-10-13', changes: [
     'Cost reports on sales orders: a fitter reports an extra installation cost (travel allowance, fitting bonus, accommodation, travel / fuel, other) against an accepted order in the new Operations \u25b8 Cost reports tab \u2014 a simple phone-friendly form; the date is saved automatically. The fitter sees only the order number and customer, and their own reports with the status.',
     'Fin&Ops \u25b8 Sales orders: the new Cost reports button lists the reports and shows how many wait for you. The sales rep of the order approves or rejects (with a reason); the accountant then marks the report as paid. Only reports marked as paid are added to the order\u2019s installation cost, on top of the amount typed on the order, and so to its costs and margin. The order window shows the reports and the breakdown. Needs migration 0071.',

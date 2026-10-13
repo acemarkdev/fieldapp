@@ -45,6 +45,8 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'sales_rep'] as const) ok(`${r} lacks finops.view`, can(r, 'finops.view') === false);
   // --- sales_rep: the sales orders register and nothing else ---
   for (const c of CAPABILITIES) ok(`sales_rep ${c.key} === ${c.key === 'sales.orders'}`, can('sales_rep', c.key) === (c.key === 'sales.orders'));
+  // --- acemark_fitter: the cost reports form and nothing else ---
+  for (const c of CAPABILITIES) ok(`acemark_fitter ${c.key} === ${c.key === 'expenses.report'}`, can('acemark_fitter', c.key) === (c.key === 'expenses.report'));
   for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'] as const) ok(`${r} lacks sales.orders`, can(r, 'sales.orders') === false);
   ok('admin has sales.orders', can('admin', 'sales.orders') === true);
   ok('admin has finops.manage', can('admin', 'finops.manage') === true);

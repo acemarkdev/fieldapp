@@ -476,6 +476,10 @@ const server = createServer(async (req, res) => {
         (p.startsWith('/api/job/') && p.endsWith('/report.pdf') && req.method === 'GET');
       if (!allowedForCustomer) { send(res, 403, { error: 'Not allowed.' }); return; }
     }
+    // ---- Acemark Fitter: the cost reports form only; everything else is refused ----
+    if (ctx.role === 'acemark_fitter' && !(p === '/api/me' || p === '/api/expenses' || p.startsWith('/api/expenses/'))) {
+      send(res, 403, { error: 'Not allowed.' }); return;
+    }
     // ---- Logistics: the Logistics menu only (labels, confirmations); everything else is refused ----
     if (ctx.role === 'logistics' && !(p === '/api/me' || p.startsWith('/api/labels/') || p === '/api/confirmations' || p.startsWith('/api/confirmations/'))) {
       send(res, 403, { error: 'Not allowed.' }); return;
@@ -4215,6 +4219,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
     if(myRole==='acemark_finance') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales'||t==='finpay'||t==='finorders'||t==='fincomm'||t==='finman')?t:'finperf';
     if(myRole==='sales_rep') return (t==='finorders'||t==='fincomm'||t==='finman')?t:'finorders';
+    if(myRole==='acemark_fitter') return 'myexp';
     var need={myexp:'expenses.report',finorders:'sales.orders',fincomm:'sales.orders',fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',finsales:'finops.view',finpay:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
@@ -4266,7 +4271,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
-    if(myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'){showTab(restoreTab());return;}
+    if(myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'){showTab(restoreTab());return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
@@ -5976,7 +5981,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
-    var isLogistics=(myRole==='logistics'), isFin=(myRole==='acemark_finance'||myRole==='sales_rep');
+    var isLogistics=(myRole==='logistics'), isFin=(myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter');
     show('tabItems',!isCustomer&&!isLogistics&&!isFin);
     show('tabFinOrders',canCap('sales.orders'));
     show('tabFinComm',canCap('sales.orders'));
@@ -8679,7 +8684,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token');
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
+  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----
