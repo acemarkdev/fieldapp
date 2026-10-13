@@ -77,6 +77,17 @@ export async function deleteSale(tenantId: string, id: string): Promise<Result> 
   if (error) throw error;
   return data ? { ok: true } : fail(404, 'Invoice not found.');
 }
+/** Admin clean-up: remove many sales invoices at once. */
+export async function deleteSales(tenantId: string, ids: string[]): Promise<{ deleted: number }> {
+  const uniq = [...new Set(ids.map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+  let deleted = 0;
+  for (let i = 0; i < uniq.length; i += 100) {
+    const { data, error } = await db().from('fin_sales').delete().eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 100)).select('id');
+    if (error) throw error;
+    deleted += (data ?? []).length;
+  }
+  return { deleted };
+}
 /** Import pasted sheet rows; lines that are already there (see saleKey) are skipped, so pasting twice is safe. */
 export async function importSales(tenantId: string, by: string, rows: any[]): Promise<{ added: number; skipped: number; invalid: number }> {
   const have = new Set((await selectAll('invoice_no,job_key,period_year,period_month,net', tenantId)).map((r) => saleKey({ ...r, net: Number(r.net) || 0 })));

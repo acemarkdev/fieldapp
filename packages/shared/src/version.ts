@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.16.2';
+export const APP_VERSION = '1.16.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.16.3', date: '2026-10-13', changes: [
+    'Fin&Ops \u25b8 Sales (admin only): the same clean-up as on Job costs. Tick a job row to select all its invoices, or open the job and tick single invoices; the box in the header selects everything shown. \u201cDelete selected\u201d removes the ticked invoices; with nothing ticked the button is \u201cDelete all shown\u201d and removes every invoice matching the current filters. You confirm by typing the number of invoices. Job costs are not deleted, but jobs that take their sales from the removed invoices will show no sales (locked jobs keep theirs).',
+  ] },
   { version: '1.16.2', date: '2026-10-13', changes: [
     'Fin&Ops \u25b8 Job costs (admin only): delete several records at once to clean the page before loading new data. Tick jobs (or the box in the header for all the jobs shown) and click \u201cDelete selected\u201d; with nothing ticked the button is \u201cDelete all shown\u201d and removes every job matching the current filters \u2014 no filters means all of them. You confirm by typing the number of records; locked jobs are included and counted in the warning. Cost lines go with their job. Sales invoices are not touched.',
   ] },
