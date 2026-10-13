@@ -127,7 +127,24 @@ Zależy od obrotu firmy w roku kalendarzowym (faktury sprzedaży netto z zakład
 
 Faktyczną wysokość bonusu ustala Zarząd; wypłata następuje do 31 marca kolejnego roku. Prowizja miesięczna jest wypłacana po zaksięgowaniu płatności od klienta.
 
-## 6. Import z Excela i najczęstsze pytania
+## 6. Zgłoszenia kosztów od monterów
+
+Dodatkowe koszty montażu (dieta, dodatek za montaż, nocleg, dojazd) zgłasza monter, a do kosztów zamówienia trafiają dopiero po akceptacji i wypłacie.
+
+| Krok | Kto | Co robi |
+| --- | --- | --- |
+| 1. Zgłoszenie | Monter | W zakładce **Koszty montażu** wybiera zamówienie, rodzaj kosztu i kwotę w PLN. Data zapisuje się sama. Widzi tylko numer zamówienia i klienta oraz własne zgłoszenia |
+| 2. Akceptacja | Handlowiec zamówienia | W zakładce Zamówienia klika **Zgłoszenia kosztów** i wybiera **Akceptuj** albo **Odrzuć** (z powodem, który zobaczy monter) |
+| 3. Wypłata | Księgowość | Na tej samej liście klika **Oznacz jako wypłacone** przy zaakceptowanym zgłoszeniu |
+
+Przycisk **Zgłoszenia kosztów** pokazuje, ile pozycji czeka na Ciebie. Te same zgłoszenia widać też na dole okna zamówienia.
+
+- **Koszt montażu zamówienia** = kwota wpisana w polu Koszt montażu + zgłoszenia **wypłacone**. Zgłoszenia czekające i zaakceptowane nie zmieniają jeszcze kosztów ani marży.
+- Monter może wycofać zgłoszenie, dopóki czeka na akceptację.
+- Zamówienie bez przypisanego handlowca akceptuje księgowość. Administrator może wykonać każdy krok.
+- Księgowość może cofnąć wypłatę albo odrzucić zaakceptowane zgłoszenie (z powodem).
+
+## 7. Import z Excela i najczęstsze pytania
 
 **Import z Excela (księgowość i administrator)**
 

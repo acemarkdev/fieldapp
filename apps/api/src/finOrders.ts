@@ -4,6 +4,7 @@
 //
 // Commission (sheet "Zasady Prowizji"): an accepted order counts with its FULL net value in the month
 // its first payment is booked; the month's total decides the rate, which applies to the whole month.
+import { listExpenses, type ExpenseRow } from './finExpenses';
 import { db } from './supabase';
 import { parseMoney, referenceKey } from './finJobs';
 import { parseDate } from './finSales';
@@ -101,11 +102,14 @@ export interface OrderView extends OrderRow {
   invoices: SaleLite[]; payments: PaymentRow[]; invoiced: number; cash: number; paid: number;
   counted_date: string | null;         // the day the order starts counting for commission (null = not yet)
   counted_from: 'manual' | 'invoice' | 'cash' | null;
+  expenses: ExpenseRow[];              // cost reports from the fitters, newest first
+  cost_reports_paid: number;           // paid reports — added to the installation cost
+  cost_reports_open: number;           // submitted + approved, not in the costs yet
 }
 
 /** Attach invoices (by job reference or by an invoice number noted on the order) and cash payments,
  *  and work out when the order starts to count. */
-export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments: PaymentRow[]): OrderView[] {
+export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments: PaymentRow[], expenses: ExpenseRow[] = []): OrderView[] {
   const byKey = new Map<string, SaleLite[]>(), byNo = new Map<string, SaleLite[]>();
   for (const s of sales) {
     if (s.job_key) { const k = alnum(s.job_key); (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(s); }
@@ -113,6 +117,8 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
   }
   const payBy = new Map<string, PaymentRow[]>();
   for (const p of payments) (payBy.get(p.order_id) ?? payBy.set(p.order_id, []).get(p.order_id)!).push(p);
+  const expBy = new Map<string, ExpenseRow[]>();
+  for (const e of expenses) (expBy.get(e.order_id) ?? expBy.set(e.order_id, []).get(e.order_id)!).push(e);
   return orders.map((o) => {
     const found = new Map<string, SaleLite>();
     for (const k of orderKeys(o)) for (const s of byKey.get(k) ?? []) found.set(s.id, s);
@@ -126,9 +132,14 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
     if (o.first_payment_date) { counted_date = o.first_payment_date; counted_from = 'manual'; }
     else if (firstInv && (!firstCash || firstInv <= firstCash)) { counted_date = firstInv; counted_from = 'invoice'; }
     else if (firstCash) { counted_date = firstCash; counted_from = 'cash'; }
-    const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + (o.cost_delivery ?? 0));
+    // installation cost = what is typed on the order + the fitters' cost reports that have been paid
+    const exps = (expBy.get(o.id) ?? []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    const sumOf = (st: string[]) => round2(exps.filter((e) => st.includes(e.status)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
+    const cost_reports_paid = sumOf(['paid']);
+    const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + cost_reports_paid + (o.cost_delivery ?? 0));
     return { ...o, code: orderCode(o.job_ref) || orderCode(o.order_ref), costs, margin: o.net ? round2((o.net - costs) / o.net) : null,
-      invoices, payments: pays, invoiced, cash, paid: round2(invoiced + cash), counted_date, counted_from };
+      invoices, payments: pays, invoiced, cash, paid: round2(invoiced + cash), counted_date, counted_from,
+      expenses: exps, cost_reports_paid, cost_reports_open: sumOf(['submitted', 'approved']) };
   });
 }
 
@@ -253,13 +264,14 @@ async function page<T>(table: string, cols: string, tenantId: string): Promise<T
 }
 /** Every order with its invoices and payments. `repUserId` limits it to one rep (a rep sees only their own). */
 export async function listOrderViews(tenantId: string, repUserId?: string | null): Promise<OrderView[]> {
-  const [orders, sales, pays] = await Promise.all([
+  const [orders, sales, pays, exps] = await Promise.all([
     page<any>('fin_orders', '*', tenantId),
     page<any>('fin_sales', 'id,invoice_no,invoice_date,job_key,net,kind,period_year,period_month', tenantId),
     page<any>('fin_order_payments', 'id,order_id,paid_date,amount,note', tenantId),
+    listExpenses(tenantId),
   ]);
   const mine = repUserId ? orders.filter((o) => o.rep_user_id === repUserId) : orders;
-  return buildOrderViews(mine.map(rowOut), sales.map((s) => ({ ...s, net: Number(s.net) || 0 })), pays.map((p) => ({ ...p, amount: Number(p.amount) || 0 })));
+  return buildOrderViews(mine.map(rowOut), sales.map((s) => ({ ...s, net: Number(s.net) || 0 })), pays.map((p) => ({ ...p, amount: Number(p.amount) || 0 })), exps);
 }
 /** Company turnover for the yearly bonus: net of all sales invoices counted in the year (Sales tab). */
 export async function companyTurnover(tenantId: string, year: number): Promise<number> {

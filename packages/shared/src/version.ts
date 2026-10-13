@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.19.0';
+export const APP_VERSION = '1.20.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.20.0', date: '2026-10-13', changes: [
+    'Cost reports on sales orders: a fitter reports an extra installation cost (travel allowance, fitting bonus, accommodation, travel / fuel, other) against an accepted order in the new Operations \u25b8 Cost reports tab \u2014 a simple phone-friendly form; the date is saved automatically. The fitter sees only the order number and customer, and their own reports with the status.',
+    'Fin&Ops \u25b8 Sales orders: the new Cost reports button lists the reports and shows how many wait for you. The sales rep of the order approves or rejects (with a reason); the accountant then marks the report as paid. Only reports marked as paid are added to the order\u2019s installation cost, on top of the amount typed on the order, and so to its costs and margin. The order window shows the reports and the breakdown. Needs migration 0071.',
+  ] },
   { version: '1.19.0', date: '2026-10-13', changes: [
     'Fin&Ops \u25b8 Job costs: the cost columns can be typed straight into the grid \u2014 Material Cost (RW), panels, glass, other extras, painting, transport, customs clearance, labour hours and labour cost. Click a cell, type, Enter to save; Tab saves and moves to the next cell, Esc cancels, an empty cell removes the cost. Hours use the labour rate; a typed labour cost keeps the hours.',
     'A cell that holds several cost lines (for example two invoices) shows their number and opens the job instead, and locked jobs stay read-only. Invoice number, supplier and date are still added in the job window. The Job costs manual describes the new way of entering data.',

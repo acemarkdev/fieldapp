@@ -17,6 +17,8 @@
 - **Report confirmations** (Logistics ▸ Confirmations, capability `confirmations.manage`) — logistics and admin. The shared link `/c/<token>` needs no login: the token is the key, the report runs in a sandboxed frame, and `confirmations` has RLS on with no policies (server-only access).
 - **sales_rep** ("Sales rep") — office app **Fin&Ops ▸ Sales orders, Commission, Manuals** only, for the rep's own orders (capability `sales.orders`). Confined like logistics: the server refuses every endpoint outside `/api/me`, `/api/finops/orders*`, `/api/finops/commission`, `/api/finops/manuals*`, and `0070_sales_rep_scope.sql` blocks all tables and storage for the role. No access in the mobile app.
 
+- **Cost reports** (`expenses.report`: fitter, surveyor, office, admin) — report an extra installation cost against an accepted sales order (`/api/expenses`); the reporter sees order number + customer and their own reports only. The order's sales rep approves / rejects, finance (or admin) marks paid — `/api/finops/orders/expenses/:id/<approve|reject|pay|unpay>`, rules in `finExpenses.ts` (`expenseStep`). Table `fin_order_expenses` is server-only (0071).
+
 - **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
 
 ## Language

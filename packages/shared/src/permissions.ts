@@ -35,7 +35,8 @@ export type Capability =
   | 'confirmations.manage' // share report-confirmation links, track approvals, download the signed PDF
   | 'finops.view'      // Fin&Ops: company costs synced from the monday invoices board
   | 'finops.manage'    // Fin&Ops: accept an edited invoice as the new trusted record (admin)
-  | 'sales.orders';    // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
+  | 'sales.orders'     // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
+  | 'expenses.report'; // report an extra installation cost (allowance, fitting bonus…) against a sales order
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -62,16 +63,17 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'confirmations.manage', label: 'Report confirmations', desc: 'Share reports for sign-off, track approvals' },
   { key: 'finops.view', label: 'Fin&Ops costs', desc: 'Company costs from the monday invoices board; run the sync' },
   { key: 'finops.manage', label: 'Manage Fin&Ops', desc: 'Accept edited invoices as the new trusted record' },
+  { key: 'expenses.report', label: 'Report costs', desc: 'Report an extra installation cost against a sales order; sees only own reports' },
   { key: 'sales.orders', label: 'Sales orders', desc: 'Sales orders register and commission; a Sales rep sees only their own orders' },
 ];
 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
 export const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: CAPABILITIES.map((c) => c.key), // everything
-  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request'],
-  surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
+  office: ['dashboard.view', 'calendar.view', 'jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'qa.signoff', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'teams.manage', 'monday.sync', 'purchasing.request', 'expenses.report'],
+  surveyor: ['calendar.view', 'items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request', 'expenses.report'],
   scanner: ['calendar.view', 'items.create', 'photos.add', 'plans.view', 'plans.manage', 'plans.pin', 'purchasing.request'],
-  fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add', 'purchasing.request'],
+  fitter: ['calendar.view', 'items.fit', 'snags.raise', 'photos.add', 'purchasing.request', 'expenses.report'],
   // Finance-only role: sees the budget/pricing module, nothing operational.
   invoice_manager: ['calendar.view', 'finance.view', 'finance.manage'],
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
