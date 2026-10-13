@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.21.1';
+export const APP_VERSION = '1.22.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.22.0', date: '2026-10-13', changes: [
+    'Subiekt nexo sync (first version). A small agent on the Subiekt machine sends this year\u2019s sales invoices (FS, FL and their corrections) and material issues (RW) every 30 minutes; it only reads from Subiekt. Sales invoices appear on the Sales tab marked \u201cSubiekt\u201d (a typed invoice with the same number is taken over, not duplicated; euro invoices are converted at the rate on the document) and are changed in Subiekt, not in the app.',
+    'Material Cost (RW) in Job costs comes from the RW documents, one line each, replacing a material amount typed or imported before; a job that does not exist yet is created. Locked jobs are never changed.',
+    'The job is read from the document\u2019s Podtytu\u0142: a Z number, or an OK order number on a trade invoice. When it cannot be read with certainty nothing is guessed \u2014 Sales \u25b8 Subiekt lists the documents to check; add the number in Subiekt and the next sync places it. Invoices that belong to no job can be ticked \u201cnot a job\u201d. Needs migration 0074 and the agent (tools/subiekt-agent).',
+  ] },
   { version: '1.21.1', date: '2026-10-13', changes: [
     'Cost reports: the fitter\u2019s order list is shorter \u2014 only accepted orders whose first payment (counts-from month) or planned realisation month is between 3 months back and 2 months ahead. An order with neither date yet is listed while its offer is that recent.',
   ] },

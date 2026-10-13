@@ -66,13 +66,21 @@ export async function createSale(tenantId: string, by: string, b: any): Promise<
   if (error) throw error;
   return { ok: true, id: data.id };
 }
+const FROM_SUBIEKT = 'This invoice comes from Subiekt — change it there; the next sync brings the change.';
+/** A row the Subiekt sync owns is not edited by hand (select * so this also works before migration 0074). */
+async function fromSubiekt(tenantId: string, id: string): Promise<boolean> {
+  const { data } = await db().from('fin_sales').select('*').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
+  return !!data && (data as any).source === 'subiekt';
+}
 export async function updateSale(tenantId: string, id: string, b: any): Promise<Result> {
   const f = saleFields(b); if (!f.ok) return f;
+  if (await fromSubiekt(tenantId, id)) return fail(409, FROM_SUBIEKT);
   const { data, error } = await db().from('fin_sales').update({ ...f.fields, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId).eq('id', id).select('id').maybeSingle();
   if (error) throw error;
   return data ? { ok: true } : fail(404, 'Invoice not found.');
 }
 export async function deleteSale(tenantId: string, id: string): Promise<Result> {
+  if (await fromSubiekt(tenantId, id)) return fail(409, FROM_SUBIEKT);
   const { data, error } = await db().from('fin_sales').delete().eq('tenant_id', tenantId).eq('id', id).select('id').maybeSingle();
   if (error) throw error;
   return data ? { ok: true } : fail(404, 'Invoice not found.');

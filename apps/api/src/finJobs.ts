@@ -209,9 +209,10 @@ export async function addJobItem(tenantId: string, jobId: string, by: string, b:
   return { ok: true, id: data.id, reference: e.job.reference };
 }
 async function itemJob(tenantId: string, itemId: string): Promise<Result<{ job: any }>> {
-  const { data, error } = await db().from('fin_job_items').select('job_id').eq('tenant_id', tenantId).eq('id', itemId).maybeSingle();
+  const { data, error } = await db().from('fin_job_items').select('*').eq('tenant_id', tenantId).eq('id', itemId).maybeSingle();
   if (error) throw error;
   if (!data) return fail(404, 'Cost line not found.');
+  if ((data as any).source === 'subiekt') return fail(409, 'This cost line comes from Subiekt (RW) — change it there; the next sync brings the change.');
   return editableJob(tenantId, data.job_id);
 }
 export async function updateJobItem(tenantId: string, itemId: string, b: any): Promise<Result<{ reference: string }>> {
@@ -269,8 +270,9 @@ export function planCellEdit(kind: string, field: CellField, lines: CellLine[], 
 export async function setJobCell(tenantId: string, jobId: string, by: string, b: any): Promise<Result<{ reference: string; job: any; changed: boolean }>> {
   const e = await editableJob(tenantId, jobId); if (!e.ok) return e;
   const kind = String(b?.kind ?? ''), field: CellField = b?.field === 'hours' ? 'hours' : 'amount';
-  const cur = await db().from('fin_job_items').select('id,amount,hours,rate').eq('tenant_id', tenantId).eq('job_id', jobId).eq('kind', kind);
+  const cur = await db().from('fin_job_items').select('*').eq('tenant_id', tenantId).eq('job_id', jobId).eq('kind', kind);
   if (cur.error) throw cur.error;
+  if ((cur.data ?? []).some((l: any) => l.source === 'subiekt')) return fail(409, 'Material Cost (RW) of this job comes from Subiekt — change the RW document there.');
   const plan = planCellEdit(kind, field, (cur.data ?? []) as CellLine[], b?.value, await getLabourRate());
   if (plan.op === 'error') return fail(400, plan.error);
   if (plan.op === 'insert') { const r = await db().from('fin_job_items').insert({ tenant_id: tenantId, job_id: jobId, created_by: by, kind, ...plan.fields, note: 'Entered in the grid' }); if (r.error) throw r.error; }

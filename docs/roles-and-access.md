@@ -21,6 +21,8 @@
 
 - **acemark_fitter** ("Acemark Fitter") — the office app's **Cost reports** form only (`expenses.report`). Confined like logistics: the server refuses every endpoint outside `/api/me` and `/api/expenses*`, and `0073_acemark_fitter_scope.sql` blocks all tables for the role. No access in the mobile app.
 
+- **Subiekt agent** (no user) — `POST /api/agent/subiekt` with the `x-agent-key` header; the key is created by an admin in Fin&Ops ▸ Sales ▸ Subiekt and only its hash is kept in `server_config`. The agent can do nothing but post a snapshot of Subiekt documents. `fin_subiekt_docs` is server-only (0074). Viewing the to-check list and ticking "not a job" needs `finops.view`; a new key needs `finops.manage`.
+
 - **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
 
 ## Language
