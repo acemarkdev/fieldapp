@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/finExpenses.test.ts
-import { expenseFields, expenseStep, paidByOrder, orderLabel, EXPENSE_KINDS, EXPENSE_KIND_LABEL, type ExpenseActor } from './finExpenses';
+import { expenseFields, expenseStep, paidByOrder, orderLabel, inExpenseWindow, expenseOrders, EXPENSE_KINDS, EXPENSE_KIND_LABEL, type ExpenseActor } from './finExpenses';
 import { buildOrderViews, type OrderRow } from './finOrders';
 
 let fail = 0;
@@ -40,6 +40,15 @@ const v0 = buildOrderViews([order], [], [])[0];
 ok('order without reports is unchanged', v0.costs === 6500 && v0.cost_reports_paid === 0 && v0.expenses.length === 0);
 
 ok('order label: Z number, reference, customer once', orderLabel({ order_ref: 'OK DE203065 -Mülheim- Agnieszka', job_ref: 'Z.430', customer: 'Brecher' }) === 'Z.430 · OK DE203065 -Mülheim- Agnieszka · Brecher' && orderLabel({ order_ref: 'OK PL1 - PCW', customer: 'PCW' }) === 'OK PL1 - PCW');
+
+// The fitter's order list: 3 months back to 2 months ahead, by the counts-from or planned month
+const T = '2026-10-13';
+ok('window: counted this month, 3 months back, and not 4', inExpenseWindow({ counted_date: '2026-10-01' }, T) && inExpenseWindow({ counted_date: '2026-07-01' }, T) && !inExpenseWindow({ counted_date: '2026-06-30' }, T));
+ok('window: planned up to 2 months ahead, not 3; works across the year end', inExpenseWindow({ planned_year: 2026, planned_month: 12 }, T) && !inExpenseWindow({ planned_year: 2027, planned_month: 1 }, T) && inExpenseWindow({ planned_year: 2027, planned_month: 1 }, '2026-11-20'));
+ok('window: either date is enough', inExpenseWindow({ counted_date: '2025-03-10', planned_year: 2026, planned_month: 11 }, T) && inExpenseWindow({ counted_date: '2026-09-10', planned_year: 2025, planned_month: 1 }, T) && !inExpenseWindow({ counted_date: '2025-03-10', planned_year: 2025, planned_month: 5 }, T));
+ok('window: with no dates yet, a recent offer keeps the order', inExpenseWindow({ offer_year: 2026, offer_month: 9 }, T) && !inExpenseWindow({ offer_year: 2026, offer_month: 5 }, T) && !inExpenseWindow({}, T));
+const lo = (id: string, status: string, counted: string | null, py: number | null = null, pm: number | null = null) => ({ id, status, order_ref: 'OK ' + id, job_ref: null, customer: null, counted_date: counted, planned_year: py, planned_month: pm, offer_year: 2025, offer_month: 1 });
+ok('list: accepted and current only, newest first', expenseOrders([lo('old', 'accepted', '2025-01-05'), lo('a', 'accepted', '2026-08-05'), lo('offer', 'offer', '2026-10-01'), lo('b', 'accepted', null, 2026, 11), lo('lost', 'lost', '2026-10-01')], T).map((x) => x.id).join(',') === 'b,a');
 
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('finExpenses: all passed');

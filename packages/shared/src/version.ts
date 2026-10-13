@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.21.0';
+export const APP_VERSION = '1.21.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.21.1', date: '2026-10-13', changes: [
+    'Cost reports: the fitter\u2019s order list is shorter \u2014 only accepted orders whose first payment (counts-from month) or planned realisation month is between 3 months back and 2 months ahead. An order with neither date yet is listed while its offer is that recent.',
+  ] },
   { version: '1.21.0', date: '2026-10-13', changes: [
     'New role \u201cAcemark Fitter\u201d: sees only the Cost reports form (extra installation costs on a sales order) and their own reports \u2014 no jobs, items, calendar or anything else, and nothing in the mobile app. Set it in Admin \u25b8 Users. Needs migrations 0072 and 0073.',
   ] },

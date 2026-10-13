@@ -89,17 +89,25 @@ export async function listMyExpenses(tenantId: string, userId: string): Promise<
   if (error) throw error;
   return (data ?? []).map(out);
 }
-/** The orders a fitter can report against: accepted ones, number and customer only — never values. */
-export async function expenseOrders(tenantId: string): Promise<{ id: string; label: string }[]> {
-  const rows: any[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db().from('fin_orders').select('id,order_ref,job_ref,customer,offer_year,offer_month').eq('tenant_id', tenantId).eq('status', 'accepted').order('id').range(from, from + 999);
-    if (error) throw error;
-    rows.push(...(data ?? []));
-    if (!data || data.length < 1000) break;
-  }
-  rows.sort((a, b) => (b.offer_year ?? 0) - (a.offer_year ?? 0) || (b.offer_month ?? 0) - (a.offer_month ?? 0) || String(a.order_ref).localeCompare(String(b.order_ref)));
-  return rows.map((o) => ({ id: o.id, label: orderLabel(o) }));
+/** Is the order current enough for the fitter's list? Yes when the month it counts from (first
+ *  payment) or its planned realisation month lies between 3 months back and 2 months ahead of
+ *  today. An order with neither date yet is kept while its offer is that recent. */
+export function inExpenseWindow(o: { counted_date?: string | null; planned_year?: number | null; planned_month?: number | null; offer_year?: number | null; offer_month?: number | null }, today: string): boolean {
+  const now = +today.slice(0, 4) * 12 + (+today.slice(5, 7) - 1);
+  const near = (m: number | null) => m !== null && m >= now - 3 && m <= now + 2;
+  const counted = o.counted_date ? +o.counted_date.slice(0, 4) * 12 + (+o.counted_date.slice(5, 7) - 1) : null;
+  const planned = o.planned_year && o.planned_month ? o.planned_year * 12 + (o.planned_month - 1) : null;
+  if (counted !== null || planned !== null) return near(counted) || near(planned);
+  return near(o.offer_year && o.offer_month ? o.offer_year * 12 + (o.offer_month - 1) : null);
+}
+type OrderForList = { id: string; status: string; order_ref: string; job_ref: string | null; customer: string | null; counted_date: string | null; planned_year: number | null; planned_month: number | null; offer_year: number | null; offer_month: number | null };
+/** The orders a fitter can report against: accepted and current (see inExpenseWindow), number and
+ *  customer only — never values. Newest first. */
+export function expenseOrders(orders: OrderForList[], today: string): { id: string; label: string }[] {
+  const when = (o: OrderForList) => o.counted_date?.slice(0, 7) ?? (o.planned_year && o.planned_month ? `${o.planned_year}-${String(o.planned_month).padStart(2, '0')}` : `${o.offer_year ?? 0}-${String(o.offer_month ?? 0).padStart(2, '0')}`);
+  return orders.filter((o) => o.status === 'accepted' && inExpenseWindow(o, today))
+    .sort((a, b) => when(b).localeCompare(when(a)) || String(a.order_ref).localeCompare(String(b.order_ref)))
+    .map((o) => ({ id: o.id, label: orderLabel(o) }));
 }
 export function orderLabel(o: { order_ref: string; job_ref?: string | null; customer?: string | null }): string {
   const ref = clean(o.order_ref), cust = clean(o.customer);
