@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.16.3';
+export const APP_VERSION = '1.17.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.17.0', date: '2026-10-13', changes: [
+    'New Fin&Ops \u25b8 Sales orders: the sales rep\u2019s register, replacing the workbook \u201cwszystkie zlecenia\u201d. One line per offer or order \u2014 number or name (OK DE203065 \u2026 or Z.330), customer, company, supplier, material, month sent, status (offer / accepted / lost), net value, purchase / installation / delivery costs with margin, planned month, notes. Filters, totals, CSV export and \u201cImport from Excel\u201d for the existing sheet (rows already there are skipped; the check step shows what would be added and compares with the Sales tab).',
+    'Payments on an order: invoices from the Sales tab attach to it automatically by its number (or by an invoice number noted on the order), and finance can register cash payments on the order. When an OK order goes into production in Orpiszew, finance adds its Z number \u2014 the order keeps both, and invoices under either belong to it.',
+    'New Fin&Ops \u25b8 Commission: month by month, the sales counted (full net value of accepted orders in the month their first payment is booked), the rate reached (0% / 1% / 1.5% / 2% on the whole month), the commission, and how much is missing to each threshold; the current month with a progress bar, orders still waiting for a first payment and open offers. Below it the yearly bonus: company turnover for the year, the tier reached (up to 5% / 10% / 15% of yearly gross pay) and what is missing to the next.',
+    'New role \u201cSales rep\u201d: sees only Sales orders and Commission, and only their own orders. Finance (Acemark Finance) and admin see every rep, set the Z number, register payments and import; only admin can delete in bulk. Both screens are available in Polish. Requires migrations 0068_sales_rep_role.sql (run first, on its own) then 0069_fin_orders.sql.',
+  ] },
   { version: '1.16.3', date: '2026-10-13', changes: [
     'Fin&Ops \u25b8 Sales (admin only): the same clean-up as on Job costs. Tick a job row to select all its invoices, or open the job and tick single invoices; the box in the header selects everything shown. \u201cDelete selected\u201d removes the ticked invoices; with nothing ticked the button is \u201cDelete all shown\u201d and removes every invoice matching the current filters. You confirm by typing the number of invoices. Job costs are not deleted, but jobs that take their sales from the removed invoices will show no sales (locked jobs keep theirs).',
   ] },

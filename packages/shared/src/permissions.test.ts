@@ -37,11 +37,16 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   ok('office lacks labels.print', can('office', 'labels.print') === false);
 }
 
-// --- acemark_finance: Fin&Ops (view) and nothing else ---
+// --- acemark_finance: Fin&Ops (view) + sales orders, and nothing else ---
 {
   const { CAPABILITIES } = await import('./permissions');
-  for (const c of CAPABILITIES) ok(`acemark_finance ${c.key} === ${c.key === 'finops.view'}`, can('acemark_finance', c.key) === (c.key === 'finops.view'));
-  for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'] as const) ok(`${r} lacks finops.view`, can(r, 'finops.view') === false);
+  const fin = new Set(['finops.view', 'sales.orders']);
+  for (const c of CAPABILITIES) ok(`acemark_finance ${c.key} === ${fin.has(c.key)}`, can('acemark_finance', c.key) === fin.has(c.key));
+  for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'sales_rep'] as const) ok(`${r} lacks finops.view`, can(r, 'finops.view') === false);
+  // --- sales_rep: the sales orders register and nothing else ---
+  for (const c of CAPABILITIES) ok(`sales_rep ${c.key} === ${c.key === 'sales.orders'}`, can('sales_rep', c.key) === (c.key === 'sales.orders'));
+  for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'] as const) ok(`${r} lacks sales.orders`, can(r, 'sales.orders') === false);
+  ok('admin has sales.orders', can('admin', 'sales.orders') === true);
   ok('admin has finops.manage', can('admin', 'finops.manage') === true);
 }
 
