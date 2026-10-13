@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/finOrders.test.ts
-import { orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
+import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -87,6 +87,19 @@ const row = (o: Record<number, string>) => { const c: string[] = Array(23).fill(
   ok('spacer rows and the header are skipped', importRowToOrder(row({ 0: '616', 10: ' -   zł ', 22: '2026' }), 2025) === null && importRowToOrder(row({ 0: 'Lp', 7: 'Numer Oferty' }), 2025) === null);
   ok('an invoice number in the FV column is kept for matching', (importRowToOrder(row({ 0: '5', 4: 'Herne', 7: 'OK-DE20250903- Bielefeldstr', 8: 'FP 3/ACE/09/2025', 10: '20,867.50' }), 2025) as any).fields.invoice_refs === 'FP 3/ACE/09/2025');
   ok('same reference + value + customer = the same order on re-import', importKey(x.fields) === importKey({ ...x.fields, comment: 'changed' }) && importKey(x.fields) !== importKey({ ...x.fields, net: 1137 }));
+}
+
+// One catalogue shared by Sales orders, the Sales tab and Job costs
+{
+  const c = buildCatalogue([
+    { order_ref: 'OK DE203065 -Mülheim an der Ruhr- Agnieszka und Tiago', job_ref: null, customer: 'Agnieszka & Tiago', invoice_refs: null },
+    { order_ref: 'OK DE203102 -Brecher Immobilien- Baumblute', job_ref: 'Z.431', customer: 'Brecher', invoice_refs: 'FP 3/ACE/09/2025; FL 198' },
+    { order_ref: 'Drzwi', job_ref: null, customer: 'X', invoice_refs: null },
+  ], ['Z.431', 'Z.164', ' Z.9 ', 'Z.164']);
+  ok('suggestions: order codes and Z numbers, each with the customer, vague names left out', c.codes.map((x) => x.value).join('|') === 'OK DE203065|OK DE203102|Z.431' && c.codes[0].label.startsWith('Agnieszka & Tiago · OK DE203065'), c.codes);
+  ok('an invoice typed any which way finds its order', ['OKDE203065', 'Z431', 'OKDE203102'].every((k) => c.keys.includes(k)) && !c.keys.includes('DRZWI'));
+  ok('invoice numbers noted on orders are known', c.invoiceKeys.includes('FP3ACE092025') && c.invoiceKeys.includes('FL198'));
+  ok('Job costs references, de-duplicated and in natural order', c.jobs.join('|') === 'Z.9|Z.164|Z.431');
 }
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }

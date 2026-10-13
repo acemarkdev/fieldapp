@@ -349,3 +349,34 @@ export async function importOrders(tenantId: string, by: string, rows: unknown[]
   }
   return report;
 }
+
+// ---------------------------------------------------------------------------------------------
+//  One catalogue of order numbers for Sales orders, the Sales tab and Job costs
+// ---------------------------------------------------------------------------------------------
+export interface OrderCatalogue {
+  codes: { value: string; label: string }[];   // what to suggest when typing a Job: order codes and Z numbers
+  keys: string[];                              // every key an invoice's Job can match (letters and digits only)
+  invoiceKeys: string[];                       // invoice numbers noted on orders
+  jobs: string[];                              // Job costs references (for the order's Z number)
+}
+export function buildCatalogue(orders: { order_ref: string; job_ref: string | null; customer: string | null; invoice_refs: string | null }[], jobRefs: string[]): OrderCatalogue {
+  const codes = new Map<string, string>(), keys = new Set<string>(), invoiceKeys = new Set<string>();
+  for (const o of orders) {
+    for (const k of orderKeys(o)) keys.add(k);
+    const label = [clean(o.customer), clean(o.order_ref)].filter(Boolean).join(' · ').slice(0, 120);
+    for (const v of [orderCode(o.job_ref), orderCode(o.order_ref)]) if (v && alnum(v).length >= 4 && /\d/.test(v) && !codes.has(v)) codes.set(v, label);
+    for (const no of clean(o.invoice_refs).split(/[,;]+/)) { const k = alnum(no); if (k.length >= 3) invoiceKeys.add(k); }
+  }
+  const jobs = [...new Set(jobRefs.map(clean).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  return {
+    codes: [...codes].map(([value, label]) => ({ value, label })).sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' })),
+    keys: [...keys], invoiceKeys: [...invoiceKeys], jobs,
+  };
+}
+export async function orderCatalogue(tenantId: string): Promise<OrderCatalogue> {
+  const [orders, jobs] = await Promise.all([
+    page<any>('fin_orders', 'order_ref,job_ref,customer,invoice_refs', tenantId),
+    page<any>('fin_jobs', 'reference', tenantId),
+  ]);
+  return buildCatalogue(orders, jobs.map((j) => j.reference));
+}

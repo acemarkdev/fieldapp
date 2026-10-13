@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.17.0';
+export const APP_VERSION = '1.17.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.17.1', date: '2026-10-13', changes: [
+    'Fin&Ops: one catalogue of order numbers. The Job field on a sales invoice now suggests the numbers from Sales orders (order codes and Z numbers, each with its customer) and says under the field whether the number typed belongs to a sales order \u2014 or warns that the invoice will not show as paid on any order. On the Sales tab, jobs that are on the orders register carry an \u201corder\u201d tag, and the filter has \u201cLinked to a sales order\u201d / \u201cNot linked to a sales order\u201d.',
+    'The same list is offered for the reference of a Job costs record, and the Z number on a sales order suggests the Job costs references \u2014 so the three pages use the same numbers. Typing stays free: existing invoices and jobs such as AKCESORIA keep working.',
+  ] },
   { version: '1.17.0', date: '2026-10-13', changes: [
     'New Fin&Ops \u25b8 Sales orders: the sales rep\u2019s register, replacing the workbook \u201cwszystkie zlecenia\u201d. One line per offer or order \u2014 number or name (OK DE203065 \u2026 or Z.330), customer, company, supplier, material, month sent, status (offer / accepted / lost), net value, purchase / installation / delivery costs with margin, planned month, notes. Filters, totals, CSV export and \u201cImport from Excel\u201d for the existing sheet (rows already there are skipped; the check step shows what would be added and compares with the Sales tab).',
     'Payments on an order: invoices from the Sales tab attach to it automatically by its number (or by an invoice number noted on the order), and finance can register cash payments on the order. When an OK order goes into production in Orpiszew, finance adds its Z number \u2014 the order keeps both, and invoices under either belong to it.',
