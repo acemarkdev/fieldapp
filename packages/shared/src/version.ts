@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.17.2';
+export const APP_VERSION = '1.18.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.18.0', date: '2026-10-13', changes: [
+    'Fin&Ops \u25b8 Manuals (Instrukcje): a new last tab with the user manuals, in Polish, with screens from the app \u2014 Koszty zlece\u0144 (Job costs), Sprzeda\u017c (Sales) and Zam\u00f3wienia i prowizja (Sales orders and Commission). Finance and admin see all three; a sales rep sees the orders and commission manual. Click a screenshot to open it full size.',
+  ] },
   { version: '1.17.2', date: '2026-10-13', changes: [
     'Fin&Ops \u25b8 Job costs: the Sales field label in the job window is now fully in Polish for users set to Polski (it was half English when the sales came from invoices).',
   ] },
