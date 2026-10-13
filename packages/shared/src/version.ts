@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.18.0';
+export const APP_VERSION = '1.19.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.19.0', date: '2026-10-13', changes: [
+    'Fin&Ops \u25b8 Job costs: the cost columns can be typed straight into the grid \u2014 Material Cost (RW), panels, glass, other extras, painting, transport, customs clearance, labour hours and labour cost. Click a cell, type, Enter to save; Tab saves and moves to the next cell, Esc cancels, an empty cell removes the cost. Hours use the labour rate; a typed labour cost keeps the hours.',
+    'A cell that holds several cost lines (for example two invoices) shows their number and opens the job instead, and locked jobs stay read-only. Invoice number, supplier and date are still added in the job window. The Job costs manual describes the new way of entering data.',
+  ] },
   { version: '1.18.0', date: '2026-10-13', changes: [
     'Fin&Ops \u25b8 Manuals (Instrukcje): a new last tab with the user manuals, in Polish, with screens from the app \u2014 Koszty zlece\u0144 (Job costs), Sprzeda\u017c (Sales) and Zam\u00f3wienia i prowizja (Sales orders and Commission). Finance and admin see all three; a sales rep sees the orders and commission manual. Click a screenshot to open it full size.',
   ] },

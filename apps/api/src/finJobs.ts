@@ -44,20 +44,22 @@ export function itemAmount(kind: string, amount: unknown, hours: unknown, rate: 
   if (kind === 'labour' && h !== null && r !== null) return round2(h * r);
   return parseMoney(amount) ?? 0;
 }
-export interface JobSummary { sums: Record<JobKind, number>; hours: number; totalCost: number; profit: number | null; margin: number | null; materialPct: number | null; labourPct: number | null; items: number }
+export interface JobSummary { sums: Record<JobKind, number>; hours: number; totalCost: number; profit: number | null; margin: number | null; materialPct: number | null; labourPct: number | null; items: number; counts: Record<JobKind, number> }
 export function summarizeJob(sales: number | null, items: { kind: string; amount: number | string | null; hours?: number | string | null }[]): JobSummary {
   const sums = Object.fromEntries(JOB_KINDS.map((k) => [k, 0])) as Record<JobKind, number>;
+  const counts = Object.fromEntries(JOB_KINDS.map((k) => [k, 0])) as Record<JobKind, number>; // cost lines per kind
   let hours = 0;
   for (const it of items) {
     if (!(JOB_KINDS as readonly string[]).includes(it.kind)) continue;
     sums[it.kind as JobKind] = round2(sums[it.kind as JobKind] + (Number(it.amount) || 0));
+    counts[it.kind as JobKind]++;
     if (it.kind === 'labour') hours = round2(hours + (Number(it.hours) || 0));
   }
   const totalCost = round2(JOB_KINDS.reduce((s, k) => s + sums[k], 0));
   const hasSales = sales !== null && sales !== undefined && Number(sales) !== 0;
   const profit = sales === null || sales === undefined ? null : round2(Number(sales) - totalCost);
   const pct = (n: number) => (hasSales ? Math.round((n / Number(sales)) * 10000) / 10000 : null);
-  return { sums, hours, totalCost, profit, margin: hasSales && profit !== null ? pct(profit) : null, materialPct: pct(sums.material), labourPct: pct(sums.labour), items: items.length };
+  return { sums, hours, totalCost, profit, margin: hasSales && profit !== null ? pct(profit) : null, materialPct: pct(sums.material), labourPct: pct(sums.labour), items: items.length, counts };
 }
 
 // ---- storage -----------------------------------------------------------------------------------
@@ -224,6 +226,58 @@ export async function deleteJobItem(tenantId: string, itemId: string): Promise<R
   const { error } = await db().from('fin_job_items').delete().eq('id', itemId);
   if (error) throw error;
   return { ok: true, reference: e.job.reference };
+}
+
+// ---- typing straight into the grid ---------------------------------------------------------------
+// A grid cell is the total of one kind of cost for a job. With no cost line of that kind the typed
+// value becomes one; with exactly one, that line is changed (or removed when the cell is cleared);
+// with several the cell can't say which line is meant, so the job window has to be used.
+export type CellField = 'amount' | 'hours';
+export interface CellLine { id: string; amount: number | null; hours: number | null; rate: number | null }
+export type CellPlan =
+  | { op: 'none' }
+  | { op: 'insert'; fields: { amount: number; hours: number | null; rate: number | null } }
+  | { op: 'update'; id: string; fields: { amount?: number; hours?: number | null; rate?: number | null } }
+  | { op: 'delete'; id: string }
+  | { op: 'error'; error: string };
+export function planCellEdit(kind: string, field: CellField, lines: CellLine[], value: unknown, defaultRate: number): CellPlan {
+  if (!(JOB_KINDS as readonly string[]).includes(kind) || (field === 'hours' && kind !== 'labour')) return { op: 'error', error: 'Unknown column.' };
+  const raw = String(value ?? '').trim();
+  const v = parseMoney(value);
+  if (raw && raw !== '-' && v === null) return { op: 'error', error: 'That is not a number.' };
+  if (field === 'hours' && v !== null && v < 0) return { op: 'error', error: 'Hours cannot be negative.' };
+  if (lines.length > 1) return { op: 'error', error: 'This job has several cost lines of this kind — open the job to change them.' };
+  const val = v === null || v === 0 ? null : v; // an empty cell or 0 clears it
+  const L = lines[0];
+  if (!L) {
+    if (val === null) return { op: 'none' };
+    if (field === 'hours') return { op: 'insert', fields: { amount: round2(val * defaultRate), hours: val, rate: defaultRate } };
+    return { op: 'insert', fields: { amount: val, hours: null, rate: null } };
+  }
+  const amount = Number(L.amount) || 0, hours = L.hours === null ? null : Number(L.hours) || null, rate = L.rate === null ? null : Number(L.rate);
+  if (field === 'hours') {
+    if (val === null) return amount ? { op: 'update', id: L.id, fields: { hours: null, rate: null } } : { op: 'delete', id: L.id };
+    if (rate !== null) return { op: 'update', id: L.id, fields: { hours: val, amount: round2(val * rate) } };            // keeps the rate
+    if (amount) return { op: 'update', id: L.id, fields: { hours: val, rate: round2(amount / val) } };                    // keeps the cost
+    return { op: 'update', id: L.id, fields: { hours: val, rate: defaultRate, amount: round2(val * defaultRate) } };
+  }
+  if (val === null) return kind === 'labour' && hours ? { op: 'update', id: L.id, fields: { amount: 0, rate: null } } : { op: 'delete', id: L.id };
+  if (kind === 'labour') return { op: 'update', id: L.id, fields: { amount: val, rate: hours ? round2(val / hours) : null } }; // keeps the hours
+  return { op: 'update', id: L.id, fields: { amount: val } };
+}
+/** Apply one grid cell and return the job's fresh row (same shape as the list). */
+export async function setJobCell(tenantId: string, jobId: string, by: string, b: any): Promise<Result<{ reference: string; job: any; changed: boolean }>> {
+  const e = await editableJob(tenantId, jobId); if (!e.ok) return e;
+  const kind = String(b?.kind ?? ''), field: CellField = b?.field === 'hours' ? 'hours' : 'amount';
+  const cur = await db().from('fin_job_items').select('id,amount,hours,rate').eq('tenant_id', tenantId).eq('job_id', jobId).eq('kind', kind);
+  if (cur.error) throw cur.error;
+  const plan = planCellEdit(kind, field, (cur.data ?? []) as CellLine[], b?.value, await getLabourRate());
+  if (plan.op === 'error') return fail(400, plan.error);
+  if (plan.op === 'insert') { const r = await db().from('fin_job_items').insert({ tenant_id: tenantId, job_id: jobId, created_by: by, kind, ...plan.fields, note: 'Entered in the grid' }); if (r.error) throw r.error; }
+  if (plan.op === 'update') { const r = await db().from('fin_job_items').update({ ...plan.fields, updated_at: new Date().toISOString() }).eq('id', plan.id); if (r.error) throw r.error; }
+  if (plan.op === 'delete') { const r = await db().from('fin_job_items').delete().eq('id', plan.id); if (r.error) throw r.error; }
+  const fresh = await getJob(tenantId, jobId);
+  return { ok: true, reference: e.job.reference, job: fresh?.job ?? null, changed: plan.op !== 'none' };
 }
 
 // ---- one-off import of the Excel sheet (rows pasted in the app, already split into fields) -------

@@ -1,5 +1,5 @@
 // Fin&Ops job-cost rules. Run: npx tsx apps/api/src/finJobs.test.ts
-import { parseMoney, parseMonth, referenceKey, itemAmount, summarizeJob, importRowToJob } from './finJobs';
+import { parseMoney, parseMonth, referenceKey, itemAmount, summarizeJob, importRowToJob, planCellEdit } from './finJobs';
 
 let fail = 0;
 const ok = (label: string, cond: boolean, extra: any = '') => { if (!cond) { fail++; console.error('✗ ' + label, extra); } else console.log('✓ ' + label); };
@@ -53,6 +53,24 @@ try {
   ok(`real sheet: ${cmp} jobs — total cost and profit equal the sheet's`, bad.length === 0, bad.slice(0, 5));
   ok('real sheet: references are unique jobs', new Set(rows.map((r: any) => importRowToJob(r)!.job.reference_key)).size === rows.length);
 } catch { console.log('· real-sheet comparison skipped (no extract)'); }
+
+// Typing into the grid
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const one = (amount: number | null, hours: number | null = null, rate: number | null = null) => [{ id: 'L1', amount, hours, rate }];
+ok('grid: a value in an empty cell adds one cost line', same(planCellEdit('transport', 'amount', [], '2 611,05', 45), { op: 'insert', fields: { amount: 2611.05, hours: null, rate: null } }));
+ok('grid: an empty or zero value in an empty cell does nothing', planCellEdit('glass', 'amount', [], '', 45).op === 'none' && planCellEdit('glass', 'amount', [], '0', 45).op === 'none' && planCellEdit('glass', 'amount', [], ' - ', 45).op === 'none');
+ok('grid: a value over one line changes that line', same(planCellEdit('material', 'amount', one(100), '9376.71', 45), { op: 'update', id: 'L1', fields: { amount: 9376.71 } }));
+ok('grid: clearing a cell removes its line', same(planCellEdit('material', 'amount', one(100), '', 45), { op: 'delete', id: 'L1' }) && same(planCellEdit('material', 'amount', one(100), 0, 45), { op: 'delete', id: 'L1' }));
+ok('grid: several lines of one kind are not editable from the grid', planCellEdit('material', 'amount', [...one(1), { id: 'L2', amount: 2, hours: null, rate: null }], '5', 45).op === 'error');
+ok('grid: text is refused, as are unknown columns and hours on a non-labour cost', planCellEdit('material', 'amount', [], 'abc', 45).op === 'error' && planCellEdit('nope', 'amount', [], '5', 45).op === 'error' && planCellEdit('glass', 'hours', [], '5', 45).op === 'error' && planCellEdit('labour', 'hours', [], '-3', 45).op === 'error');
+ok('grid: hours with no labour line use the default rate', same(planCellEdit('labour', 'hours', [], '73,5', 45), { op: 'insert', fields: { amount: 3307.5, hours: 73.5, rate: 45 } }));
+ok('grid: new hours keep the line\'s rate and recalculate the cost', same(planCellEdit('labour', 'hours', one(450, 10, 45), '20', 50), { op: 'update', id: 'L1', fields: { hours: 20, amount: 900 } }));
+ok('grid: hours added to a cost-only labour line keep the cost', same(planCellEdit('labour', 'hours', one(1000), '8', 45), { op: 'update', id: 'L1', fields: { hours: 8, rate: 125 } }));
+ok('grid: clearing hours keeps a labour cost, or removes an empty line', same(planCellEdit('labour', 'hours', one(450, 10, 45), '', 45), { op: 'update', id: 'L1', fields: { hours: null, rate: null } }) && same(planCellEdit('labour', 'hours', one(0, 10, null), '', 45), { op: 'delete', id: 'L1' }));
+ok('grid: a labour cost with no line is stored without hours', same(planCellEdit('labour', 'amount', [], '3434,36', 45), { op: 'insert', fields: { amount: 3434.36, hours: null, rate: null } }));
+ok('grid: a new labour cost keeps the hours and resets the rate', same(planCellEdit('labour', 'amount', one(450, 10, 45), '500', 45), { op: 'update', id: 'L1', fields: { amount: 500, rate: 50 } }) && same(planCellEdit('labour', 'amount', one(450), '500', 45), { op: 'update', id: 'L1', fields: { amount: 500, rate: null } }));
+ok('grid: clearing a labour cost keeps the hours, or removes the line', same(planCellEdit('labour', 'amount', one(450, 10, 45), '', 45), { op: 'update', id: 'L1', fields: { amount: 0, rate: null } }) && same(planCellEdit('labour', 'amount', one(450), '', 45), { op: 'delete', id: 'L1' }));
+ok('summary counts the cost lines per kind', same([summarizeJob(0, [{ kind: 'material', amount: 1 }, { kind: 'material', amount: 2 }, { kind: 'glass', amount: 3 }]).counts.material, summarizeJob(0, []).counts.labour], [2, 0]));
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
 console.log('\nAll job-cost rule tests passed.');

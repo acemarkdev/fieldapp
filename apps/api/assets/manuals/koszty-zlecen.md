@@ -51,6 +51,16 @@ Pod przyciskami widać domyślną stawkę robocizny (zł za godzinę). Administr
 
 *Zrzut ekranu z przykładowymi danymi.*
 
+**Szybkie wpisywanie w tabeli**
+
+Kwoty kosztów, godziny pracy i koszt robocizny można wpisać wprost na liście, bez otwierania zlecenia.
+
+1. Kliknij komórkę kosztu w wierszu zlecenia i wpisz wartość.
+2. **Enter** zapisuje, **Tab** zapisuje i przechodzi do następnej komórki, **Esc** anuluje.
+3. Pusta komórka (albo 0) usuwa koszt.
+
+Wpisane godziny pracy liczą koszt robocizny według stawki (godziny × stawka); wpisany koszt robocizny zostaje bez zmian, a stawka przelicza się sama. Komórka z małą cyfrą obok kwoty ma kilka pozycji kosztowych (np. dwie faktury) — kliknięcie otwiera zlecenie, gdzie zmienia się je osobno. Zlecenia zablokowane zmienia się dopiero po odblokowaniu. Numer faktury, dostawcę i datę nadal dopisuje się w oknie zlecenia.
+
 Pozycję poprawiasz linkiem **edytuj**, usuwasz linkiem **usuń**. Część **Podsumowanie** od razu pokazuje sprzedaż, koszt całkowity, zysk / stratę i rentowność.
 
 ## 4. Sprzedaż, blokada, import, eksport
