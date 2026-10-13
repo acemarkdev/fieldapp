@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.22.0';
+export const APP_VERSION = '1.22.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.22.1', date: '2026-10-13', changes: [
+    'Fin&Ops \u25b8 Sales \u25b8 Subiekt: the list of documents to check can be exported to CSV (opens in Excel), with an empty column to note the number to enter in Subiekt.',
+  ] },
   { version: '1.22.0', date: '2026-10-13', changes: [
     'Subiekt nexo sync (first version). A small agent on the Subiekt machine sends this year\u2019s sales invoices (FS, FL and their corrections) and material issues (RW) every 30 minutes; it only reads from Subiekt. Sales invoices appear on the Sales tab marked \u201cSubiekt\u201d (a typed invoice with the same number is taken over, not duplicated; euro invoices are converted at the rate on the document) and are changed in Subiekt, not in the app.',
     'Material Cost (RW) in Job costs comes from the RW documents, one line each, replacing a material amount typed or imported before; a job that does not exist yet is created. Locked jobs are never changed.',
