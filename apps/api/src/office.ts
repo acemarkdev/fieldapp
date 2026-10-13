@@ -3649,7 +3649,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
   <div id="labelsView" style="display:none">
     <main style="max-width:1080px">
-      <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of labels (2 &times; 4, 105 &times; 74 mm). Each piece gets <b>two labels side by side</b> &mdash; the label on the left and its copy on the right &mdash; so one sheet holds 4 pieces. Nothing is stored.</div></div></div>
+      <div class="titlerow"><div><h2>Labels</h2><div class="sub">Upload an Archimede production printout (<b>WYDRUK PRODUKCYJNY</b> PDF) and download an A4 sheet of labels (2 &times; 4, each 103 &times; 72 mm). Print it at <b>100% / Actual size</b> &mdash; not &ldquo;Fit to page&rdquo;, which shrinks the sheet and shifts every label. Each piece gets <b>two labels side by side</b> &mdash; the label on the left and its copy on the right &mdash; so one sheet holds 4 pieces. Nothing is stored.</div></div></div>
       <div class="statgrid" id="lbl_stats" style="display:none;margin:14px 0 0"></div>
       <div class="card2" style="padding:16px 18px;margin-top:14px">
         <div class="porow" style="margin-top:0"><label class="pobtn" for="lbl_file">Choose PDF&hellip;</label><input id="lbl_file" type="file" accept="application/pdf,.pdf" style="display:none"><span class="pofname" id="lbl_fname">No file chosen</span></div>

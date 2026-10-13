@@ -1,5 +1,6 @@
 // Window/door labels (Logistics ▸ Labels): read an Archimede "WYDRUK PRODUKCYJNY" PDF and print
-// an A4 sheet of 2 × 4 labels (105 × 74.25 mm) — one label per piece — in the WEM label format.
+// an A4 sheet of 2 × 4 labels (each 103 × 72 mm, the block centred on the page) — one label per
+// piece — in the WEM label format.
 //
 // The Archimede printout is a real text PDF, so this is a deterministic parse (no AI): text items
 // are regrouped into lines by position, then read with the section markers the printout always has
@@ -103,8 +104,13 @@ export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: b
 
 const MM = 72 / 25.4;
 const PAGE_W = 210 * MM, PAGE_H = 297 * MM;
-const COLS = 2, ROWS = 4, CELL_W = PAGE_W / COLS, CELL_H = PAGE_H / ROWS;
-const PAD = 4 * MM;
+// The label stock: A4 cut into 2 × 4 labels of 103 × 72 mm. The 8 labels sit centred on the sheet
+// (2 mm left/right, 4.5 mm top/bottom). Everything is drawn inside each label with a 5 mm safety
+// margin and clipped to it, so a small feed offset in the printer cannot push print onto a neighbour.
+export const LABEL_W_MM = 103, LABEL_H_MM = 72, SAFE_MM = 5;
+const COLS = 2, ROWS = 4, CELL_W = LABEL_W_MM * MM, CELL_H = LABEL_H_MM * MM;
+const OFF_X = (PAGE_W - COLS * CELL_W) / 2, OFF_Y = (PAGE_H - ROWS * CELL_H) / 2;
+const PAD = SAFE_MM * MM;
 const COMPANY = ['Ul. Koźmińska 10', '63-440 Raszków', 'NIP: PL6222839864', 'Email: biuro@wemokna.pl', 'Tel. +48 690 126 185'];
 
 export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
@@ -124,28 +130,38 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
       const k = i % (COLS * ROWS);
       if (k === 0) doc.addPage();
       if (!lab) return;
-      const x0 = (k % COLS) * CELL_W, y0 = Math.floor(k / COLS) * CELL_H;
+      const x0 = OFF_X + (k % COLS) * CELL_W, y0 = OFF_Y + Math.floor(k / COLS) * CELL_H;
       const header = !!logo || opts.company;
+      const w = CELL_W - 2 * PAD, x = x0 + PAD, top = y0 + PAD, bottom = y0 + CELL_H - PAD;
 
-      if (logo) doc.image(logo, x0 + 5 * MM, y0 + 5 * MM, { fit: [16 * MM, 25 * MM] });
+      // Nothing may print outside this label's safe area.
+      doc.save();
+      doc.rect(x, top, w, bottom - top).clip();
+
+      if (logo) doc.image(logo, x, top, { fit: [15 * MM, 23 * MM] });
       if (opts.company) {
-        const cx = x0 + (logo ? 24 * MM : PAD), lh = 4.7 * MM;
-        doc.font('B').fontSize(11).fillColor('#000').text('WEM Sp. z o.o.', cx, y0 + 3 * MM, { lineBreak: false });
-        COMPANY.forEach((t, j) => doc.font('R').fontSize(10.5).text(t, cx, y0 + 3 * MM + lh * (j + 1), { lineBreak: false }));
+        const cx = x + (logo ? 19 * MM : 0), lh = 3.9 * MM;
+        doc.font('B').fontSize(10).fillColor('#000').text('WEM Sp. z o.o.', cx, top, { lineBreak: false });
+        COMPANY.forEach((t, j) => doc.font('R').fontSize(9.5).text(t, cx, top + lh * (j + 1), { lineBreak: false }));
       }
 
-      const w = CELL_W - 2 * PAD, x = x0 + PAD;
-      let y = y0 + (header ? 33 : 23) * MM;
+      let y = y0 + (header ? 30 : 20) * MM;
       if (lab.kind === 'hardware') {
-        doc.font('B').fontSize(30).fillColor('#000').text('HARDWARE', x, y + 2 * MM, { width: w, align: 'center', lineBreak: false });
-        jobLine(doc, (opts.title || '').trim(), '', x, y + 16.5 * MM, w, y0 + CELL_H - 2 * MM);
+        doc.font('B').fontSize(28).fillColor('#000').text('HARDWARE', x, y + 2 * MM, { width: w, align: 'center', lineBreak: false });
+        jobLine(doc, (opts.title || '').trim(), '', x, y + 15.5 * MM, w, bottom);
+        doc.restore();
         return;
       }
-      doc.font('R').fontSize(15).fillColor('#000').text('Wymiar Okna:', x, y, { width: w, align: 'center' });
-      y += 7 * MM;
-      doc.font('B').fontSize(20).text(`P/N W${lab.w} x H${lab.h}`, x, y, { width: w, align: 'center', lineBreak: false });
-      y += 9.5 * MM;
-      jobLine(doc, (opts.title || '').trim(), String(lab.ref || '').trim(), x, y, w, y0 + CELL_H - 2 * MM);
+      doc.font('R').fontSize(14).fillColor('#000').text('Wymiar Okna:', x, y, { width: w, align: 'center', lineBreak: false });
+      y += 6.5 * MM;
+      // the size line shrinks if a long dimension would not fit the label's width
+      const sizeText = `P/N W${lab.w} x H${lab.h}`;
+      let sizePt = 19; doc.font('B');
+      while (sizePt > 10 && doc.fontSize(sizePt).widthOfString(sizeText) > w) sizePt -= 0.5;
+      doc.fontSize(sizePt).text(sizeText, x, y, { width: w, align: 'center', lineBreak: false });
+      y += 8.5 * MM;
+      jobLine(doc, (opts.title || '').trim(), String(lab.ref || '').trim(), x, y, w, bottom);
+      doc.restore();
     });
     if (!slots.length) doc.addPage();
     doc.end();
@@ -155,7 +171,7 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
 // "<title> – <REF>" centred and word-wrapped, with the reference in bold and never split.
 // (pdfkit's own `continued` + center mis-positions mixed-font runs, so lay it out by hand.)
 function jobLine(doc: PDFKit.PDFDocument, title: string, ref: string, x: number, y: number, w: number, maxY: number): void {
-  const SIZE = 13.5, LH = 5.6 * MM;
+  const SIZE = 12.5, LH = 5 * MM;
   const toks = [
     ...title.split(/\s+/).filter(Boolean).map((t) => ({ t, f: 'R' })),
     ...(ref ? [{ t: '–', f: 'R' }, { t: ref, f: 'B' }] : []),
@@ -177,7 +193,7 @@ function jobLine(doc: PDFKit.PDFDocument, title: string, ref: string, x: number,
     let cx = x + Math.max(0, (w - total) / 2);
     ln.forEach((tk, i) => {
       if (i) cx += space;
-      doc.font(tk.f).fontSize(SIZE).text(tk.t, cx, y, { lineBreak: false });
+      doc.font(tk.f).fontSize(SIZE).text(tk.t, cx, y, { lineBreak: false, width: Math.max(1, x + w - cx), ellipsis: true });
       cx += width(tk);
     });
     y += LH;

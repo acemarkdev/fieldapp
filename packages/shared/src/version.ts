@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.16.0';
+export const APP_VERSION = '1.16.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.16.1', date: '2026-10-13', changes: [
+    'Logistics \u25b8 Labels: the sheet now matches the label paper \u2014 8 labels of 103 \u00d7 72 mm, centred on A4. Logo and all text are drawn inside each label with a 5 mm safety margin and cannot print outside it; a long size line shrinks to fit and a long job name wraps within the label. Print at 100% / Actual size, not \u201cFit to page\u201d.',
+  ] },
   { version: '1.16.0', date: '2026-10-12', changes: [
     'Items: new \u201cPropose install plan\u2026\u201d. Select the items of a job (all or some), click it in the selection bar and set: start date, the teams to use with each team\u2019s items per day (and optionally the dates a team joins or leaves), top floor down or ground floor up, communal items at the end or filling spare capacity on the flats\u2019 days, keep a flat on one day when it fits, block by block, Saturdays, and days off (UK bank holidays are pre-filled). Calculate shows the proposal day by day \u2014 team, flats, item count, end date per team \u2014 and nothing is saved until you click Apply.',
     'Rules: one team per flat (teams never share a flat, and a flat stays with its team if it takes more than a day); a team\u2019s daily capacity is never exceeded; weekends and days off are skipped; installed, omitted and snag rows are left as they are.',
