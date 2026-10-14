@@ -55,14 +55,15 @@ try {
 } catch { console.log('· real-sheet comparison skipped (no extract)'); }
 
 // Typing into the grid
+ok('grid: Material Cost (RW) is never typed in the grid', planCellEdit('material', 'amount', [], '100', 45).op === 'error' && planCellEdit('material', 'amount', [{ id: 'L1', amount: 5, hours: null, rate: null }], '', 45).op === 'error');
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const one = (amount: number | null, hours: number | null = null, rate: number | null = null) => [{ id: 'L1', amount, hours, rate }];
 ok('grid: a value in an empty cell adds one cost line', same(planCellEdit('transport', 'amount', [], '2 611,05', 45), { op: 'insert', fields: { amount: 2611.05, hours: null, rate: null } }));
 ok('grid: an empty or zero value in an empty cell does nothing', planCellEdit('glass', 'amount', [], '', 45).op === 'none' && planCellEdit('glass', 'amount', [], '0', 45).op === 'none' && planCellEdit('glass', 'amount', [], ' - ', 45).op === 'none');
-ok('grid: a value over one line changes that line', same(planCellEdit('material', 'amount', one(100), '9376.71', 45), { op: 'update', id: 'L1', fields: { amount: 9376.71 } }));
-ok('grid: clearing a cell removes its line', same(planCellEdit('material', 'amount', one(100), '', 45), { op: 'delete', id: 'L1' }) && same(planCellEdit('material', 'amount', one(100), 0, 45), { op: 'delete', id: 'L1' }));
-ok('grid: several lines of one kind are not editable from the grid', planCellEdit('material', 'amount', [...one(1), { id: 'L2', amount: 2, hours: null, rate: null }], '5', 45).op === 'error');
-ok('grid: text is refused, as are unknown columns and hours on a non-labour cost', planCellEdit('material', 'amount', [], 'abc', 45).op === 'error' && planCellEdit('nope', 'amount', [], '5', 45).op === 'error' && planCellEdit('glass', 'hours', [], '5', 45).op === 'error' && planCellEdit('labour', 'hours', [], '-3', 45).op === 'error');
+ok('grid: a value over one line changes that line', same(planCellEdit('glass', 'amount', one(100), '9376.71', 45), { op: 'update', id: 'L1', fields: { amount: 9376.71 } }));
+ok('grid: clearing a cell removes its line', same(planCellEdit('glass', 'amount', one(100), '', 45), { op: 'delete', id: 'L1' }) && same(planCellEdit('glass', 'amount', one(100), 0, 45), { op: 'delete', id: 'L1' }));
+ok('grid: several lines of one kind are not editable from the grid', planCellEdit('glass', 'amount', [...one(1), { id: 'L2', amount: 2, hours: null, rate: null }], '5', 45).op === 'error');
+ok('grid: text is refused, as are unknown columns and hours on a non-labour cost', planCellEdit('glass', 'amount', [], 'abc', 45).op === 'error' && planCellEdit('nope', 'amount', [], '5', 45).op === 'error' && planCellEdit('glass', 'hours', [], '5', 45).op === 'error' && planCellEdit('labour', 'hours', [], '-3', 45).op === 'error');
 ok('grid: hours with no labour line use the default rate', same(planCellEdit('labour', 'hours', [], '73,5', 45), { op: 'insert', fields: { amount: 3307.5, hours: 73.5, rate: 45 } }));
 ok('grid: new hours keep the line\'s rate and recalculate the cost', same(planCellEdit('labour', 'hours', one(450, 10, 45), '20', 50), { op: 'update', id: 'L1', fields: { hours: 20, amount: 900 } }));
 ok('grid: hours added to a cost-only labour line keep the cost', same(planCellEdit('labour', 'hours', one(1000), '8', 45), { op: 'update', id: 'L1', fields: { hours: 8, rate: 125 } }));

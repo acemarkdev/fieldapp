@@ -243,6 +243,8 @@ export type CellPlan =
   | { op: 'error'; error: string };
 export function planCellEdit(kind: string, field: CellField, lines: CellLine[], value: unknown, defaultRate: number): CellPlan {
   if (!(JOB_KINDS as readonly string[]).includes(kind) || (field === 'hours' && kind !== 'labour')) return { op: 'error', error: 'Unknown column.' };
+  // material comes from Subiekt (RW documents); by hand it is added in the job window only
+  if (kind === 'material') return { op: 'error', error: 'Material Cost (RW) is not typed in the grid — open the job to add or change it.' };
   const raw = String(value ?? '').trim();
   const v = parseMoney(value);
   if (raw && raw !== '-' && v === null) return { op: 'error', error: 'That is not a number.' };

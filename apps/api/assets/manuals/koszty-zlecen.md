@@ -53,7 +53,7 @@ Pod przyciskami widać domyślną stawkę robocizny (zł za godzinę). Administr
 
 **Szybkie wpisywanie w tabeli**
 
-Kwoty kosztów, godziny pracy i koszt robocizny można wpisać wprost na liście, bez otwierania zlecenia.
+Kwoty kosztów, godziny pracy i koszt robocizny można wpisać wprost na liście, bez otwierania zlecenia. Wyjątkiem jest **Koszt materiału (RW)**: przychodzi z dokumentów RW w Subiekcie, więc w tabeli nie da się go wpisać — kliknięcie tej komórki otwiera zlecenie, gdzie w razie potrzeby dodaje się pozycję ręcznie.
 
 1. Kliknij komórkę kosztu w wierszu zlecenia i wpisz wartość.
 2. **Enter** zapisuje, **Tab** zapisuje i przechodzi do następnej komórki, **Esc** anuluje.

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.22.1';
+export const APP_VERSION = '1.22.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.22.2', date: '2026-10-14', changes: [
+    'Fin&Ops \u25b8 Job costs: Material Cost (RW) can no longer be typed in the grid, since it now comes from Subiekt. Clicking that cell opens the job, where a material line can still be added or edited by hand. The other cost columns stay editable in the grid.',
+  ] },
   { version: '1.22.1', date: '2026-10-13', changes: [
     'Fin&Ops \u25b8 Sales \u25b8 Subiekt: the list of documents to check can be exported to CSV (opens in Excel), with an empty column to note the number to enter in Subiekt.',
   ] },
