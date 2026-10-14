@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.22.2';
+export const APP_VERSION = '1.23.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.23.0', date: '2026-10-14', changes: [
+    'Fin&Ops \u25b8 Sales orders: actual cost per trade order. Trade purchase invoices on the monday invoice board (499.V Handel, from 2026) are read from their KSeF PDF during the monday costs sync, and each line goes to the order named in its \u201cRef.: OK \u2026\u201d (a line without one takes the order of a line with the same WEB number). Advance invoices and \u201cZaliczka\u201d lines are not a cost; corrections count as the change they make. A PDF is used only when its lines add up to the net on the board.',
+    'New columns Actual cost and Actual margin (actual purchase + installation incl. paid cost reports + delivery), and the order window lists the purchase invoices. The new Purchase invoices button (finance) lists what could not be placed; write the OK number in the invoice\u2019s \u201cZlecenie\u201d column on monday and the next sync places it. Needs migration 0075.',
+  ] },
   { version: '1.22.2', date: '2026-10-14', changes: [
     'Fin&Ops \u25b8 Job costs: Material Cost (RW) can no longer be typed in the grid, since it now comes from Subiekt. Clicking that cell opens the job, where a material line can still be added or edited by hand. The other cost columns stay editable in the grid.',
   ] },

@@ -5,6 +5,7 @@
 // Commission (sheet "Zasady Prowizji"): an accepted order counts with its FULL net value in the month
 // its first payment is booked; the month's total decides the rate, which applies to the whole month.
 import { listExpenses, type ExpenseRow } from './finExpenses';
+import { loadTrade, allocatePurchases, type OrderPurchase } from './tradeCosts';
 import { db } from './supabase';
 import { parseMoney, referenceKey } from './finJobs';
 import { parseDate } from './finSales';
@@ -105,11 +106,15 @@ export interface OrderView extends OrderRow {
   expenses: ExpenseRow[];              // cost reports from the fitters, newest first
   cost_reports_paid: number;           // paid reports — added to the installation cost
   cost_reports_open: number;           // submitted + approved, not in the costs yet
+  purchases: OrderPurchase[];          // the supplier's invoice lines for this order (monday, KSeF PDF)
+  actual_purchase: number | null;      // their total — null while no purchase invoice is known
+  actual_costs: number | null;         // actual purchase + installation + delivery
+  actual_margin: number | null;
 }
 
 /** Attach invoices (by job reference or by an invoice number noted on the order) and cash payments,
  *  and work out when the order starts to count. */
-export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments: PaymentRow[], expenses: ExpenseRow[] = []): OrderView[] {
+export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments: PaymentRow[], expenses: ExpenseRow[] = [], purchases: OrderPurchase[] = []): OrderView[] {
   const byKey = new Map<string, SaleLite[]>(), byNo = new Map<string, SaleLite[]>();
   for (const s of sales) {
     if (s.job_key) { const k = alnum(s.job_key); (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(s); }
@@ -117,9 +122,11 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
   }
   const payBy = new Map<string, PaymentRow[]>();
   for (const p of payments) (payBy.get(p.order_id) ?? payBy.set(p.order_id, []).get(p.order_id)!).push(p);
+  const purBy = new Map<string, OrderPurchase[]>();
+  for (const pu of purchases) (purBy.get(pu.order_key) ?? purBy.set(pu.order_key, []).get(pu.order_key)!).push(pu);
   const expBy = new Map<string, ExpenseRow[]>();
   for (const e of expenses) (expBy.get(e.order_id) ?? expBy.set(e.order_id, []).get(e.order_id)!).push(e);
-  return orders.map((o) => {
+  const views: OrderView[] = orders.map((o) => {
     const found = new Map<string, SaleLite>();
     for (const k of orderKeys(o)) for (const s of byKey.get(k) ?? []) found.set(s.id, s);
     for (const no of clean(o.invoice_refs).split(/[,;]+/)) { const k = alnum(no); if (k.length >= 3) for (const s of byNo.get(k) ?? []) found.set(s.id, s); }
@@ -139,8 +146,18 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
     const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + cost_reports_paid + (o.cost_delivery ?? 0));
     return { ...o, code: orderCode(o.job_ref) || orderCode(o.order_ref), costs, margin: o.net ? round2((o.net - costs) / o.net) : null,
       invoices, payments: pays, invoiced, cash, paid: round2(invoiced + cash), counted_date, counted_from,
-      expenses: exps, cost_reports_paid, cost_reports_open: sumOf(['submitted', 'approved']) };
+      expenses: exps, cost_reports_paid, cost_reports_open: sumOf(['submitted', 'approved']), ...actual(o, cost_reports_paid) };
   });
+  // the actual side: what the suppliers invoiced for this order (matched by the order's own codes)
+  function actual(o: OrderRow, paidReports: number) {
+    const seen = new Set<OrderPurchase>(); const mine: OrderPurchase[] = [];
+    for (const k of orderKeys(o)) for (const pu of purBy.get(k) ?? []) if (!seen.has(pu)) { seen.add(pu); mine.push(pu); }
+    if (!mine.length) return { purchases: [], actual_purchase: null, actual_costs: null, actual_margin: null };
+    const actual_purchase = round2(mine.reduce((s, x) => s + x.net, 0));
+    const actual_costs = round2(actual_purchase + (o.cost_install ?? 0) + paidReports + (o.cost_delivery ?? 0));
+    return { purchases: mine.sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? ''))), actual_purchase, actual_costs, actual_margin: o.net ? round2((o.net - actual_costs) / o.net) : null };
+  }
+  return views;
 }
 
 export interface CommissionMonth extends MonthCommission { month: number; orders: { id: string; code: string; customer: string | null; net: number; date: string }[] }
@@ -264,14 +281,26 @@ async function page<T>(table: string, cols: string, tenantId: string): Promise<T
 }
 /** Every order with its invoices and payments. `repUserId` limits it to one rep (a rep sees only their own). */
 export async function listOrderViews(tenantId: string, repUserId?: string | null): Promise<OrderView[]> {
-  const [orders, sales, pays, exps] = await Promise.all([
+  const [orders, sales, pays, exps, trade] = await Promise.all([
     page<any>('fin_orders', '*', tenantId),
     page<any>('fin_sales', 'id,invoice_no,invoice_date,job_key,net,kind,period_year,period_month', tenantId),
     page<any>('fin_order_payments', 'id,order_id,paid_date,amount,note', tenantId),
     listExpenses(tenantId),
+    loadTrade(tenantId),
   ]);
   const mine = repUserId ? orders.filter((o) => o.rep_user_id === repUserId) : orders;
-  return buildOrderViews(mine.map(rowOut), sales.map((s) => ({ ...s, net: Number(s.net) || 0 })), pays.map((p) => ({ ...p, amount: Number(p.amount) || 0 })), exps);
+  return buildOrderViews(mine.map(rowOut), sales.map((s) => ({ ...s, net: Number(s.net) || 0 })), pays.map((p) => ({ ...p, amount: Number(p.amount) || 0 })), exps, tradeAllocation(orders.map(rowOut), trade).purchases);
+}
+/** Trade purchase invoices split by order, judged against the whole register (not one rep's part of it). */
+export function tradeAllocation(orders: OrderRow[], trade: Awaited<ReturnType<typeof loadTrade>>) {
+  const keys = new Set<string>(); for (const o of orders) for (const k of orderKeys(o)) keys.add(k);
+  return allocatePurchases(trade.invoices, trade.lines, (code) => orderKeys({ order_ref: code }).some((k) => keys.has(k)));
+}
+/** The trade purchase invoices that need an order number written in monday's "Zlecenie" column. */
+export async function tradeToCheck(tenantId: string) {
+  const [orders, trade] = await Promise.all([page<any>('fin_orders', '*', tenantId), loadTrade(tenantId)]);
+  const r = tradeAllocation(orders.map(rowOut), trade);
+  return { toCheck: r.toCheck, invoices: trade.invoices.length, read: trade.invoices.filter((i) => i.pdf_status === 'ok').length };
 }
 /** Company turnover for the yearly bonus: net of all sales invoices counted in the year (Sales tab). */
 export async function companyTurnover(tenantId: string, year: number): Promise<number> {

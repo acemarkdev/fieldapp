@@ -8,6 +8,7 @@
 import { db } from './supabase';
 import { Monday, withMondayRetry } from './monday';
 import { getConfig, setConfig } from './store';
+import { readTradePdfs } from './tradeCosts';
 
 // The invoices board per environment. Only PROD touches the real board "FAKTURY WSZYSTKIE"; test and
 // local development use its copy "FAKTURY WSZYSTKIE _TEST" (same column ids), so test syncs can never
@@ -21,7 +22,7 @@ export const COST_ID_COLUMN_TITLE = 'Cost ID';
 const C = {
   date: 'data', due: 'data3', invoiceNo: 'tekst1', net: 'tekst0', vat: 'liczby6', gross: 'liczby4', status: 'status9',
   description: 'tekst', costKind: 'tekst61', costType: 'status_1', subcategory: 'tekst53', department: 'color_mkz3ghnq',
-  orderRef: 'tekst09', konto: 'dropdown',
+  orderRef: 'tekst09', konto: 'dropdown', files: 'pliki',
 } as const;
 
 // ---- pure rules --------------------------------------------------------------------------------
@@ -240,6 +241,13 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
       if (error) throw error;
     }
 
+    // Trade purchase invoices: read the KSeF PDF of new or changed ones and split their lines by order.
+    // A failure here must not lose the sync itself, so it is logged and the sync carries on.
+    p.phase = 'Reading trade invoice PDFs…'; p.done = 0; p.total = 0;
+    let pdfs = { read: 0, failed: 0 };
+    try { pdfs = await readTradePdfs(tenantId, new Map(items.map((it) => [it.id, it.cols[C.files] ?? null])), (d, t) => { p.done = d; p.total = t; }); }
+    catch (e: any) { console.error('[fin sync] trade PDFs', e?.message ?? e); }
+
     // Write the trusted Cost ID to the board wherever the board's column differs. Not recorded row by
     // row here: the next sync re-reads the column, so an interrupted run simply resumes.
     const toWrite = rows.filter((r) => r.cost_id && r.monday_cost_id !== r.cost_id).map((r) => ({ itemId: r.monday_item_id as string, value: r.cost_id as string }));
@@ -251,9 +259,10 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
       written += batch.length; p.done = written;
     }
 
-    const result = { scanned: items.length, added, updated, changed: rows.filter((r) => r.changed).length, removed: gone.length, ids_written: written };
+    const result = { scanned: items.length, added, updated, changed: rows.filter((r) => r.changed).length, removed: gone.length, ids_written: written, pdfs_read: pdfs.read, pdfs_failed: pdfs.failed };
     p.result = result; p.phase = 'Done';
-    await finish(result);
+    const { pdfs_read: _r, pdfs_failed: _f, ...stored } = result;   // the runs table has no columns for these
+    await finish(stored);
   } catch (e: any) {
     await finish({ error: (e?.message ?? String(e)).slice(0, 1000) });
     throw e;
