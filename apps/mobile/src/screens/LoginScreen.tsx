@@ -20,7 +20,7 @@ export default function LoginScreen({ onDemo }: { onDemo?: (email: string) => vo
     if (!configured) { setError('App not configured — set EXPO_PUBLIC_SUPABASE_URL and _ANON_KEY.'); return; }
     if (!email || !password) { setError('Enter your email and password.'); return; }
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });   // lowercase, as the office app does
     setBusy(false);
     // say what really went wrong: a wrong password reads differently from no internet or an unconfirmed email
     if (error) setError(/invalid login credentials/i.test(error.message) ? 'Invalid email or password.' : error.message);

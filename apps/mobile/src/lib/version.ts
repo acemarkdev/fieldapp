@@ -37,4 +37,6 @@
 //   code (R8), which Google Play asks for ("DEX code optimisation"). Needs a new store build.
 // 0.73.0 — Production time: users with the Production role see only the time screen — search a
 //   job's tasks, Start, Stop (starting another task stops the running one); hours today and recent entries.
-export const APP_VERSION = '0.73.0';
+// 0.73.1 — Login: the email is lowercased before sign-in (as the office app does), the real error is
+//   shown, and the login screen says which database the build uses (TEST / PROD).
+export const APP_VERSION = '0.73.1';
