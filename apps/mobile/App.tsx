@@ -18,6 +18,7 @@ import ImportScreen from './src/screens/ImportScreen';
 import MappingJobsScreen from './src/screens/MappingJobsScreen';
 import MappingStepperScreen from './src/screens/MappingStepperScreen';
 import ScheduleScreen from './src/screens/ScheduleScreen';
+import TimeScreen from './src/screens/TimeScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
 import { can, isFitter } from './src/lib/permissions';
@@ -99,7 +100,7 @@ export default function App() {
         </View>
       )}
       <View style={s.fill}>
-        {!job
+        {role === 'production' ? <TimeScreen /> : !job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
               ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />

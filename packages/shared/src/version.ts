@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.23.1';
+export const APP_VERSION = '1.24.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.24.0', date: '2026-10-14', changes: [
+    'Production time (replaces Clockify). New roles: Production (a worker \u2014 the phone app shows only the time screen: search a job\u2019s tasks, Start, Stop; starting another task stops the running one) and Production manager (office app: Production \u25b8 Production time only).',
+    'The manager imports the task list from the task file (columns A\u2013F, as today), adds or closes tasks, corrects or adds time entries, sets each worker\u2019s hourly rate, and exports the entries in the old Clockify layout with rate and amount in PLN.',
+    'Job costs: logged hours \u00d7 each worker\u2019s rate (the default labour rate where none is set) are added on top of the job\u2019s labour and hours; the job window shows them. Labour cells of such a job are not typed in the grid. A locked job counts only time started before it was locked. Needs migrations 0076 and 0077, and phone app 0.73.0.',
+  ] },
   { version: '1.23.1', date: '2026-10-14', changes: [
     'Purchase invoices: \u201cZlecenie\u201d on monday may now hold the order\u2019s Z number as well as its OK number. Invoices whose PDF has not been read yet say so (they were shown as \u201cNo PDF on the board\u201d); a sync now reads up to 400 PDFs. The list explains why a settlement invoice shows more not placed than its net.',
   ] },

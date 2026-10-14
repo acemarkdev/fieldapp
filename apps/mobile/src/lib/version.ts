@@ -35,4 +35,6 @@
 //   Requires migration 0062_plans_surveyor.sql (surveyor may create plans).
 // 0.72.1 — Build only, no change to screens: release builds now shrink and obfuscate the Android
 //   code (R8), which Google Play asks for ("DEX code optimisation"). Needs a new store build.
-export const APP_VERSION = '0.72.1';
+// 0.73.0 — Production time: users with the Production role see only the time screen — search a
+//   job's tasks, Start, Stop (starting another task stops the running one); hours today and recent entries.
+export const APP_VERSION = '0.73.0';

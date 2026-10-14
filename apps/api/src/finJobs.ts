@@ -103,11 +103,29 @@ export function effectiveSales(job: { sales: any; locked: boolean }, inv: { net:
   return { sales: typed, salesSource: 'typed', salesTyped: typed, salesInvoiced: null, salesInvoices: 0 };
 }
 
+/** Production time logged on a job, added on top of its labour: hours, and hours × each worker's rate. */
+export function withLogged(sum: JobSummary, sales: number | null, logged: { hours: number; cost: number; unrated: number } | undefined) {
+  if (!logged || (!logged.hours && !logged.cost)) return { ...sum, loggedHours: 0, loggedCost: 0, loggedUnrated: 0 };
+  const sums = { ...sum.sums, labour: round2(sum.sums.labour + logged.cost) };
+  const totalCost = round2(sum.totalCost + logged.cost);
+  const hasSales = sales !== null && sales !== undefined && Number(sales) !== 0;
+  const profit = sales === null || sales === undefined ? null : round2(Number(sales) - totalCost);
+  const pct = (n: number) => (hasSales ? Math.round((n / Number(sales)) * 10000) / 10000 : null);
+  return { ...sum, sums, hours: round2(sum.hours + logged.hours), totalCost, profit, margin: hasSales && profit !== null ? pct(profit) : null, labourPct: pct(sums.labour),
+    loggedHours: logged.hours, loggedCost: logged.cost, loggedUnrated: logged.unrated };
+}
+/** Logged labour per job; a locked job only counts time started before it was locked. */
+async function logged(tenantId: string, jobs: any[]) {
+  const cutoff = new Map<string, string>(); for (const j of jobs) if (j.locked && j.locked_at) cutoff.set(j.reference_key, j.locked_at);
+  const { loggedLabour } = await import('./prodTime');
+  return loggedLabour(tenantId, cutoff);
+}
 export async function listJobs(tenantId: string): Promise<any[]> {
   const [jobs, items, inv] = await Promise.all([selectAll('fin_jobs', '*', tenantId), selectAll('fin_job_items', 'job_id,kind,amount,hours', tenantId), invoicedByJob(tenantId)]);
   const by = new Map<string, any[]>();
   for (const it of items) { const a = by.get(it.job_id); if (a) a.push(it); else by.set(it.job_id, [it]); }
-  return jobs.map((j) => { const e = effectiveSales(j, inv.get(j.reference_key)); return { ...jobOut(j), ...e, ...summarizeJob(e.sales, by.get(j.id) ?? []) }; });
+  const lg = await logged(tenantId, jobs);
+  return jobs.map((j) => { const e = effectiveSales(j, inv.get(j.reference_key)); return { ...jobOut(j), ...e, ...withLogged(summarizeJob(e.sales, by.get(j.id) ?? []), e.sales, lg.get(j.reference_key)) }; });
 }
 export async function getJob(tenantId: string, id: string): Promise<{ job: any; items: any[] } | null> {
   const { data: j, error } = await db().from('fin_jobs').select('*').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
@@ -117,7 +135,8 @@ export async function getJob(tenantId: string, id: string): Promise<{ job: any; 
   if (it.error) throw it.error;
   const items = (it.data ?? []).map(itemOut);
   const e = effectiveSales(j, (await invoicedByJob(tenantId)).get(j.reference_key));
-  return { job: { ...jobOut(j), ...e, ...summarizeJob(e.sales, items) }, items };
+  const lg = await logged(tenantId, [j]);
+  return { job: { ...jobOut(j), ...e, ...withLogged(summarizeJob(e.sales, items), e.sales, lg.get(j.reference_key)) }, items };
 }
 
 export type Result<T = {}> = ({ ok: true } & T) | { ok: false; status: number; error: string };
@@ -275,6 +294,7 @@ export async function setJobCell(tenantId: string, jobId: string, by: string, b:
   const cur = await db().from('fin_job_items').select('*').eq('tenant_id', tenantId).eq('job_id', jobId).eq('kind', kind);
   if (cur.error) throw cur.error;
   if ((cur.data ?? []).some((l: any) => l.source === 'subiekt')) return fail(409, 'Material Cost (RW) of this job comes from Subiekt — change the RW document there.');
+  if (kind === 'labour') { const lg = await logged(tenantId, [e.job]); if ((lg.get(e.job.reference_key)?.hours ?? 0) > 0) return fail(409, 'This job has production time logged — add or change other labour in the job window.'); }
   const plan = planCellEdit(kind, field, (cur.data ?? []) as CellLine[], b?.value, await getLabourRate());
   if (plan.op === 'error') return fail(400, plan.error);
   if (plan.op === 'insert') { const r = await db().from('fin_job_items').insert({ tenant_id: tenantId, job_id: jobId, created_by: by, kind, ...plan.fields, note: 'Entered in the grid' }); if (r.error) throw r.error; }

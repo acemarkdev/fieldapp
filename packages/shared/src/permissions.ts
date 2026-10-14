@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager',
 };
 
 export type Capability =
@@ -36,7 +36,9 @@ export type Capability =
   | 'finops.view'      // Fin&Ops: company costs synced from the monday invoices board
   | 'finops.manage'    // Fin&Ops: accept an edited invoice as the new trusted record (admin)
   | 'sales.orders'     // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
-  | 'expenses.report'; // report an extra installation cost (allowance, fitting bonus…) against a sales order
+  | 'expenses.report'  // report an extra installation cost (allowance, fitting bonus…) against a sales order
+  | 'time.log'         // production: start / stop a task in the phone app
+  | 'time.manage';     // production: import tasks, correct time entries, set worker rates, export
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -64,6 +66,8 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'finops.view', label: 'Fin&Ops costs', desc: 'Company costs from the monday invoices board; run the sync' },
   { key: 'finops.manage', label: 'Manage Fin&Ops', desc: 'Accept edited invoices as the new trusted record' },
   { key: 'expenses.report', label: 'Report costs', desc: 'Report an extra installation cost against a sales order; sees only own reports' },
+  { key: 'time.log', label: 'Log production time', desc: 'Start and stop production tasks in the phone app' },
+  { key: 'time.manage', label: 'Manage production time', desc: 'Import tasks, correct time entries, set worker rates, export' },
   { key: 'sales.orders', label: 'Sales orders', desc: 'Sales orders register and commission; a Sales rep sees only their own orders' },
 ];
 
@@ -85,6 +89,9 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   sales_rep: ['sales.orders'],
   // Cost reports form only (extra installation costs on a sales order) — nothing else, no mobile app.
   acemark_fitter: ['expenses.report'],
+  // Production time: workers log time in the phone app; the manager runs the office pages only.
+  production: ['time.log'],
+  production_manager: ['time.manage'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone
