@@ -7,7 +7,8 @@ import { getDocumentProxy, extractText } from 'unpdf';
 import { db } from './supabase';
 import { Monday, withMondayRetry } from './monday';
 import { parseKsef, splitByOrder } from './ksefInvoice';
-import { okCode } from './subiekt';
+import { okCode, zNumbers } from './subiekt';
+import { orderCode } from './finOrders';
 
 export const TRADE_SUBCATEGORY = /^499\.V\b/i;
 export const TRADE_FROM_YEAR = 2026;
@@ -31,7 +32,7 @@ async function pdfText(monday: Monday, assetId: string): Promise<string> {
   return Array.isArray(text) ? text.join('\n') : String(text);
 }
 /** Read the PDFs of trade invoices that are new or whose file changed. `fileOf` gives each monday item's file-column text. */
-export async function readTradePdfs(tenantId: string, fileOf: Map<string, string | null>, onProgress?: (done: number, total: number) => void, limit = 150): Promise<{ read: number; failed: number }> {
+export async function readTradePdfs(tenantId: string, fileOf: Map<string, string | null>, onProgress?: (done: number, total: number) => void, limit = 400): Promise<{ read: number; failed: number }> {
   const rows: any[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db().from('fin_costs').select('id,monday_item_id,subcategory,period_year,removed,net,pdf_asset').eq('tenant_id', tenantId).order('id').range(from, from + 999);
@@ -77,7 +78,13 @@ export async function readTradePdfs(tenantId: string, fileOf: Map<string, string
 export interface TradeInvoice { id: string; supplier: string | null; invoice_no: string | null; invoice_date: string | null; net: number | null; order_ref: string | null; pdf_type: string | null; pdf_status: string | null; pdf_total: number | null; monday_item_id: string }
 export interface TradeLine { cost_id: string; net: number; advance: boolean; order_code: string | null; ref: string | null; name: string | null }
 export interface OrderPurchase { order_key: string; order_code: string; invoice_no: string | null; supplier: string | null; invoice_date: string | null; net: number; from: 'lines' | 'zlecenie' }
-export type TradeCheckReason = 'no_reference' | 'mismatch' | 'not_ksef' | 'no_pdf' | 'error' | 'unknown_order';
+export type TradeCheckReason = 'no_reference' | 'mismatch' | 'not_ksef' | 'no_pdf' | 'error' | 'unknown_order' | 'not_read';
+/** The order written in the board's "Zlecenie": an OK number, a Z number (an order produced in Orpiszew), or the text itself. */
+export function zlecenieCode(text: unknown): string | null {
+  const t = String(text ?? '').trim();
+  if (!t) return null;
+  return okCode(t) ?? zNumbers(t)[0] ?? (orderCode(t) || null);
+}
 export interface TradeCheck { invoice: TradeInvoice; reason: TradeCheckReason; unassigned: number; refs: string[] }
 /** Each invoice's cost per order, and the invoices that need the order written in "Zlecenie".
  *  `orderExists(code)` says whether a code names an order in the register. */
@@ -87,14 +94,15 @@ export function allocatePurchases(invoices: TradeInvoice[], lines: TradeLine[], 
   const purchases: OrderPurchase[] = [], toCheck: TradeCheck[] = [];
   for (const inv of invoices) {
     if (inv.pdf_type === 'advance') continue;                       // an advance is not a cost
-    const zl = okCode(inv.order_ref);                                 // the order written on the board, if any
+    const zl = zlecenieCode(inv.order_ref);                           // the order written on the board, if any
     const add = (code: string, net: number, from: OrderPurchase['from']) => purchases.push({ order_key: alnum(code), order_code: code, invoice_no: inv.invoice_no, supplier: inv.supplier, invoice_date: inv.invoice_date, net: round2(net), from });
     const own = linesBy.get(inv.id) ?? [];
     const readable = inv.pdf_status === 'ok' && own.length > 0;
     if (!readable) {
       // no usable lines: the whole invoice goes to the order in "Zlecenie", else it waits
       if (zl && orderExists(zl)) add(zl, inv.net ?? 0, 'zlecenie');
-      else toCheck.push({ invoice: inv, reason: zl ? 'unknown_order' : ((inv.pdf_status as TradeCheckReason) || 'no_pdf'), unassigned: inv.net ?? 0, refs: [] });
+      // no pdf_status yet = this invoice's PDF has not been read (a sync covering its month reads it)
+      else toCheck.push({ invoice: inv, reason: zl ? 'unknown_order' : ((inv.pdf_status as TradeCheckReason) || 'not_read'), unassigned: inv.net ?? 0, refs: [] });
       continue;
     }
     const per = new Map<string, number>(); let rest = 0; const restRefs = new Set<string>(); let unknown = false;

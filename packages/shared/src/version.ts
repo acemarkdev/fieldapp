@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.23.0';
+export const APP_VERSION = '1.23.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.23.1', date: '2026-10-14', changes: [
+    'Purchase invoices: \u201cZlecenie\u201d on monday may now hold the order\u2019s Z number as well as its OK number. Invoices whose PDF has not been read yet say so (they were shown as \u201cNo PDF on the board\u201d); a sync now reads up to 400 PDFs. The list explains why a settlement invoice shows more not placed than its net.',
+  ] },
   { version: '1.23.0', date: '2026-10-14', changes: [
     'Fin&Ops \u25b8 Sales orders: actual cost per trade order. Trade purchase invoices on the monday invoice board (499.V Handel, from 2026) are read from their KSeF PDF during the monday costs sync, and each line goes to the order named in its \u201cRef.: OK \u2026\u201d (a line without one takes the order of a line with the same WEB number). Advance invoices and \u201cZaliczka\u201d lines are not a cost; corrections count as the change they make. A PDF is used only when its lines add up to the net on the board.',
     'New columns Actual cost and Actual margin (actual purchase + installation incl. paid cost reports + delivery), and the order window lists the purchase invoices. The new Purchase invoices button (finance) lists what could not be placed; write the OK number in the invoice\u2019s \u201cZlecenie\u201d column on monday and the next sync places it. Needs migration 0075.',

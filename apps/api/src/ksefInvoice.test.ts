@@ -69,6 +69,10 @@ ok('an unreadable or mismatching PDF: whole invoice to the "Zlecenie" order, els
 const r4 = allocatePurchases([inv('7')], [L('7', 300, 'OK DE999999')], known);
 ok('an OK number that is not in the register is listed, not guessed', !r4.purchases.length && r4.toCheck[0].reason === 'unknown_order', r4);
 
+const knownZ = (code: string) => ['OK DE203066', 'Z.339'].includes(code);
+const r5 = allocatePurchases([inv('10', { pdf_status: null, order_ref: 'Z.339', net: 4382.57 }), inv('11', { pdf_status: null, order_ref: 'Buckingham' }), inv('12', { pdf_status: null })], [], knownZ);
+ok('"Zlecenie" may hold a Z number; a name is not an order; an unread PDF says so', r5.purchases.length === 1 && r5.purchases[0].order_code === 'Z.339' && r5.toCheck.map((t) => t.reason).join() === 'unknown_order,not_read', r5);
+
 // The order gets its actual cost
 const order: OrderRow = { id: 'o1', rep_user_id: null, rep_name: null, company: 'Acemark', supplier: 'EKO_OKNA', material: 'PVC', customer: 'UNAL', order_ref: 'OK DE203066- UNAL BV: Fatma', job_ref: null, status: 'accepted', offer_year: 2026, offer_month: 9, enquiry_month: 9, net: 30000, cost_purchase: 17000, cost_install: 2000, cost_delivery: 1000, planned_year: null, planned_month: null, first_payment_date: null, invoice_refs: null, note: null, comment: null };
 const pr = allocatePurchases([inv('8'), inv('9', { invoice_no: 'FR/K2/26/10/0248' })], [L('8', 500, 'OK DE203066'), L('9', 18166.11, 'OK DE203066')], known).purchases;
