@@ -5,6 +5,9 @@ import { signInWithMicrosoft } from '../lib/auth';
 import { C } from '../lib/theme';
 import { APP_VERSION } from '../lib/version';
 
+// which database this build talks to — a login works only where the user exists
+const DB = /kmmnlbksxncdzlorobcc/.test(process.env.EXPO_PUBLIC_SUPABASE_URL ?? '') ? 'TEST' : /swvquulcchcwyyhpjfsm/.test(process.env.EXPO_PUBLIC_SUPABASE_URL ?? '') ? 'PROD' : '?';
+
 export default function LoginScreen({ onDemo }: { onDemo?: (email: string) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,7 +22,8 @@ export default function LoginScreen({ onDemo }: { onDemo?: (email: string) => vo
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);
-    if (error) setError('Invalid email or password.');
+    // say what really went wrong: a wrong password reads differently from no internet or an unconfirmed email
+    if (error) setError(/invalid login credentials/i.test(error.message) ? 'Invalid email or password.' : error.message);
     // On success, App's auth listener swaps to the main screens.
   }
 
@@ -83,7 +87,7 @@ export default function LoginScreen({ onDemo }: { onDemo?: (email: string) => vo
           </TouchableOpacity>
         </View>
 
-        <Text style={s.ver}>v{APP_VERSION}</Text>
+        <Text style={s.ver}>v{APP_VERSION} · {DB}</Text>
       </View>
     </KeyboardAvoidingView>
   );
