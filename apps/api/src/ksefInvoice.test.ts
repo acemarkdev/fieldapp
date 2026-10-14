@@ -65,7 +65,7 @@ const r2 = allocatePurchases([inv('1', { order_ref: 'OK PL203158' })], [L('1', 6
 ok('"Zlecenie" on the board takes the lines that have no order', r2.purchases.map((p) => p.order_code + ':' + p.net).sort().join() === 'OK DE202763:600,OK PL203158:400' && !r2.toCheck.length, r2);
 ok('advance invoices and "Zaliczka" lines are never a cost', !allocatePurchases([inv('2', { pdf_type: 'advance', pdf_status: 'ok' })], [], known).purchases.length && allocatePurchases([inv('3')], [L('3', -500, null, true), L('3', 1500, 'OK DE203066')], known).purchases[0].net === 1500);
 const r3 = allocatePurchases([inv('4', { pdf_status: 'not_ksef', order_ref: 'Idris' }), inv('5', { pdf_status: 'mismatch' }), inv('6', { pdf_status: 'no_pdf', order_ref: 'OK DE203066', net: 219.71 })], [L('5', 999, 'OK DE203066')], known);
-ok('an unreadable or mismatching PDF: whole invoice to the "Zlecenie" order, else to check', r3.purchases.length === 1 && r3.purchases[0].net === 219.71 && r3.purchases[0].from === 'zlecenie' && r3.toCheck.map((t) => t.reason).join() === 'not_ksef,mismatch', r3);
+ok('an unreadable or mismatching PDF: whole invoice to the "Zlecenie" order; a name there is reported as not an order', r3.purchases.length === 1 && r3.purchases[0].net === 219.71 && r3.purchases[0].from === 'zlecenie' && r3.toCheck.map((t) => t.reason).join() === 'unknown_order,mismatch', r3);
 const r4 = allocatePurchases([inv('7')], [L('7', 300, 'OK DE999999')], known);
 ok('an OK number that is not in the register is listed, not guessed', !r4.purchases.length && r4.toCheck[0].reason === 'unknown_order', r4);
 
