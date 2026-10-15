@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/prodTime.test.ts   (rows as in the real wejście / wyjście sheets)
-import { jobRefOf, taskFromRow, labourByJob, exportRow, hms, hoursBetween } from './prodTime';
+import { jobRefOf, taskFromRow, labourByJob, exportRow, hms, hoursBetween, timesChanged } from './prodTime';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -22,6 +22,10 @@ ok('entries after a job was locked do not count', labourByJob(entries, new Map()
 ok('h:m:s', hms(0.21027) === '00:12:37' && hms(2.1) === '02:06:00' && hoursBetween('2026-08-18T04:43:23Z', '2026-08-18T06:49:26Z').toFixed(2) === '2.10');
 const row = exportRow({ task_name: 'Z_394_pakowanie', user_name: 'G.kozlowski', user_email: 'g@x.pl', note: null, started_at: '2026-08-19T07:31:46Z', ended_at: '2026-08-19T07:44:23Z', created_at: '2026-08-19T07:44:23Z' }, 50);
 ok('export row in the old layout, Polish time', row.join('|') === 'Produkcja|||Z_394_pakowanie||G.kozlowski||g@x.pl||Yes|2026-08-19|09:31:46|2026-08-19|09:44:23|00:12:37|0.21|50|10.51|2026-08-19', row.join('|'));
+
+ok('only start or end changes count as a time edit', !timesChanged({ started_at: '2026-10-15T06:00:00Z', ended_at: '2026-10-15T07:00:00Z' }, { started_at: '2026-10-15T06:00:00.000Z', ended_at: '2026-10-15T07:00:00+00:00' })
+  && timesChanged({ started_at: '2026-10-15T06:00:00Z', ended_at: '2026-10-15T07:00:00Z' }, { started_at: '2026-10-15T06:05:00Z', ended_at: '2026-10-15T07:00:00Z' })
+  && timesChanged({ started_at: '2026-10-15T06:00:00Z', ended_at: null }, { started_at: '2026-10-15T06:00:00Z', ended_at: '2026-10-15T07:00:00Z' }) && timesChanged(null, { started_at: 'x' }));
 
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('prodTime: all passed');

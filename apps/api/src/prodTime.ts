@@ -80,14 +80,16 @@ export async function loggedLabour(tenantId: string, cutoff: Map<string, string>
 }
 
 export async function listTasks(tenantId: string): Promise<any[]> { return all('prod_tasks', '*', tenantId, 'export_name'); }
+/** Every row becomes a task — the same set may be loaded again for an order (a new batch); the
+ *  manager closes the old set. `existing` counts the new tasks whose name is already open, as a heads-up. */
 export async function importTasks(tenantId: string, by: string, rows: unknown[][]): Promise<{ added: number; existing: number; invalid: number }> {
-  const have = new Set((await all('prod_tasks', 'export_name', tenantId)).map((t) => t.export_name));
+  const open = new Set((await all('prod_tasks', 'export_name,active', tenantId)).filter((t) => t.active).map((t) => t.export_name));
   const fresh: TaskRow[] = []; let existing = 0, invalid = 0;
   for (const r of rows) {
     const t = taskFromRow(Array.isArray(r) ? r : []);
     if (!t) { invalid++; continue; }
-    if (have.has(t.export_name)) { existing++; continue; }
-    have.add(t.export_name); fresh.push(t);
+    if (open.has(t.export_name)) existing++;
+    fresh.push(t);
   }
   for (let i = 0; i < fresh.length; i += 200) { const { error } = await db().from('prod_tasks').insert(fresh.slice(i, i + 200).map((t) => ({ tenant_id: tenantId, created_by: by, ...t }))); if (error) throw error; }
   return { added: fresh.length, existing, invalid };
@@ -101,8 +103,35 @@ export async function addTask(tenantId: string, by: string, b: any): Promise<Res
   return { ok: true, id: data.id };
 }
 export async function setTaskActive(tenantId: string, id: string, active: boolean): Promise<boolean> {
-  const { data, error } = await db().from('prod_tasks').update({ active }).eq('tenant_id', tenantId).eq('id', id).select('id');
-  if (error) throw error; return !!(data ?? []).length;
+  return (await setTasksActive(tenantId, [id], active)) > 0;
+}
+/** Close or reopen many tasks at once. */
+export async function setTasksActive(tenantId: string, ids: string[], active: boolean): Promise<number> {
+  const uniq = [...new Set(ids.map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+  let n = 0;
+  for (let i = 0; i < uniq.length; i += 200) {
+    const { data, error } = await db().from('prod_tasks').update({ active }).eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 200)).select('id');
+    if (error) throw error; n += (data ?? []).length;
+  }
+  return n;
+}
+
+// ---- the admin's log of time changes (start / end only) ---------------------------------------------
+export interface Actor { id: string; name: string; role: string }
+/** True when the start or end differs — only those changes are logged (not comments, not task). */
+export const timesChanged = (a: { started_at?: string | null; ended_at?: string | null } | null, b: { started_at?: string | null; ended_at?: string | null } | null) =>
+  !a || !b || Date.parse(a.started_at ?? '') !== Date.parse(b.started_at ?? '') || (a.ended_at ? Date.parse(a.ended_at) : null) !== (b.ended_at ? Date.parse(b.ended_at) : null);
+async function logEdit(tenantId: string, action: 'create' | 'update' | 'delete', before: any | null, after: any | null, actor: Actor): Promise<void> {
+  const e = after ?? before;
+  const { error } = await db().from('time_edit_log').insert({ tenant_id: tenantId, entry_id: e?.id ?? null, worker_name: e?.user_name ?? null, task_name: e?.task_name ?? null, action,
+    old_start: before?.started_at ?? null, old_end: before?.ended_at ?? null, new_start: after?.started_at ?? null, new_end: after?.ended_at ?? null,
+    actor_id: actor.id, actor_name: actor.name, actor_role: actor.role, source: 'office' });
+  if (error && !/time_edit_log/.test(error.message)) throw error;   // before migration 0078 the log just isn't kept
+}
+export async function listEditLog(tenantId: string, limit = 1000): Promise<any[]> {
+  const { data, error } = await db().from('time_edit_log').select('*').eq('tenant_id', tenantId).order('at', { ascending: false }).limit(limit);
+  if (error) { if (/time_edit_log/.test(error.message)) return []; throw error; }
+  return data ?? [];
 }
 
 export async function listEntries(tenantId: string, from: string | null, to: string | null): Promise<any[]> {
@@ -119,7 +148,8 @@ function entryFields(b: any): Result<{ fields: Record<string, any> }> {
   return { ok: true, fields: { started_at: new Date(s).toISOString(), ended_at: Number.isFinite(e) ? new Date(e).toISOString() : null, note: clean(b?.note).slice(0, 300) || null } };
 }
 /** The manager adds an entry for a worker (forgot to start) or corrects one. */
-export async function saveEntry(tenantId: string, by: string, id: string | null, b: any): Promise<Result<{ id: string }>> {
+export async function saveEntry(tenantId: string, actor: Actor, id: string | null, b: any): Promise<Result<{ id: string }>> {
+  const by = actor.name;
   const f = entryFields(b); if (!f.ok) return f;
   const fields: Record<string, any> = { ...f.fields, source: 'manual', edited_by: by };
   if (b?.task_id) {
@@ -131,16 +161,25 @@ export async function saveEntry(tenantId: string, by: string, id: string | null,
     const u = await db().from('app_users').select('id,name,email').eq('tenant_id', tenantId).eq('id', String(b?.user_id ?? '')).maybeSingle();
     if (u.error) throw u.error; if (!u.data) return fail(400, 'Choose the worker.');
     if (!fields.ended_at) return fail(400, 'Enter the end.');
-    const { data, error } = await db().from('time_entries').insert({ tenant_id: tenantId, user_id: u.data.id, user_name: u.data.name, user_email: u.data.email, ...fields }).select('id').single();
-    if (error) throw error; return { ok: true, id: data.id };
+    const { data, error } = await db().from('time_entries').insert({ tenant_id: tenantId, user_id: u.data.id, user_name: u.data.name, user_email: u.data.email, ...fields }).select('*').single();
+    if (error) throw error;
+    await logEdit(tenantId, 'create', null, data, actor);
+    return { ok: true, id: data.id };
   }
-  const { data, error } = await db().from('time_entries').update(fields).eq('tenant_id', tenantId).eq('id', id).select('id');
+  const cur = await db().from('time_entries').select('*').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
+  if (cur.error) throw cur.error; if (!cur.data) return fail(404, 'Entry not found.');
+  const { data, error } = await db().from('time_entries').update(fields).eq('tenant_id', tenantId).eq('id', id).select('*');
   if (error) { if (/one_running/.test(error.message)) return fail(409, 'This worker already has a running task.'); throw error; }
-  return (data ?? []).length ? { ok: true, id } : fail(404, 'Entry not found.');
+  if (!(data ?? []).length) return fail(404, 'Entry not found.');
+  if (timesChanged(cur.data, data![0])) await logEdit(tenantId, 'update', cur.data, data![0], actor);
+  return { ok: true, id };
 }
-export async function deleteEntry(tenantId: string, id: string): Promise<boolean> {
-  const { data, error } = await db().from('time_entries').delete().eq('tenant_id', tenantId).eq('id', id).select('id');
-  if (error) throw error; return !!(data ?? []).length;
+export async function deleteEntry(tenantId: string, id: string, actor: Actor): Promise<boolean> {
+  const { data, error } = await db().from('time_entries').delete().eq('tenant_id', tenantId).eq('id', id).select('*');
+  if (error) throw error;
+  if (!(data ?? []).length) return false;
+  await logEdit(tenantId, 'delete', data![0], null, actor);
+  return true;
 }
 export async function listRates(tenantId: string): Promise<Map<string, number>> { return new Map((await all('worker_rates', 'user_id,rate', tenantId, 'user_id')).map((r) => [r.user_id, Number(r.rate)])); }
 export async function setRate(tenantId: string, by: string, userId: string, rate: number | null): Promise<Result> {

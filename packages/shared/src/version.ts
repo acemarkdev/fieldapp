@@ -1,11 +1,18 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.24.0';
+export const APP_VERSION = '1.25.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.25.0', date: '2026-10-15', changes: [
+    'Production time: the same task set can be loaded again for an order (every row becomes a task; the import says how many have the same name as an open task, so the manager can close the old set).',
+    'A \u201cNow running\u201d box shows who is working on which task and for how long; the page refreshes itself every 20 seconds (not while a dialog is open or you are typing).',
+    'Tasks screen: search across job, operation, ID and task name; \u201cHide closed\u201d; checkboxes with select all shown, and Close / Reopen selected.',
+    'Admins only: a Change log tab with every change to an entry\u2019s start or end time \u2014 who, from the phone or the office, before and after. Needs migration 0078.',
+    'Office sign-in no longer runs out after an hour: the session is renewed automatically, so nobody is logged out in the middle of the day.',
+  ] },
   { version: '1.24.0', date: '2026-10-14', changes: [
     'Production time (replaces Clockify). New roles: Production (a worker \u2014 the phone app shows only the time screen: search a job\u2019s tasks, Start, Stop; starting another task stops the running one) and Production manager (office app: Production \u25b8 Production time only).',
     'The manager imports the task list from the task file (columns A\u2013F, as today), adds or closes tasks, corrects or adds time entries, sets each worker\u2019s hourly rate, and exports the entries in the old Clockify layout with rate and amount in PLN.',
