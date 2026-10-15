@@ -39,4 +39,7 @@
 //   job's tasks, Start, Stop (starting another task stops the running one); hours today and recent entries.
 // 0.73.1 — Login: the email is lowercased before sign-in (as the office app does), the real error is
 //   shown, and the login screen says which database the build uses (TEST / PROD).
-export const APP_VERSION = '0.73.1';
+// 0.74.0 — Production time: compact clock box, "Moje zadania" (last 6 tasks used, Z number + task, one tap
+//   to switch), today's entries can be corrected (start/end time ±1/±15 min or typed, never the date) and
+//   commented (100 characters); older entries are locked (the production manager changes them).
+export const APP_VERSION = '0.74.0';
