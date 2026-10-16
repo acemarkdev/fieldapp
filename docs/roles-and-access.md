@@ -24,9 +24,9 @@
 - **Subiekt agent** (no user) — `POST /api/agent/subiekt` with the `x-agent-key` header; the key is created by an admin in Fin&Ops ▸ Sales ▸ Subiekt and only its hash is kept in `server_config`. The agent can do nothing but post a snapshot of Subiekt documents. `fin_subiekt_docs` is server-only (0074). Viewing the to-check list and ticking "not a job" needs `finops.view`; a new key needs `finops.manage`.
 
 - **production** ("Production") — phone app time screen only (`time.log`): reads active `prod_tasks` and its own `time_entries` (RLS), starts/stops through `prod_start` / `prod_stop` (security definer). The office server refuses everything but `/api/me`; `0077_production_time.sql` blocks every other table.
-- **production_manager** ("Production manager") — office app Production ▸ Production time only (`time.manage`): tasks, entries, worker rates (`worker_rates`, server-only), export. Server allow-list `/api/me`, `/api/production*`; blocked from all tables in the database.
+- **production_manager** ("Production manager") — office app Production ▸ Production time (`time.manage`): tasks, entries, worker rates (`worker_rates`, server-only), export; and Production ▸ Cortizo profiles (`stock.view`, read-only). Server allow-list `/api/me`, `/api/production*`, `/api/cortizo/*`; blocked from all tables in the database.
 
-- **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
+- **logistics** — office app **Logistics** menu only: **Labels** (Archimede production PDF → A4 sheet of window/door labels) and **Confirmations** (shareable report sign-off links); plus Production ▸ **Cortizo profiles** (`stock.view`, read-only: catalogue references with their Subiekt stock, `/api/cortizo/*`). No jobs, items, finance or anything else — the office server refuses every other endpoint for this role, and `0053_logistics_scope.sql` blocks all tables for it in the database (re-run that file after adding new tables). Admins also have both.
 
 ## Language
 
