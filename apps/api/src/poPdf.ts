@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getJobByRef, listSurveyItems, userNames, requirementNamesForClientCode } from './store';
+import { listJobSpecRows, jobCustomerId, resolveItemSpec, resolveJobSpec } from './specStore';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const STYLES_DIR = join(__dir, '../../mobile/assets/styles');
@@ -38,6 +39,8 @@ function shortCode(it: any): string {
   return String(it.item_code ?? '').trim();
 }
 
+// The built-in PDF fonts (WinAnsi) have no ≤ / ≥ / ✓ glyphs: spell them out.
+const pdfText = (v: string) => v.replace(/≤/g, '<=').replace(/≥/g, '>=').replace(/[✓✔]/g, 'Yes');
 const s = (v: any) => (v == null || v === '') ? '—' : String(v);
 const dim = (it: any) => (it.width_mm || it.height_mm) ? `${it.width_mm ?? '—'} × ${it.height_mm ?? '—'}` : '—';
 const joinParts = (...xs: any[]) => xs.map((x) => (x == null || x === '') ? '' : String(x)).filter(Boolean).join(' · ') || '—';
@@ -51,6 +54,7 @@ export interface PoPdfData {
   readyBy?: string | null;
   readyAt?: string | null;
   requirements?: string[];   // customer's contractual requirements (Pass24, Building control, …)
+  jobSpec?: { label: string; value: string }[];   // PO-wide specification (customer / job level)
 }
 
 const stamp = (d: Date | string | null | undefined) => {
@@ -113,6 +117,25 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
   }
 
   y = Math.max(y, hy) + 10;
+  // ---------- PO-wide specification (customer / job level, printed once) ----------
+  const js = data.jobSpec || [];
+  if (js.length) {
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(PRIMARY).text('Specification (all items unless stated on the item)', L, y);
+    y += 13;
+    const colW = (W - 12) / 2;
+    const cell = (x: { label: string; value: string }, cx: number) => {
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(MUTED).text(x.label + ': ', cx, y, { width: colW, continued: true })
+        .font('Helvetica').fillColor(INK).text(x.value);
+      return doc.font('Helvetica').fontSize(8).heightOfString(x.label + ': ' + x.value, { width: colW });
+    };
+    for (let i = 0; i < js.length; i += 2) {
+      if (y + 12 > BOTTOM) { doc.addPage(); y = doc.page.margins.top; }
+      const h1 = cell(js[i], L);
+      const h2 = js[i + 1] ? cell(js[i + 1], L + colW + 12) : 0;
+      y += Math.max(11, h1 + 2, h2 + 2);
+    }
+    y += 6;
+  }
   doc.moveTo(L, y).lineTo(R, y).strokeColor(LINE).lineWidth(1).stroke();
   y += 10;
 
@@ -133,9 +156,19 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
 
 
   data.items.forEach((it, idx) => {
-    if (y + CARD_H > BOTTOM) { doc.addPage(); y = doc.page.margins.top; }
+    // The item's own order-form values (set at elevation / flat / room type / item) in a band under the spec.
+    const specLine = String(it.spec_line ?? '');
+    const specH = specLine ? doc.font('Helvetica').fontSize(8).heightOfString(specLine, { width: W - 16 }) + 18 : 0;
+    const cardH = CARD_H + specH;
+    if (y + cardH > BOTTOM) { doc.addPage(); y = doc.page.margins.top; }
     // card border
-    doc.roundedRect(L, y, W, CARD_H, 6).lineWidth(0.8).strokeColor(LINE).stroke();
+    doc.roundedRect(L, y, W, cardH, 6).lineWidth(0.8).strokeColor(LINE).stroke();
+    if (specLine) {
+      const sy = y + CARD_H - 4;
+      doc.moveTo(L + 8, sy).lineTo(R - 8, sy).strokeColor(LINE).lineWidth(0.5).stroke();
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor(PRIMARY).text('ORDER FORM' + (it.item_type ? ' · ' + String(it.item_type).toUpperCase() : ''), L + 8, sy + 4, { width: W - 16 });
+      doc.font('Helvetica').fontSize(8).fillColor(INK).text(specLine, L + 8, sy + 14, { width: W - 16 });
+    }
     // header bar
     doc.save(); doc.roundedRect(L, y, W, 22, 6).fill(PRIMARY); doc.rect(L, y + 11, W, 11).fill(PRIMARY); doc.restore();
     const loc = [it.block, it.elevation, it.flat ? 'Flat ' + it.flat : '', it.floor ? 'Fl ' + it.floor : '', roomName(it.room_code), it.item_code].filter(Boolean).join(' · ');
@@ -195,7 +228,7 @@ export function renderPoPdf(data: PoPdfData): Promise<Buffer> {
     doc.font('Helvetica-Bold').fontSize(9).fillColor(INK).text(wmm && hmm ? `${wmm} × ${hmm} mm` : 'Size —', rightX, ry2, { width: rightW, align: 'center' });
     ry2 += 12;
     if (dc) { doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text('Style ' + dc + (mu.length ? '  ·  mullions from left' : '') + (tr.length ? (mu.length ? ', transoms from top' : '  ·  transoms from top') : ''), rightX, ry2, { width: rightW, align: 'center' }); }
-    y += CARD_H + GAP;
+    y += cardH + GAP;
   });
 
   // footer page numbers
@@ -224,6 +257,15 @@ const PO_SORTERS: Record<PoSort, (a: any, b: any) => number> = {
   code:  (a, b) => nat(a.full_code, b.full_code),
 };
 
+/** "Frame finish: Foil · Trickle vent size (EA): 5,000 EA …" — values set at elevation, flat, room
+ *  type or item level that the card does not print already (no column fields, nothing PO-wide). */
+export function itemSpecLine(spec: ReturnType<typeof resolveItemSpec>): string {
+  return spec
+    .filter((r) => r.value && !r.def.column && (r.level === 'elevation' || r.level === 'flat' || r.level === 'room' || r.level === 'item'))
+    .map((r) => pdfText(r.def.label + ': ' + r.value))
+    .join('  ·  ');
+}
+
 /** Fetch a job's Surveyed items for the given phase and render the PO PDF. */
 export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: number, generatedBy?: string | null, sort: PoSort = 'flat'): Promise<{ buffer: Buffer; job: any }> {
   const job = await getJobByRef(jobRef);
@@ -239,6 +281,16 @@ export async function buildJobPoPdf(jobRef: string, tenantId: string, phase: num
   const readyAt: string | null = readyRow?.po_ready_at ?? null;
   if (readyRow?.po_ready_by) { const nm = await userNames([readyRow.po_ready_by]); readyBy = nm[readyRow.po_ready_by] ?? null; }
   const requirements = await requirementNamesForClientCode(tenantId, job.client_code);
-  const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date(), generatedBy: generatedBy ?? null, readyBy, readyAt, requirements });
+  // Specification: PO-wide values once in the header; each item lists what is set below job level.
+  const customerId = await jobCustomerId(tenantId, job.client_code);
+  const rows = await listJobSpecRows(tenantId, job.id, customerId);
+  const jobSpec = resolveJobSpec(rows, { jobId: job.id, customerId }).map((x) => ({ label: pdfText(x.label), value: pdfText(x.value) }));
+  for (const it of items as any[]) {
+    const spec = resolveItemSpec(it, rows, { jobId: job.id, customerId });
+    // A column field left empty on the item takes its inherited value (e.g. laminated glass for every kitchen).
+    for (const r of spec) if (r.def.column && r.value && r.level !== 'item' && r.def.merge !== 'concat' && (it[r.def.column] == null || it[r.def.column] === '')) it[r.def.column] = r.value;
+    it.spec_line = itemSpecLine(spec);
+  }
+  const buffer = await renderPoPdf({ job, phase, items, generatedAt: new Date(), generatedBy: generatedBy ?? null, readyBy, readyAt, requirements, jobSpec });
   return { buffer, job };
 }

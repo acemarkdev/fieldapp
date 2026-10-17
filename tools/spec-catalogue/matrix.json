@@ -1,0 +1,1042 @@
+{
+ "F": {
+  "company": [
+   "Company name",
+   "Buyer company on the Emplas form",
+   "1:O"
+  ],
+  "postcode": [
+   "Company postcode",
+   "",
+   "1:O"
+  ],
+  "contact": [
+   "Contact name",
+   "",
+   "1:O"
+  ],
+  "signed": [
+   "Signed / on behalf of / date",
+   "Authorises manufacture; changes only within 24h of acknowledgement",
+   "1:O"
+  ],
+  "yourref": [
+   "Your reference / PO number",
+   "",
+   "2:O"
+  ],
+  "quoteorder": [
+   "Quote or Order",
+   "QUOTE / ORDER tick box",
+   "2:O"
+  ],
+  "delivery": [
+   "Requested delivery date",
+   "",
+   "2:O"
+  ],
+  "emplasno": [
+   "Emplas order no. / quote no.",
+   "Filled by Emplas on acknowledgement",
+   "2:O"
+  ],
+  "clientname": [
+   "Client name",
+   "Shown on Inline Patio form",
+   "2:O"
+  ],
+  "pages": [
+   "Page __ of __",
+   "Auto-generated per PO",
+   "2:O"
+  ],
+  "docLnote": [
+   "“Have you considered Document L?” statement",
+   "Requirements to be written in notes / additional info",
+   "2:O",
+   "Part L"
+  ],
+  "docFnote": [
+   "Document F responsibility",
+   "Installer is responsible for ordering the correct vent spec, not Emplas",
+   "1:O",
+   "Part F"
+  ],
+  "worktype": [
+   "Work type: replacement vs new build",
+   "Replacement in existing dwelling / new build / extension. Decides whether Part O and Part Q apply",
+   "2:O",
+   "Parts L, O, Q"
+  ],
+  "uvalue": [
+   "Maximum window/door U-value",
+   "Uw ≤ 1.4 W/m²K for replacements (ADL 2023). Energy rating A is Emplas standard",
+   "2:O",
+   "Part L"
+  ],
+  "glazunit": [
+   "Glazing unit build",
+   "Double / triple, Low-E, argon, warm-edge spacer; WER A / A+ / A++",
+   "2:O",
+   "Part L"
+  ],
+  "existvents": [
+   "Existing trickle vents present?",
+   "If yes, new windows need vents of at least the same equivalent area",
+   "6:S",
+   "Part F"
+  ],
+  "bedrooms": [
+   "Number of bedrooms",
+   "Whole-dwelling rate 1 bed 19 l/s … 5 bed 43 l/s; drives vent count",
+   "4:M",
+   "Part F"
+  ],
+  "storeys": [
+   "Dwelling on one floor or several",
+   "Single floor: 10,000 mm² living/kitchen; multi-floor: 8,000 mm²",
+   "4:M",
+   "Part F"
+  ],
+  "mechvent": [
+   "Mechanical extract / MVHR installed",
+   "Continuous MEV: vents = bedrooms + 2; MVHR may remove need for trickle vents",
+   "4:S",
+   "Part F"
+  ],
+  "roomvent": [
+   "Background vent area per room",
+   "Living & kitchen 8,000 / 10,000 mm² EA; bathroom 4,000; utility & WC no minimum",
+   "5:O",
+   "Part F"
+  ],
+  "ventcount": [
+   "Minimum number of background vents",
+   "At least 5 in dwelling (4 for 1-bed), or bedrooms + 2 with continuous MEV",
+   "4:O",
+   "Part F"
+  ],
+  "ventheight": [
+   "Trickle vent height",
+   "Vents ≥ 1.7 m above floor to avoid draughts",
+   "6:O",
+   "Part F"
+  ],
+  "nightlatch": [
+   "Night-vent / night-latch position",
+   "Not accepted as background ventilation",
+   "1:O",
+   "Part F"
+  ],
+  "roomtype": [
+   "Room type",
+   "Bedroom, living, kitchen, bathroom, WC, utility, hall/landing",
+   "5:M",
+   "Parts B, F, K"
+  ],
+  "roomarea": [
+   "Room floor area (m²)",
+   "Needed for purge opening and Part O limits",
+   "5:M",
+   "Parts F, O"
+  ],
+  "purge": [
+   "Purge opening area",
+   "Opening >30°: ≥ 1/20 of floor area; 15–30°: ≥ 1/10",
+   "5:S",
+   "Part F"
+  ],
+  "floorlevel": [
+   "Floor level of flat / room",
+   "Ground, 1st, 2nd … ; triggers escape and guarding rules",
+   "4:M",
+   "Parts B, K"
+  ],
+  "escape": [
+   "Means of escape (egress) window",
+   "Habitable rooms above ground floor: clear opening ≥ 0.33 m², min 450 × 450 mm, bottom of opening ≤ 1100 mm above floor. Replacement may not be smaller than existing",
+   "5,6:S",
+   "Part B"
+  ],
+  "fireboundary": [
+   "Window near site boundary",
+   "May need to be fixed shut / fire-rated to limit fire spread between buildings",
+   "3:S",
+   "Part B"
+  ],
+  "sillheight": [
+   "Sill height above finished floor",
+   "Drives safety glass (< 800 mm), guarding and escape height",
+   "6:S",
+   "Parts B, K"
+  ],
+  "safetyglass": [
+   "Safety glazing in critical locations",
+   "Doors & side panels up to 1500 mm, windows below 800 mm: toughened (BS EN 12150) or laminated (BS EN 14449). Marked T / L on drawing",
+   "6:S",
+   "Part K"
+  ],
+  "guarding": [
+   "Guarding / opening restrictor",
+   "Openable windows with low sill on upper floors: restrictor or guarding",
+   "5,6:S",
+   "Part K"
+  ],
+  "parto": [
+   "Part O overheating applies",
+   "New-build dwellings only; not replacement windows or extensions",
+   "2:O",
+   "Part O"
+  ],
+  "orientation": [
+   "Elevation orientation",
+   "N / E / S / W. Part O glazing limits and solar glass",
+   "3:M",
+   "Part O"
+  ],
+  "highrisk": [
+   "High-risk overheating postcode",
+   "London (and some central Manchester) postcodes: shading, or glass g ≤ 0.4 with LT ≥ 0.7",
+   "2:O",
+   "Part O"
+  ],
+  "crossvent": [
+   "Cross ventilation available",
+   "Openings on opposite façades (a corner flat does not count)",
+   "4:M",
+   "Part O"
+  ],
+  "gvalue": [
+   "Solar control glass (g-value)",
+   "Required on south / west façades in high-risk areas",
+   "3:O",
+   "Part O"
+  ],
+  "noise": [
+   "Noise exposure of elevation",
+   "Street / rail / flight path facing. Acoustic laminated glass; trickle vents reduce sound insulation, so use acoustic vents",
+   "3:S",
+   "Planning / BS 8233"
+  ],
+  "acousticrw": [
+   "Required acoustic rating (Rw / Dn,e,w dB)",
+   "From planning condition or acoustic report",
+   "2,3:O",
+   "Planning"
+  ],
+  "sbdreq": [
+   "Security standard required",
+   "PAS 24:2022 / Secured by Design. Part Q for new dwellings: ground floor, basement and easily reachable windows and doors",
+   "2:O",
+   "Part Q / SBD"
+  ],
+  "doorsecurity": [
+   "Door security set",
+   "PAS 24, BS 3621 lock, 3-star anti-snap cylinder, letterplate fishing guard",
+   "2,6:O",
+   "Part Q / SBD"
+  ],
+  "listed": [
+   "Listed building / conservation area / Article 4",
+   "Appearance-matched products, may need consent",
+   "2:O",
+   "Planning"
+  ],
+  "flatspd": [
+   "Flat or maisonette",
+   "No permitted development rights for flats; check planning and freeholder consent",
+   "2:O",
+   "Planning"
+  ],
+  "sideobscure": [
+   "Upper-floor side window",
+   "Obscure glazed and non-opening below 1.7 m above floor",
+   "3:S",
+   "Planning"
+  ],
+  "baynew": [
+   "New bay window on front elevation",
+   "Needs planning; replacement bay does not",
+   "3:S",
+   "Planning"
+  ],
+  "cert": [
+   "Competent-person certificate / Building Control",
+   "FENSA / Certass registration or notification for replacements",
+   "2:O",
+   "Building Regs"
+  ],
+  "location": [
+   "Location",
+   "Room / position label on form",
+   "5:M"
+  ],
+  "qty": [
+   "Quantity",
+   "",
+   "6:M"
+  ],
+  "sketch": [
+   "Frame layout / sketch (viewed outside)",
+   "Openers, fixed lights, glass sizes; T/L marks; vent positions",
+   "6:S"
+  ],
+  "sys": [
+   "System type",
+   "Sculptured / Chamfered",
+   "2:O"
+  ],
+  "bead": [
+   "Bead type",
+   "28mm Sculptured / 36mm Sculptured / 28mm Chamfered / 40mm Chamfered",
+   "2:O"
+  ],
+  "glazed": [
+   "Glazing",
+   "Glazed (energy rating A standard) / Unglazed",
+   "2:O",
+   "Part L"
+  ],
+  "sbd": [
+   "Secured by Design",
+   "Tick box",
+   "2,6:O",
+   "Part Q / SBD"
+  ],
+  "dogbolts": [
+   "Dogbolts",
+   "Tick box",
+   "2:O"
+  ],
+  "finish": [
+   "Frame finish",
+   "White / Foil",
+   "2:O"
+  ],
+  "foilcol": [
+   "Foil colour",
+   "Colour name",
+   "2:O"
+  ],
+  "foilside": [
+   "Foil sides",
+   "Both sides / On white",
+   "2:O"
+  ],
+  "width": [
+   "Width (incl. add-ons)",
+   "mm",
+   "6:S"
+  ],
+  "height": [
+   "Height (incl. cill)",
+   "mm",
+   "6:S"
+  ],
+  "mullion": [
+   "Mullion centre",
+   "mm, if not 600",
+   "6:S"
+  ],
+  "transom": [
+   "Transom drop",
+   "mm, if not 375",
+   "6:S"
+  ],
+  "outerframe": [
+   "Outer frame depth",
+   "50mm / 60mm (standard) / 70mm",
+   "2:O"
+  ],
+  "cill": [
+   "Cill type",
+   "None / 85 / 110 / 150 / 180 / 225 mm",
+   "3,6:S"
+  ],
+  "drainage": [
+   "Drainage",
+   "Base / Face",
+   "2:O"
+  ],
+  "addon": [
+   "Add-on size",
+   "15 / 20 / 35 / 50 mm",
+   "6:S"
+  ],
+  "addonside": [
+   "Add-on sides",
+   "Top / Bottom / Left / Right",
+   "6:S"
+  ],
+  "stays": [
+   "Friction stays",
+   "Restricted egress / Mega / Hook restrictor",
+   "5,6:S",
+   "Parts B, K"
+  ],
+  "tl": [
+   "Toughened / Laminated panes",
+   "Mark T or L on drawing per pane",
+   "6:S",
+   "Part K"
+  ],
+  "glass": [
+   "Glass type / pattern",
+   "If not clear (obscure pattern, acoustic, solar)",
+   "5,6:S"
+  ],
+  "tvpos": [
+   "Trickle vent position",
+   "To head of frame / To sash",
+   "2,6:O",
+   "Part F"
+  ],
+  "tvsize": [
+   "Trickle vent size (EA)",
+   "2,500 / 4,000 / 5,000 / 8,000 (2×4,000) / 10,000 (2×5,000) mm²",
+   "5:O",
+   "Part F"
+  ],
+  "tvcol": [
+   "Trickle vent colour option",
+   "Flat colour / Flat on white / Foil on white upgrade",
+   "2:O"
+  ],
+  "handlecol": [
+   "Handle colour",
+   "White / Black / Chrome / Satin / Gold",
+   "2:O"
+  ],
+  "notes": [
+   "Notes / special requirements",
+   "Free text on form",
+   "6:S"
+  ],
+  "handletype": [
+   "Handle type",
+   "Standard / Monkey tail",
+   "2:O"
+  ],
+  "dummysash": [
+   "Fixed sections",
+   "Dummy sash as standard; write “FIXED LIGHT” in notes if preferred",
+   "2:O"
+  ],
+  "fmt": [
+   "Locking",
+   "FMT shootbolt as standard; all flush locks have night-vent function",
+   "1:O"
+  ],
+  "optsys": [
+   "System type (outer frame only)",
+   "Sculptured / Chamfered",
+   "2:O"
+  ],
+  "optbead": [
+   "Bead",
+   "24mm flush casement bead (fixed)",
+   "1:O"
+  ],
+  "rails": [
+   "Sash rail construction",
+   "Mechanical deep bottom rail / Mechanical deep top & bottom rail / Standard mechanical top & bottom rail",
+   "2:O"
+  ],
+  "dummystays": [
+   "Dummy stays",
+   "Black only (tick if required)",
+   "2:O"
+  ],
+  "optfixed": [
+   "Fixed sections",
+   "All fixed sections must be dummy sash",
+   "1:O"
+  ],
+  "optnight": [
+   "Night-vent function",
+   "Only with flush FMT locks",
+   "1:O"
+  ],
+  "monkey": [
+   "Handle",
+   "Monkey tail, black only",
+   "1:O"
+  ],
+  "reinforced": [
+   "Reinforced",
+   "Yes / No",
+   "6:S"
+  ],
+  "shapedglazed": [
+   "Glazing",
+   "All shaped frames must be glazed; no shaped sashes",
+   "1:O"
+  ],
+  "staysdef": [
+   "Friction stays",
+   "Restricted egress / Mega / Defender restrictor",
+   "5,6:S",
+   "Parts B, K"
+  ],
+  "spacer": [
+   "Spacer bar colour",
+   "Black only",
+   "1:O"
+  ],
+  "cilllayout": [
+   "Cill layout (internal sizes)",
+   "Sketch of each facet cill",
+   "6:S"
+  ],
+  "loadbearing": [
+   "Bay posts load bearing",
+   "Yes / No",
+   "6:S",
+   "Structural"
+  ],
+  "poles": [
+   "Number of bay poles",
+   "",
+   "6:S"
+  ],
+  "angletype": [
+   "Bay angle",
+   "Variable angle / Fixed angle (135° or 150°) / Bow bay couplers (160–180°)",
+   "6:S"
+  ],
+  "polelength": [
+   "Bay pole length",
+   "mm",
+   "6:S"
+  ],
+  "pas": [
+   "PAS 23/24 (SBD)",
+   "Tick box",
+   "2,6:O",
+   "Part Q / SBD"
+  ],
+  "doordog": [
+   "Dogbolts",
+   "Only with 2D butt hinge",
+   "2:O"
+  ],
+  "panelfinish": [
+   "Panel finish",
+   "White / Foil + colour; Both sides / On white",
+   "2:O"
+  ],
+  "midrail": [
+   "Midrail height",
+   "mm, if not 900 from bottom",
+   "6:S"
+  ],
+  "openinout": [
+   "Opening direction",
+   "Open in / Open out",
+   "6:S",
+   "Part M"
+  ],
+  "hung": [
+   "Hung from",
+   "Left / Right",
+   "6:S"
+  ],
+  "french": [
+   "French door master leaf",
+   "Left / Right",
+   "6:S"
+  ],
+  "threshold": [
+   "Threshold type",
+   "Std PVC / Low PVC / Stormguard 80 / Stormguard 120",
+   "3,6:S",
+   "Part M"
+  ],
+  "ramps": [
+   "Stormguard 80 ramps",
+   "Inside / Outside / Both",
+   "6:S",
+   "Part M"
+  ],
+  "thcol": [
+   "Threshold colour",
+   "Gold / Silver",
+   "2:O"
+  ],
+  "furnbrand": [
+   "Furniture brand",
+   "Fab&Fix / Sweet",
+   "1:O"
+  ],
+  "furncol": [
+   "Furniture colour",
+   "White / Black / Chrome / Satin / Gold / Rose Gold (Sweet) / Graphite, Anthracite Grey (Fab&Fix)",
+   "2:O"
+  ],
+  "furntype": [
+   "Furniture type",
+   "Standard / Stainless steel",
+   "2:O"
+  ],
+  "hinge": [
+   "Hinge type",
+   "2D butt hinge / 3D flag hinge (not with dogbolts)",
+   "2:O"
+  ],
+  "handledoor": [
+   "Handle type",
+   "Lever/lever / Lever/pad",
+   "5,6:S"
+  ],
+  "cyltype": [
+   "Cylinder type",
+   "Standard / Keyed alike (pairs only) / Thumbturn",
+   "2:O"
+  ],
+  "cylsec": [
+   "Cylinder security",
+   "Standard / High security 3-star",
+   "2:O",
+   "Part Q / SBD"
+  ],
+  "letterplate": [
+   "Letterplate required",
+   "Yes",
+   "6:S"
+  ],
+  "doorglass": [
+   "Glazing spec",
+   "Glass type for door panels",
+   "6:S",
+   "Part K"
+  ],
+  "patiospec": [
+   "Specification",
+   "Fully chamfered (standard)",
+   "1:O"
+  ],
+  "erw": [
+   "Energy rating",
+   "ERW-A",
+   "2:O",
+   "Part L"
+  ],
+  "pw": [
+   "Outer frame width",
+   "mm",
+   "6:S"
+  ],
+  "phin": [
+   "Outer frame height incl. cill and add-on",
+   "mm",
+   "6:S"
+  ],
+  "phex": [
+   "Outer frame height excl. cill and add-on",
+   "mm",
+   "6:S"
+  ],
+  "panels": [
+   "Panel layout",
+   "2–4 panes; F = fixed, S = slider, arrow for slide direction; equal glass unless stated",
+   "6:S"
+  ],
+  "limits": [
+   "Size limits",
+   "Min sash height 1900; max sash 1198 × 2116; frame 1984 – 2400 × 2200 mm",
+   "1:O"
+  ],
+  "framecol": [
+   "Frame colour",
+   "White standard / Foil colour; Both sides / On white",
+   "2:O"
+  ],
+  "frameweld": [
+   "Outer frame",
+   "Welded / Cleated (mechanical joint) / Kit form",
+   "2:O"
+  ],
+  "extcill": [
+   "External cill",
+   "No / 85 / 110 / 150 / 180 / 225 mm",
+   "3,6:S"
+  ],
+  "patioth": [
+   "Threshold",
+   "Full frame / Low aluminium (internal only, not weather tested)",
+   "3,6:S",
+   "Part M"
+  ],
+  "patiohandle": [
+   "Handle colour",
+   "White / Black / Chrome / Satin / Gold / Rose Gold / Graphite / Anthracite Grey",
+   "2:O"
+  ],
+  "patiomid": [
+   "Midrail",
+   "No / Yes (115mm), standard height 900",
+   "6:S"
+  ],
+  "patiolp": [
+   "Letter plate + colour",
+   "Fixed panel only",
+   "6:S"
+  ],
+  "patiotv": [
+   "Trickle vent (fitted in 50mm add-on)",
+   "No / Yes; EA 2,500 – 10,000 mm²",
+   "5:O",
+   "Part F"
+  ],
+  "patiobead": [
+   "Bead type",
+   "Sculptured / Chamfered",
+   "2:O"
+  ],
+  "bars": [
+   "Georgian bars / leads",
+   "Colour of bars; diamond lead (9mm flat); square lead; draw on sketch",
+   "2,6:O"
+  ],
+  "addetails": [
+   "Additional details",
+   "Free text",
+   "6:S"
+  ]
+ },
+ "GROUPS": [
+  {
+   "id": "hdr",
+   "name": "PO header",
+   "app": "Customer / Job",
+   "src": "Common to all 7 Emplas forms",
+   "keys": [
+    "company",
+    "postcode",
+    "contact",
+    "signed",
+    "yourref",
+    "quoteorder",
+    "delivery",
+    "emplasno",
+    "clientname",
+    "pages",
+    "docLnote",
+    "docFnote"
+   ]
+  },
+  {
+   "id": "reg",
+   "name": "Building Regulations",
+   "app": "Compliance",
+   "src": "everest.co.uk guides (Parts F, L, O, safety glass, PAS 24/SBD, planning) + Approved Documents B, K, Q",
+   "keys": [
+    "worktype",
+    "uvalue",
+    "glazunit",
+    "existvents",
+    "bedrooms",
+    "storeys",
+    "mechvent",
+    "roomvent",
+    "ventcount",
+    "ventheight",
+    "nightlatch",
+    "roomtype",
+    "roomarea",
+    "purge",
+    "floorlevel",
+    "escape",
+    "fireboundary",
+    "sillheight",
+    "safetyglass",
+    "guarding",
+    "parto",
+    "orientation",
+    "highrisk",
+    "crossvent",
+    "gvalue",
+    "noise",
+    "acousticrw",
+    "sbdreq",
+    "doorsecurity",
+    "listed",
+    "flatspd",
+    "sideobscure",
+    "baynew",
+    "cert"
+   ]
+  },
+  {
+   "id": "door",
+   "name": "Door",
+   "app": "type: Door",
+   "src": "Profile 22 Doors order form (EMP 01/25)",
+   "keys": [
+    "location",
+    "qty",
+    "sketch",
+    "sys",
+    "bead",
+    "glazed",
+    "pas",
+    "doordog",
+    "panelfinish",
+    "finish",
+    "foilcol",
+    "foilside",
+    "width",
+    "height",
+    "mullion",
+    "transom",
+    "midrail",
+    "addon",
+    "addonside",
+    "openinout",
+    "hung",
+    "french",
+    "threshold",
+    "ramps",
+    "thcol",
+    "furnbrand",
+    "furncol",
+    "furntype",
+    "hinge",
+    "handledoor",
+    "cyltype",
+    "cylsec",
+    "letterplate",
+    "cill",
+    "drainage",
+    "tvpos",
+    "tvsize",
+    "tvcol",
+    "doorglass",
+    "notes"
+   ]
+  },
+  {
+   "id": "cas",
+   "name": "Casement",
+   "app": "type: Casement",
+   "src": "Casement Windows, Profile 22 (July 26)",
+   "keys": [
+    "location",
+    "qty",
+    "sketch",
+    "sys",
+    "bead",
+    "glazed",
+    "sbd",
+    "dogbolts",
+    "finish",
+    "foilcol",
+    "foilside",
+    "width",
+    "height",
+    "mullion",
+    "transom",
+    "outerframe",
+    "cill",
+    "drainage",
+    "addon",
+    "addonside",
+    "stays",
+    "tl",
+    "glass",
+    "tvpos",
+    "tvsize",
+    "tvcol",
+    "handlecol",
+    "notes"
+   ]
+  },
+  {
+   "id": "flush",
+   "name": "Flush Casement",
+   "app": "type: Flush Casement",
+   "src": "New Flush Casement order form, Profile 22 (EMP 02/25)",
+   "keys": [
+    "location",
+    "qty",
+    "sketch",
+    "sys",
+    "bead",
+    "glazed",
+    "sbd",
+    "dogbolts",
+    "finish",
+    "foilcol",
+    "foilside",
+    "width",
+    "height",
+    "mullion",
+    "transom",
+    "outerframe",
+    "cill",
+    "drainage",
+    "addon",
+    "addonside",
+    "stays",
+    "tl",
+    "glass",
+    "tvpos",
+    "tvsize",
+    "tvcol",
+    "handlecol",
+    "handletype",
+    "dummysash",
+    "fmt",
+    "notes"
+   ]
+  },
+  {
+   "id": "flusho",
+   "name": "Flush Casement Optima",
+   "app": "type: Flush Casement Optima",
+   "src": "Flush Casement order form 2, Optima system (EMP 02/25)",
+   "keys": [
+    "location",
+    "qty",
+    "sketch",
+    "optsys",
+    "optbead",
+    "glazed",
+    "rails",
+    "dummystays",
+    "optfixed",
+    "optnight",
+    "finish",
+    "foilcol",
+    "foilside",
+    "width",
+    "height",
+    "mullion",
+    "transom",
+    "outerframe",
+    "cill",
+    "drainage",
+    "addon",
+    "addonside",
+    "stays",
+    "tl",
+    "glass",
+    "tvpos",
+    "tvsize",
+    "tvcol",
+    "handlecol",
+    "monkey",
+    "notes"
+   ]
+  },
+  {
+   "id": "patio",
+   "name": "Inline Patio",
+   "app": "type: Patio",
+   "src": "Inline Patio order form (EMP 01/25)",
+   "keys": [
+    "location",
+    "qty",
+    "patiospec",
+    "glazed",
+    "erw",
+    "sbd",
+    "pw",
+    "phin",
+    "phex",
+    "panels",
+    "limits",
+    "framecol",
+    "frameweld",
+    "extcill",
+    "patioth",
+    "furnbrand",
+    "patiohandle",
+    "patiomid",
+    "patiolp",
+    "patiotv",
+    "tvcol",
+    "glass",
+    "tl",
+    "patiobead",
+    "spacer",
+    "bars",
+    "addetails"
+   ]
+  },
+  {
+   "id": "shaped",
+   "name": "Shaped Frame",
+   "app": "type: Shaped",
+   "src": "Shaped Frames, Optima (Feb 23)",
+   "keys": [
+    "location",
+    "qty",
+    "sketch",
+    "sys",
+    "bead",
+    "reinforced",
+    "shapedglazed",
+    "finish",
+    "foilcol",
+    "foilside",
+    "mullion",
+    "transom",
+    "outerframe",
+    "cill",
+    "drainage",
+    "addon",
+    "addonside",
+    "staysdef",
+    "tl",
+    "glass",
+    "tvpos",
+    "tvsize",
+    "tvcol",
+    "handlecol",
+    "notes"
+   ]
+  },
+  {
+   "id": "bay",
+   "name": "Bay Window",
+   "app": "type: Bay",
+   "src": "Bay Windows, Optima (Feb 23)",
+   "keys": [
+    "location",
+    "qty",
+    "sketch",
+    "sys",
+    "bead",
+    "glazed",
+    "spacer",
+    "sbd",
+    "dogbolts",
+    "finish",
+    "foilcol",
+    "foilside",
+    "height",
+    "cilllayout",
+    "loadbearing",
+    "poles",
+    "angletype",
+    "polelength",
+    "mullion",
+    "transom",
+    "outerframe",
+    "cill",
+    "drainage",
+    "addon",
+    "addonside",
+    "staysdef",
+    "tl",
+    "glass",
+    "tvpos",
+    "tvsize",
+    "tvcol",
+    "handlecol",
+    "notes"
+   ]
+  }
+ ]
+}

@@ -35,6 +35,8 @@ eq('isCommunalFlat 21', isCommunalFlat('21'), false);
 eq('classify door by type', classifyCategory({ item_type: 'Single Door' }), 'door');
 eq('classify door by code', classifyCategory({ item_code: 'D01' }), 'door');
 eq('classify window', classifyCategory({ item_type: 'Window', item_code: 'W01' }), 'window');
+eq('classify patio as door', classifyCategory({ item_type: 'Patio', item_code: 'W05' }), 'door');
+eq('classify casement as window', classifyCategory({ item_type: 'Flush Casement', item_code: 'W06' }), 'window');
 
 // --- item cost ---
 eq('window cost 1m²', itemCost(win('21', 1000, 1000), RULE), 24000);      // 16000*1 + 8000

@@ -37,8 +37,9 @@ export const m2Of = (w?: number | null, h?: number | null): number => (w && h ? 
 // (COM, COMM, COM-1, COMM2…), but not words like "commercial" or "commons".
 export const isCommunalFlat = (flat?: string | null): boolean => /^comm?($|[^a-z])/i.test((flat ?? '').trim());
 // Classify an item as window vs door from its type/code (single-door model for now).
+// A Patio (inline sliding patio door) prices and pays as a door.
 export function classifyCategory(o: { item_type?: string | null; item_code?: string | null }): 'window' | 'door' {
-  if ((o.item_type ?? '').toLowerCase().includes('door')) return 'door';
+  if (/door|patio/.test((o.item_type ?? '').toLowerCase())) return 'door';
   if ((o.item_code ?? '').trim().toUpperCase().startsWith('D')) return 'door';
   return 'window';
 }

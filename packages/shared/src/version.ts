@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.25.0';
+export const APP_VERSION = '1.27.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.27.0', date: '2026-10-17', changes: [
+    'Specification parameters: every field of the Emplas order forms and the Building Regulations checks (Parts B, F, K, L, O, Q, planning), each set at the level agreed in the Spec Matrix — Customer, Job, Elevation, Flat, Room type or Item — and inherited by the items below it. The most specific level wins (item > room type > flat > elevation > job > customer).',
+    'New item types with their own order form: Door, Casement, Flush Casement, Flush Casement Optima, Patio, Shaped and Bay (Window stays for older items). A Patio is priced and paid as a door.',
+    'Job ▸ Spec: set values for the job, an elevation, a flat or a room type (e.g. laminated glass for every kitchen). The customer card has a Specification section for values that go on every PO of that customer. The item window shows its order form with where each value comes from, and the item-level fields can be filled in there.',
+    'The PO PDF prints the job-wide specification once at the top, and on each item the values set for its elevation, flat, room type or the item itself. Needs migration 0080.',
+  ] },
   { version: '1.25.0', date: '2026-10-15', changes: [
     'Production time: the same task set can be loaded again for an order (every row becomes a task; the import says how many have the same name as an open task, so the manager can close the old set).',
     'A \u201cNow running\u201d box shows who is working on which task and for how long; the page refreshes itself every 20 seconds (not while a dialog is open or you are typing).',

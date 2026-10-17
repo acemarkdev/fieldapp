@@ -59,6 +59,7 @@ import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSyn
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
 import { buildJobPoPdf } from './poPdf';
+import { specCatalogueOut, saveSpecValues, listCustomerSpecRows, listJobSpecRows, jobCustomerId, itemSpecOut, resolveJobSpec, specScopeKey } from './specStore';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
 import { recogniseItemPhoto } from './recognise';
@@ -199,7 +200,7 @@ const STYLE_CATALOGUE = Object.keys(STYLE_META)
 const PW_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
 const genPassword = () => 'ACE-' + Array.from(randomBytes(8), (x) => PW_CHARS[x % PW_CHARS.length]).join('');
 import { effectiveRatePennies, formatPennies, assembleFullCode, APP_VERSION, CHANGELOG,
-  CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL, can, type Capability } from '@ace/shared';
+  CAPABILITIES, ROLES as SHARED_ROLES, ROLE_CAPS, ROLE_LABEL, can, type Capability, type SpecLevelKey } from '@ace/shared';
 
 // Assignable roles = the single shared list (includes invoice_manager). Never hard-code.
 const ROLES: string[] = [...SHARED_ROLES];
@@ -2133,6 +2134,89 @@ const server = createServer(async (req, res) => {
     }
 
     // Get a job's editable details (managers) — for the Edit job dialog.
+    // ---- Specification parameters (order-form fields + Building Regulations), see specStore.ts ----
+    if (p === '/api/spec/catalogue' && req.method === 'GET') {
+      send(res, 200, specCatalogueOut());
+      return;
+    }
+    // Customer-level values (read: jobs.manage; write: customers.manage, like the customer card).
+    if (p.startsWith('/api/spec/customer/') && p.split('/').length === 5 && (req.method === 'GET' || req.method === 'PUT')) {
+      if (!allow(req.method === 'GET' ? 'jobs.manage' : 'customers.manage')) return;
+      const id = p.split('/')[4] ?? '';
+      const c = await getCustomerCard(id, ctx.tenant_id);
+      if (!c) { send(res, 404, { error: 'Customer not found.' }); return; }
+      if (req.method === 'PUT') {
+        const b = await readJson(req);
+        try {
+          const changes = await saveSpecValues(ctx.tenant_id, { level: 'customer', ownerId: c.id, jobId: null, scopeKey: '' }, b.values ?? {}, ctx.id);
+          if (changes.length) audit(ctx, 'spec.set', 'customer', c.id, `Specification for customer ${c.code}: ${changes.map((x) => x.label).join(', ')}`, changes);
+          send(res, 200, { ok: true, changed: changes.length });
+        } catch (e: any) { send(res, 400, { error: e?.message ?? String(e) }); }
+        return;
+      }
+      const rows = await listCustomerSpecRows(ctx.tenant_id, c.id);
+      send(res, 200, { values: Object.fromEntries(rows.map((r) => [r.param_key, r.value])), canEdit: can(ctx.role, 'customers.manage') });
+      return;
+    }
+    // Job / elevation / flat / room-type values. GET ?level=&scope= ; PUT {level, scope, values}.
+    if (p.startsWith('/api/job/') && p.endsWith('/spec') && p.split('/').length === 5 && (req.method === 'GET' || req.method === 'PUT')) {
+      if (!allow('jobs.manage')) return;
+      const job = await getJobByRef(decodeURIComponent(p.split('/')[3] ?? ''));
+      if (job.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      const code = `${job.client_code}.${job.job_code}`;
+      const JOB_LEVELS = ['job', 'elevation', 'flat', 'room'];
+      const b = req.method === 'PUT' ? await readJson(req) : null;
+      const level = String((b ? b.level : url.searchParams.get('level')) || 'job');
+      const scope = String((b ? b.scope : url.searchParams.get('scope')) ?? '').trim();
+      if (!JOB_LEVELS.includes(level)) { send(res, 400, { error: 'Level must be job, elevation, flat or room.' }); return; }
+      if (level !== 'job' && !scope) { send(res, 400, { error: 'Pick which ' + (level === 'room' ? 'room type' : level) + ' to set.' }); return; }
+      const scopeKey = level === 'job' ? '' : level === 'room' ? scope.toUpperCase() : scope;
+      if (b) {
+        try {
+          const changes = await saveSpecValues(ctx.tenant_id, { level: level as SpecLevelKey, ownerId: job.id, jobId: job.id, scopeKey }, b.values ?? {}, ctx.id);
+          if (changes.length) audit(ctx, 'spec.set', 'job', code, `Specification for ${code}${scopeKey ? ' · ' + level + ' ' + scopeKey : ''}: ${changes.map((x) => x.label).join(', ')}`, changes);
+          send(res, 200, { ok: true, changed: changes.length });
+        } catch (e: any) { send(res, 400, { error: e?.message ?? String(e) }); }
+        return;
+      }
+      const customerId = await jobCustomerId(ctx.tenant_id, job.client_code);
+      const [rows, items] = await Promise.all([listJobSpecRows(ctx.tenant_id, job.id, customerId), listSurveyItems(job.id)]);
+      // The elevations / flats / room types that exist in the job's items, plus any already holding values.
+      const scopes: Record<string, string[]> = { elevation: [], flat: [], room: [] };
+      for (const it of items as any[]) for (const l of ['elevation', 'flat', 'room'] as SpecLevelKey[]) { const k = specScopeKey(l, it); if (k && !scopes[l].includes(k)) scopes[l].push(k); }
+      for (const r of rows) if (r.owner_id === job.id && r.scope_key && scopes[r.level] && !scopes[r.level].includes(r.scope_key)) scopes[r.level].push(r.scope_key);
+      for (const l of Object.keys(scopes)) scopes[l].sort((a, z) => a.localeCompare(z, undefined, { numeric: true }));
+      const here = rows.filter((r) => r.level === level && r.owner_id === job.id && r.scope_key === scopeKey);
+      // What an item at this scope gets when nothing is set here (job → customer → default).
+      const above = level === 'job'
+        ? resolveJobSpec(rows.filter((r) => r.level === 'customer'), { jobId: job.id, customerId })
+        : resolveJobSpec(rows, { jobId: job.id, customerId });
+      const counts: Record<string, number> = {};
+      for (const r of rows) if (r.owner_id === job.id) { const k = r.level + '|' + r.scope_key; counts[k] = (counts[k] || 0) + 1; }
+      send(res, 200, {
+        job: { id: job.id, code, customer_code: job.client_code, has_customer: !!customerId },
+        level, scope: scopeKey, scopes, counts,
+        values: Object.fromEntries(here.map((r) => [r.param_key, r.value])),
+        inherited: Object.fromEntries(above.map((x) => [x.key, { value: x.value, source: x.source }])),
+      });
+      return;
+    }
+    // Item-level values that have no column of their own (the drawer's order-form section).
+    if (p.startsWith('/api/item/') && p.endsWith('/spec') && req.method === 'PUT') {
+      if (!allow('items.edit')) return;
+      const id = p.split('/')[3];
+      const it: any = await getSurveyItem(id);
+      if (it.tenant_id !== ctx.tenant_id) { send(res, 403, { error: 'forbidden' }); return; }
+      if (it.po_ready_at && ctx.role !== 'admin') { send(res, 400, { error: 'This PO phase is marked ready for PO and is locked — only an admin can change it.' }); return; }
+      const b = await readJson(req);
+      try {
+        const changes = await saveSpecValues(ctx.tenant_id, { level: 'item', ownerId: it.id, jobId: it.job_id, scopeKey: '' }, b.values ?? {}, ctx.id);
+        if (changes.length) audit(ctx, 'item.update', 'item', it.id, `Order form: ${changes.map((x) => x.label).join(', ')}`, changes.map((x) => ({ field: x.label, from: x.from, to: x.to })));
+        send(res, 200, { ok: true, changed: changes.length });
+      } catch (e: any) { send(res, 400, { error: e?.message ?? String(e) }); }
+      return;
+    }
+
     if (p.startsWith('/api/job/') && req.method === 'GET' && p.split('/').length === 4) {
       if (!allow('jobs.manage')) return;
       const code = decodeURIComponent(p.split('/')[3] ?? '');
@@ -2443,7 +2527,10 @@ const server = createServer(async (req, res) => {
         monday_url: s.monday_item_id && job.monday_board_id ? mondayItemUrl(job, s.monday_item_id) : null,
       }));
       const requirements = await requirementNamesForClientCode(ctx.tenant_id, job.client_code);
+      const customerId = await jobCustomerId(ctx.tenant_id, job.client_code);
+      const spec = itemSpecOut(it, await listJobSpecRows(ctx.tenant_id, job.id, customerId), job.id, customerId);
       send(res, 200, {
+        spec, job_ref: job.id,
         item: it, team: team?.name ?? null, teams: allTeams.map((t) => ({ id: t.id, name: t.name, active: t.active })),
         effective_rate: formatPennies(effectiveRatePennies(it, team ? [team] : [])),
         monday_url: it.monday_item_id && job.monday_board_id ? mondayItemUrl(job, it.monday_item_id) : null,
@@ -3341,6 +3428,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .field input,.field select,.field textarea{border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:13px;font-family:inherit;background:#fff}
   .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--magenta)}
   .codeprev{grid-column:1/-1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--purple);background:var(--soft);padding:11px 12px;border-radius:9px;word-break:break-all}
+  .specgrid{display:grid;grid-template-columns:1fr;gap:0}
+  .specrow{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:10px;padding:7px 0;border-top:1px solid #f2f0f8;align-items:start}
+  .speclab{font-size:12.5px;min-width:0}.speclab b{font-weight:600}
+  .spechint{font-size:11px;color:var(--muted);margin-top:2px}
+  .specunit{font-size:11px;color:var(--muted)}
+  .specreg{display:inline-block;margin-left:6px;font-size:10px;font-weight:700;color:var(--purple);background:#efeaf9;border-radius:4px;padding:1px 5px}
+  .specwho{display:inline-block;margin-left:4px;font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+  .specval{min-width:0}.specval input,.specval select{width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:#fff}
+  .specro{font-size:12.5px;padding:6px 0;font-weight:600}
+  .specsrc{margin-top:3px;font-size:11px;color:var(--muted)}
+  .specfrom{display:inline-block;font-size:10.5px;color:#2f6b4f;background:#e7f6ec;border-radius:10px;padding:1px 7px}
+  .spectabs{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 10px}
+  .spectabs button{border:1px solid var(--line);background:#fff;border-radius:18px;padding:5px 12px;font-size:12px;cursor:pointer}
+  .spectabs button.on{background:var(--purple);border-color:var(--purple);color:#fff}
+  .specsec{font-size:10px;font-weight:800;letter-spacing:.05em;color:#9a97ad;margin:12px 0 2px}
+  @media (max-width:640px){.specrow{grid-template-columns:1fr}}
   .groupt{grid-column:1/-1;font-size:10px;font-weight:800;letter-spacing:.05em;color:#9a97ad;margin-top:4px}
   .foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 22px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#fff}
   .foot .cancel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 15px;font-weight:600;font-size:13px;cursor:pointer;color:var(--muted)}
@@ -3634,6 +3737,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div style="display:flex;gap:12px;align-items:center">
           <span id="jobActions" class="segbar" style="display:none">
             <button id="filesBtn" class="segbtn" onclick="openJobFiles(current)" title="Job files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Files</button>
+            <button id="specJobBtn" class="segbtn" style="display:none" onclick="openJobSpec(current)" title="Specification: order-form fields and Building Regulations, by job / elevation / flat / room type"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9z"/><path d="M7 5H5v16h14V5h-2"/><path d="M8 12l2 2 4-4"/><path d="M8 17h8"/></svg>Spec</button>
             <button id="editJobBtn" class="segbtn" style="display:none" onclick="openEditJob(current)" title="Edit job"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Edit</button>
             <button id="delJobBtn" class="segbtn danger" style="display:none" onclick="delJob()" title="Delete job" aria-label="Delete job"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg></button>
             <button id="calPdfBtn" class="segbtn" onclick="ipPdf(\'calPdfBtn\')" title="Installation calendar PDF: planned install dates and teams for this job, one page per month plus a day-by-day list" style="width:auto;padding:0 10px;font-size:12px;font-weight:700">Calendar PDF</button>
@@ -4315,6 +4419,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // Spec dropdown options (office item edit screen).
   var MATERIALS=['uPVC','Aluminium','Timber','Composite'];
   var WINDOW_TYPES=['Casement','Fixed','Tilt & Turn','Sash'];
+  var ITEM_TYPES=['Window','Door','Casement','Flush Casement','Flush Casement Optima','Patio','Shaped','Bay']; // Window = legacy; the others have an Emplas order form
   var GLASS_PANES=['Double','Triple'];
   var GLASS_TEXTURES=['Clear','Obscure','Contara','Satin','Stipolite'];
   var GLAZING_BARS=['None','Astragal','Georgian','Leaded','Diamonds'];
@@ -5153,6 +5258,81 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!d.ok)throw new Error(d.error||'upload failed');
   }
   function fmtSize(n){ if(!n)return''; if(n<1024)return n+' B'; if(n<1048576)return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+  // ---------- Job specification: job / elevation / flat / room-type values ----------
+  var _specCat=null, _js={code:null,level:'job',scope:''};
+  async function specCatalogue(){ if(!_specCat){ _specCat=await (await api('/api/spec/catalogue')).json(); } return _specCat; }
+  var SPEC_SECTIONS=[['header','PO HEADER'],['regs','BUILDING REGULATIONS'],['form','ORDER FORM FIELDS']];
+  // Rows of fields for one level, grouped by section. inherited: {key:{value,source}} shown as the placeholder.
+  function specLevelFieldsHtml(fields,values,inherited,editable){
+    var h='';
+    SPEC_SECTIONS.forEach(function(sec){
+      var list=fields.filter(function(f){return f.section===sec[0];}); if(!list.length)return;
+      h+='<div class="specsec">'+sec[1]+' ('+list.length+')</div>';
+      h+=list.map(function(f){
+        var inh=inherited&&inherited[f.key], val=values[f.key];
+        var inp=editable?specInput(f,val,inh&&inh.value?inh.value:''):'<div class="specro">'+esc(val||'—')+'</div>';
+        var note=[];
+        if(inh&&inh.value&&!val)note.push(specSrcChip(inh.source)+' '+esc(inh.value));
+        if(f.types&&f.types.length&&f.types.length<7)note.push(esc(f.types.join(', ')));
+        if(!f.decided)note.push('<span style="color:var(--amber)">level not decided yet</span>');
+        return specRowHtml(f,inp,note.join(' · '));
+      }).join('');
+    });
+    return h||'<div class="empty">No fields are set at this level.</div>';
+  }
+  async function openJobSpec(code,level,scope){
+    if(!code||code==='ALL'){tShow('Pick a job first');return;}
+    _js={code:code,level:level||'job',scope:scope||''};
+    openModal('Specification · '+esc(code),'<div class="empty" style="padding:22px">Loading…</div>');
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(860px,100vw)';
+    await renderJobSpec();
+  }
+  async function renderJobSpec(){
+    var cat=await specCatalogue(); var L=_js.level;
+    if(L!=='job'&&!_js.scope){
+      var pre=await (await api('/api/job/'+encodeURIComponent(_js.code)+'/spec?level=job')).json();
+      var sc=(pre.scopes&&pre.scopes[L])||[]; _js.scope=sc[0]||(L==='room'?'KT':'');
+    }
+    var d=null;
+    if(L==='job'||_js.scope){ d=await (await api('/api/job/'+encodeURIComponent(_js.code)+'/spec?level='+L+'&scope='+encodeURIComponent(_js.scope))).json(); }
+    else { d=await (await api('/api/job/'+encodeURIComponent(_js.code)+'/spec?level=job')).json(); }
+    if(d.error){document.getElementById('modalBody').innerHTML='<div class="empty" style="padding:22px">'+esc(d.error)+'</div>';return;}
+    var LV=[['job','Job'],['elevation','Elevation'],['flat','Flat'],['room','Room type']];
+    var h='<div style="padding:12px 22px 0"><div class="sub" style="margin:0 0 8px">Values set here flow down to every item below them; the most specific level wins (item &gt; room type &gt; flat &gt; elevation &gt; job &gt; customer). Leave a field empty to inherit.</div>'
+      +'<div class="spectabs">'+LV.map(function(x){return '<button type="button" class="'+(x[0]===L?'on':'')+'" data-lv="'+x[0]+'">'+x[1]+'</button>';}).join('');
+    if(L!=='job'){
+      var sc2=(d.scopes&&d.scopes[L])||[];
+      var opts;
+      if(L==='room'){
+        opts=ROOMS.map(function(r){var n=(d.counts||{})['room|'+r.code]; var used=sc2.indexOf(r.code)>=0;
+          return '<option value="'+r.code+'"'+(r.code===_js.scope?' selected':'')+'>'+esc(r.code+' · '+r.name)+(used?' ●':'')+(n?' ('+n+' set)':'')+'</option>';}).join('');
+      } else {
+        if(_js.scope&&sc2.indexOf(_js.scope)<0)sc2=[_js.scope].concat(sc2);
+        opts=sc2.map(function(k){var n=(d.counts||{})[L+'|'+k];return '<option value="'+specAttr(k)+'"'+(k===_js.scope?' selected':'')+'>'+esc((L==='flat'?'Flat ':'')+k)+(n?' ('+n+' set)':'')+'</option>';}).join('');
+      }
+      h+='<select id="jsScope" class="sel" style="margin-left:8px">'+(opts||'<option value="">— none in this job yet —</option>')+'</select>';
+      if(L!=='room')h+='<input id="jsNewScope" placeholder="'+(L==='flat'?'other flat, e.g. 21':'other, e.g. E2 or B1/E2')+'" style="width:150px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px"><button type="button" class="add" id="jsGo">Open</button>';
+    }
+    h+='</div>';
+    if(L==='job'&&d.job&&!d.job.has_customer)h+='<div class="sub" style="margin:0 0 6px;color:var(--amber)">No customer card for '+esc(d.job.customer_code)+' — customer-level values cannot apply.</div>';
+    h+='</div>';
+    var ok=L==='job'||!!_js.scope;
+    h+='<div id="jobSpecBox" style="padding:0 22px 10px">'+(ok?specLevelFieldsHtml(cat.levelFields[L]||[],d.values||{},d.inherited||{},true):'<div class="empty">Pick or type which '+L+' to set.</div>')+'</div>';
+    h+='<div class="ferr" id="jsErr" style="padding:0 22px"></div>'
+      +'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button>'+(ok?'<button class="save" id="jsSave">Save '+esc(L==='job'?'job':(L==='room'?'room type ':(L+' '))+(L==='job'?'':_js.scope))+'</button>':'')+'</div>';
+    document.getElementById('modalBody').innerHTML=h;
+    document.querySelectorAll('.spectabs [data-lv]').forEach(function(b){b.onclick=function(){ if(specCollect(document.getElementById('jobSpecBox'))&&!window.confirmDiscardSpec){ document.getElementById('jsErr').textContent='Save or clear your changes first (click again to discard).'; window.confirmDiscardSpec=true; return; } window.confirmDiscardSpec=false; _js.level=b.getAttribute('data-lv'); _js.scope=''; renderJobSpec(); };});
+    var ss=document.getElementById('jsScope'); if(ss)ss.onchange=function(){_js.scope=ss.value;renderJobSpec();};
+    var go=document.getElementById('jsGo'); if(go)go.onclick=function(){var v=(document.getElementById('jsNewScope').value||'').trim().toUpperCase().replace(/^F(?=[0-9])/,''); if(v){_js.scope=v;renderJobSpec();}};
+    var sv=document.getElementById('jsSave'); if(sv)sv.onclick=saveJobSpec;
+  }
+  async function saveJobSpec(){
+    var vals=specCollect(document.getElementById('jobSpecBox'));
+    if(!vals){tShow('Nothing changed');return;}
+    var d=await (await api('/api/job/'+encodeURIComponent(_js.code)+'/spec',{method:'PUT',body:JSON.stringify({level:_js.level,scope:_js.scope,values:vals})})).json();
+    if(d.ok){tShow('Saved '+d.changed+' field'+(d.changed===1?'':'s'));window.confirmDiscardSpec=false;renderJobSpec();}
+    else document.getElementById('jsErr').textContent=d.error||'Save failed';
+  }
   async function openEditJob(code){
     if(!code||code==='ALL')return;
     var d={}; try{d=await (await api('/api/job/'+encodeURIComponent(code))).json();}catch(e){}
@@ -5242,6 +5422,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('filesBtn').style.display='';
     document.getElementById('delJobBtn').style.display=canCap('jobs.manage')?'':'none';
     var ejb=document.getElementById('editJobBtn'); if(ejb)ejb.style.display=canCap('jobs.manage')?'':'none';
+    var sjb=document.getElementById('specJobBtn'); if(sjb)sjb.style.display=(canCap('jobs.manage')&&current&&current!=='ALL')?'':'none';
     // header column filters — multi-select popovers (state in MF[hostId].state)
     buildMF('blockFilter','Block','All blocks',mfOptions('block'));
     buildMF('elevFilter','Elev','All elevations',mfOptions('elevation'));
@@ -6142,7 +6323,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else if(f==='glazing') w.innerHTML=bulkSelect(GLASS_PANES,'panes');
     else if(f==='glass') w.innerHTML=bulkSelect(GLASS_TEXTURES,'texture');
     else if(f==='material') w.innerHTML=bulkSelect(MATERIALS,'material');
-    else if(f==='item_type') w.innerHTML=bulkSelect(['Window','Door'],'type');
+    else if(f==='item_type') w.innerHTML=bulkSelect(ITEM_TYPES,'type');
     else if(f==='open_in_out') w.innerHTML=bulkSelect(['In','Out'],'open in/out');
     else if(f==='width'||f==='height') w.innerHTML='<input id="bulkVal" class="bulk" type="number" min="0" step="1" placeholder="'+(f==='width'?'Width':'Height')+' mm (blank = clear)" style="width:170px">';
     else if(f==='design_code') w.innerHTML='<input id="bulkVal" class="bulk" placeholder="Style code e.g. 27 (blank = clear)" style="width:200px">';
@@ -6960,7 +7141,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
           +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">'
         +'</div></div>'
-      +field('f_material','Material','uPVC / Alu / Timber')+field('f_type','Item type','Window / Door')
+      +field('f_material','Material','uPVC / Alu / Timber')+'<div class="field"><label>Item type</label><select id="f_type"><option value="">—</option>'+ITEM_TYPES.map(function(x){return '<option>'+esc(x)+'</option>';}).join('')+'</select></div>'
       +field('f_wtype','Window type','e.g. Casement')+field('f_glass','Glass','e.g. 4-20-4')
       +field('f_safety','Safety glass','Toughened / Laminated')+field('f_glazing','Glazing','Double / Triple')
       +field('f_width','Width (mm)','','number')+field('f_height','Height inc cill (mm)','','number')
@@ -8761,7 +8942,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="groupt">CONTACTS</div>'
       +'<div class="field full"><div id="custContacts">'+(cust.contacts||[]).map(custContactRow).join('')+'</div>'+(ro?'':'<button type="button" class="add" onclick="addContactRow()" style="margin-top:4px">+ Add contact</button>')+'</div>'
       +'<div class="groupt">CONTRACTUAL REQUIREMENTS</div>'
-      +'<div class="field full">'+reqHtml+'</div></div>';
+      +'<div class="field full">'+reqHtml+'</div>';
+    // Customer-level specification values: added to every PO of this customer's jobs (a job can override).
+    if(id){
+      var cat=await specCatalogue(), sv={values:{}};
+      try{ sv=await (await api('/api/spec/customer/'+id)).json(); }catch(e){}
+      html+='<div class="groupt">SPECIFICATION (CUSTOMER LEVEL)</div>'
+        +'<div class="field full"><div class="sub" style="margin:0 0 4px">Goes on every PO line of this customer’s jobs; a job, elevation, flat, room type or item can override it.</div>'
+        +'<div id="custSpecBox">'+specLevelFieldsHtml(cat.levelFields.customer||[],sv.values||{},{},!ro)+'</div></div>';
+    }
+    html+='</div>';
     var foot=ro?'<div class="foot"><button class="cancel" onclick="closeModal()">Close</button></div>'
       :'<div class="foot"><button class="cancel" onclick="closeModal()">Cancel</button><button class="save" onclick="saveCustomer('+(id?'\\''+id+'\\'':'')+')">Save customer</button></div>';
     openModal(id?('Customer '+esc(cust.code)):'New customer', html+foot);
@@ -8775,7 +8965,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var ae=document.getElementById('cust_active'); if(ae)body.active=ae.checked;
     var r=id?await api('/api/customers-master/'+id,{method:'PUT',body:JSON.stringify(body)}):await api('/api/customers-master',{method:'POST',body:JSON.stringify(body)});
     var d=await r.json();
-    if(r.ok&&d.ok){closeModal();tShow('Customer saved');loadCustAdmin();}else tShow(d.error||'Could not save');
+    if(!(r.ok&&d.ok)){tShow(d.error||'Could not save');return;}
+    var sb=document.getElementById('custSpecBox'), sv=sb?specCollect(sb):null;
+    if(id&&sv){ var d2=await (await api('/api/spec/customer/'+id,{method:'PUT',body:JSON.stringify({values:sv})})).json(); if(!d2.ok){tShow('Customer saved, but the specification was not: '+(d2.error||'error'));return;} }
+    closeModal();tShow('Customer saved');loadCustAdmin();
   }
   async function delCustomer(id,code){
     if(!confirm('Delete customer '+code+'?'))return;
@@ -8948,6 +9141,62 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<div class="spgrid" id="spGrid"></div></div>';
     await loadStyles(); spRenderChips(); renderStyleGrid();
   }
+  // ---------- Specification parameters (order form + Building Regulations), inherited by level ----------
+  var SPEC_WHO={office:'Office',mapper:'Mapper',surveyor:'Surveyor'};
+  function specWhoChips(who){return (who||[]).map(function(w){return '<span class="specwho">'+esc(SPEC_WHO[w]||w)+'</span>';}).join('');}
+  function specAttr(v){return (v==null?'':esc(String(v))).replace(/"/g,'&quot;');}
+  // One input for a spec field. data-spec carries the key, data-orig the stored value (to send only changes).
+  function specInput(f,val,ph){
+    var cur=val==null?'':String(val), a=' data-spec="'+specAttr(f.key)+'" data-orig="'+specAttr(cur)+'"';
+    if(f.kind==='choice'||f.kind==='bool'){
+      var list=(f.kind==='bool'?['Yes','No']:(f.options||[])).slice(); if(cur&&list.indexOf(cur)<0)list.unshift(cur);
+      return '<select'+a+'><option value="">'+(ph?esc('— '+ph+' —'):'—')+'</option>'+list.map(function(x){return '<option'+(cur===x?' selected':'')+'>'+esc(x)+'</option>';}).join('')+'</select>';
+    }
+    var type=f.kind==='number'?'number':(f.kind==='date'?'date':'text');
+    var hint=ph||(f.kind==='multi'&&f.options?f.options.join(', '):'');
+    return '<input type="'+type+'"'+a+' value="'+specAttr(cur)+'" placeholder="'+specAttr(hint)+'">';
+  }
+  // Values from inputs whose value differs from what was loaded: {key: value|''}.
+  function specCollect(root){
+    var out={}, n=0; (root||document).querySelectorAll('[data-spec]').forEach(function(el){
+      var v=String(el.value||'').trim(); if(v!==el.getAttribute('data-orig')){ out[el.getAttribute('data-spec')]=v; n++; }
+    });
+    return n?out:null;
+  }
+  function specRowHtml(f,inputHtml,note){
+    return '<div class="specrow"><div class="speclab"><b>'+esc(f.label)+'</b>'+(f.unit?' <span class="specunit">'+esc(f.unit)+'</span>':'')
+      +(f.reg?'<span class="specreg">'+esc(f.reg)+'</span>':'')+specWhoChips(f.who)
+      +(f.hint&&f.hint!==f.unit?'<div class="spechint">'+esc(f.hint)+'</div>':'')+'</div>'
+      +'<div class="specval">'+inputHtml+(note?'<div class="specsrc">'+note+'</div>':'')+'</div></div>';
+  }
+  function specSrcChip(src){ if(!src||src==='—')return ''; return '<span class="specfrom">from '+esc(src)+'</span>'; }
+  // The item drawer section: order-form fields of the item's type, then the regulations.
+  function itemSpecHtml(d,editable){
+    var spec=d.spec||[]; if(!spec.length)return '';
+    function block(title,list){
+      if(!list.length)return '';
+      return '<div class="groupt" style="padding:12px 22px 0">'+title+'</div><div class="specgrid" style="padding:6px 22px 8px">'+list.map(function(f){
+        var ro='<div class="specro">'+esc(f.value||'—')+'</div>', inp=ro, note='';
+        var where=f.levels.map(function(n){return ['','Customer','Job','Elevation','Flat','Room type','Item'][n];}).join(' / ');
+        if(f.column){ note=f.level==='item'?'from Specification above':(f.value?specSrcChip(f.source)+' · override it in Specification above':'enter it in Specification above'); }
+        else if(editable&&f.item_editable){ inp=specInput(f,f.level==='item'?f.value:'',f.level!=='item'&&f.value?f.value:''); note=(f.level!=='item'&&f.value)?specSrcChip(f.source):''; }
+        else { note=f.value?specSrcChip(f.source):'<span class="specfrom">set at '+esc(where)+' level</span>'; }
+        return specRowHtml(f,inp,note);
+      }).join('')+'</div>';
+    }
+    var type=(d.item&&d.item.item_type)||'';
+    var form=spec.filter(function(f){return f.section==='form';}), regs=spec.filter(function(f){return f.section==='regs';});
+    var h=form.length?block('ORDER FORM · '+esc(type).toUpperCase(),form):'<div class="groupt" style="padding:12px 22px 0">ORDER FORM</div><div class="sub" style="padding:4px 22px 6px">'+(type?esc(type)+' is a legacy type with no order form':'Pick an item type')+' — choose Door, Casement, Flush Casement, Patio, Shaped or Bay above to get its Emplas order-form fields.</div>';
+    h+='<details class="specdet"'+(form.length?'':' open')+'><summary class="groupt" style="padding:12px 22px 0;cursor:pointer">BUILDING REGULATIONS ('+regs.length+')</summary>'+block('',regs)+'</details>';
+    return h;
+  }
+  async function saveItemSpec(id){
+    var box=document.getElementById('itemSpecBox'); if(!box)return true;
+    var vals=specCollect(box); if(!vals)return true;
+    var d=await (await api('/api/item/'+id+'/spec',{method:'PUT',body:JSON.stringify({values:vals})})).json();
+    if(!d.ok){ tShow(d.error||'Order form not saved'); return false; }
+    return true;
+  }
   function istatLabel(v){var m=ISTATUS.filter(function(s){return s[0]===(v||'')});return (m[0]||['','—'])[1];}
   async function openDetail(id){
     openModal('Loading…','<div class="empty">Loading…</div>');
@@ -8990,7 +9239,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           +'<input id="f_design" type="text" value="'+attr(it.design_code)+'" placeholder="e.g. 27" style="flex:1" oninput="stylePreview()">'
           +'<button type="button" class="add" onclick="openStylePicker()">Choose style…</button>'
           +'<img id="f_design_prev" alt="" style="display:none;width:46px;height:46px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff"></div></div>'
-        +selField('f_material','Material',it.material,MATERIALS)+fieldV('f_type','Item type',it.item_type,'Window / Door')
+        +selField('f_material','Material',it.material,MATERIALS)+selField('f_type','Item type',it.item_type,ITEM_TYPES)
         +selField('f_wtype','Window type',it.window_type,WINDOW_TYPES)
         +selField('f_glazing','Glass (panes)',it.glazing,GLASS_PANES)+selField('f_glass','Glass texture',it.glass,GLASS_TEXTURES)
         +selField('f_glazingbars','Glazing (bars)',it.glazing_bars,GLAZING_BARS)+selField('f_safety','Safety glass',it.safety_glass,SAFETY_GLASS)
@@ -9012,6 +9261,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<div class="field full"><label>Comments</label><textarea id="f_comments" rows="2">'+esc(it.comments||'')+'</textarea></div>'
         +'</div>';
     }
+    if(!d.is_snag)html+='<div id="itemSpecBox">'+itemSpecHtml(d,specEditable)+'</div>';
     if(d.photos&&d.photos.length){
       html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="photos">'+d.photos.map(function(ph){return '<figure><img src="'+(ph.url||'')+'" alt=""><figcaption>'+esc(ph.kind)+'</figcaption></figure>';}).join('')+'</div>';
     } else { html+='<div class="groupt" style="padding:0 22px">PHOTOS</div><div class="empty">No photos yet — add one below, or they arrive from the mobile survey / install flow.</div>'; }
@@ -9143,6 +9393,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       mullion1_mm:g('f_m1'),mullion2_mm:g('f_m2'),mullion3_mm:g('f_m3'),mullion_equal:chk('f_meq')};
   }
   async function saveDetail(id){
+    if(!(await saveItemSpec(id)))return;
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(collectDetail())})).json();
     if(d.ok){tShow('Details saved');loadItems();openDetail(id);}else tShow(d.error||'Save failed'); // stays open
   }
@@ -9173,6 +9424,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function markSurveyed(id){
     var miss=itemSurveyMissing();
     if(miss.length){ tShow('Fill required fields first: '+miss.join(', ')); if(_detailItem)highlightNeedFill(_detailItem); return; }
+    if(!(await saveItemSpec(id)))return;
     var body=collectDetail(); body.stage='surveyed';
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
     if(d.ok){tShow('Saved · marked Surveyed');loadItems();closeModal();}else tShow(d.error||'Save failed');
