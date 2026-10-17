@@ -24,6 +24,7 @@ import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as 
 import { agentTenant, receiveSnapshot, listDocs, docsToCheck, lastSync, hasAgentKey, newAgentKey, setNotJob } from './subiekt';
 import { receiveStock, catalogueView, sketchUrls, itemSources } from './cortizo';
 import { gzipSync } from 'node:zlib';
+import { receiveLots, stockView, historyFor } from './stockValue';
 import { EXPENSE_KINDS, EXPENSE_KIND_LABEL, expenseOrders, orderLabel, listMyExpenses, addExpense, withdrawExpense, actOnExpense, type ExpenseAction } from './finExpenses';
 import { isRowComplete, missingRequired, FIELD_LABELS, toMm } from '@ace/shared';
 import { buildItemCode, levelSeg } from '@ace/shared';
@@ -400,6 +401,17 @@ const server = createServer(async (req, res) => {
       for await (const c of req) { size += c.length; if (size > 30 * 1024 * 1024) { send(res, 413, { error: 'Snapshot too large.' }); return; } chunks.push(c as Buffer); }
       let snap: any = null; try { snap = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* handled below */ }
       const r = await receiveStock(tenantId, snap);
+      if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+      send(res, 200, r); return;
+    }
+    // ... and the open delivery lots (Fin&Ops ▸ Stock value).
+    if (p === '/api/agent/subiekt-lots' && req.method === 'POST') {
+      const tenantId = await agentTenant(req.headers['x-agent-key']);
+      if (!tenantId) { send(res, 401, { error: 'Unknown agent key.' }); return; }
+      const chunks: Buffer[] = []; let size = 0;
+      for await (const c of req) { size += c.length; if (size > 30 * 1024 * 1024) { send(res, 413, { error: 'Snapshot too large.' }); return; } chunks.push(c as Buffer); }
+      let snap: any = null; try { snap = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* handled below */ }
+      const r = await receiveLots(tenantId, snap);
       if (!r.ok) { send(res, r.status, { error: r.error }); return; }
       send(res, 200, r); return;
     }
@@ -939,6 +951,21 @@ const server = createServer(async (req, res) => {
       let docs: Awaited<ReturnType<typeof listDocs>> = [];
       try { docs = await listDocs(ctx.tenant_id); } catch { /* migration 0074 not run yet */ }
       send(res, 200, { last: docs.length ? await lastSync() : null, hasKey: await hasAgentKey(), toCheck: docsToCheck(docs), notJob: docs.filter((d) => d.not_job).map((d) => ({ doc_id: d.doc_id, number: d.number })), canManage: can(ctx.role, 'finops.manage') }); return;
+    }
+    // ---- Fin&Ops ▸ Stock value: open lots from Subiekt (value + ageing) and the daily history ----
+    if (p === '/api/finops/stock' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      let v; try { v = await stockView(ctx.tenant_id); } catch { send(res, 200, { products: [], lots: [], syncedAt: null, day: null, historyDays: [], notReady: true }); return; }   // migration 0081 not run yet
+      const body = Buffer.from(JSON.stringify(v));
+      if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' });
+        res.end(gzipSync(body)); return;
+      }
+      send(res, 200, v); return;
+    }
+    if (p === '/api/finops/stock/history' && req.method === 'GET') {
+      if (!allow('finops.view')) return;
+      send(res, 200, { rows: await historyFor(ctx.tenant_id, String(url.searchParams.get('day') ?? '')) }); return;
     }
     if (p === '/api/finops/subiekt/not-job' && req.method === 'POST') {
       if (!allow('finops.view')) return;
@@ -3556,6 +3583,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .fp td.n.est{font-style:italic;color:#b45309}
   .fsl tr.g td{cursor:pointer;font-size:13px;padding:9px 8px}.fsl tr.g:hover td{background:#fbf3f8}.fsl tr.g td:first-child{font-weight:700}
   .fsl tr.i td{background:#faf9fd;font-size:12px}.fsl tr.i td:first-child{padding-left:26px}.fsl th[style*=right]{text-align:right}
+  .svt td{vertical-align:middle}.svt tr.svg{cursor:pointer}.svt tr.svg:hover td{background:#faf9fe}.svt tr.svp td{font-size:12px;background:#fcfcfe}.svt tr.svp{cursor:pointer}.svt tr.svp td:first-child{padding-left:26px}
+  .svbar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#f2f0f8;min-width:120px}.svbar span{display:block;height:100%}
+  .svk0{background:#2e7d32}.svk1{background:#9ccc65}.svk2{background:#fbc02d}.svk3{background:#fb8c00}.svk4{background:#d32f2f}
+  @media print{ header,.noprint,#toast{display:none!important} #finStockView main{max-width:none} .svt th{position:static} }
   .czt td{vertical-align:middle}.czt tr.czr{cursor:pointer}.czt tr.czr:hover td{background:#faf9fe}.czsk{width:84px;height:60px;text-align:center}.czsk img{max-width:78px;max-height:56px}
   .czbig{display:flex;gap:22px;flex-wrap:wrap}.czbig .pic{flex:0 0 260px;height:220px;display:grid;place-items:center;border:1px solid var(--line);border-radius:12px;background:#fff}.czbig .pic img{max-width:240px;max-height:200px}
   .fjl td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -3705,6 +3736,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabFinOrders" class="tab" style="display:none" onclick="showTab('finorders')">Sales orders</button>
         <button id="tabFinComm" class="tab" style="display:none" onclick="showTab('fincomm')">Commission</button>
         <button id="tabFinPay" class="tab" style="display:none" onclick="showTab('finpay')">Payroll</button>
+        <button id="tabFinStock" class="tab" style="display:none" onclick="showTab('finstock')">Stock value</button>
         <button id="tabFinMan" class="tab" style="display:none" onclick="showTab('finman')">Manuals</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
@@ -4113,6 +4145,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div>
       <div class="card2" style="overflow:auto"><table class="fjl czt"><thead><tr><th style="width:84px">SKETCH</th><th>REFERENCE</th><th>DESCRIPTION</th><th>SYSTEMS</th><th style="text-align:right">WEIGHT g/m</th><th style="text-align:right">STOCK IN SUBIEKT</th></tr></thead><tbody id="cz_rows"></tbody></table></div>
       <div style="text-align:center;margin:12px 0 30px"><button class="pobtn" id="cz_more" style="display:none">Show more</button></div>
+    </main>
+  </div>
+  <div id="finStockView" style="display:none">
+    <main style="max-width:1500px">
+      <div class="titlerow">
+        <div><h2>Stock value</h2><div class="sub" id="sv_sub"></div></div>
+        <div class="noprint" style="display:flex;gap:8px;align-self:center;align-items:center"><button class="pobtn" id="sv_csv">Export CSV</button><button class="pobtn" id="sv_print">Print / PDF</button></div>
+      </div>
+      <div class="chips noprint" style="gap:8px;margin:14px 0 8px">
+        <select id="sv_day" class="tinput"></select>
+        <select id="sv_wh" class="tinput"><option value="">All warehouses</option></select>
+        <select id="sv_group" class="tinput"><option value="supplier">Group by supplier</option><option value="grp">Group by product group</option><option value="wh">Group by warehouse</option></select>
+        <input id="sv_q" class="tinput" style="min-width:220px" placeholder="Search symbol or name">
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="sv_slow"> Only no movement 6+ months</label>
+      </div>
+      <div class="statgrid" id="sv_stats" style="margin:10px 0 14px"></div>
+      <div class="card2" style="overflow:auto"><table class="fjl svt"><thead><tr><th>GROUP</th><th style="text-align:right">PRODUCTS</th><th style="text-align:right">VALUE (PLN)</th><th style="text-align:right">0–90 d</th><th style="text-align:right">91–180 d</th><th style="text-align:right">181–365 d</th><th style="text-align:right">1–2 y</th><th style="text-align:right">&gt; 2 y</th><th style="width:150px"></th><th>LAST ISSUE</th></tr></thead><tbody id="sv_rows"></tbody></table></div>
+      <div class="sub" id="sv_foot" style="margin:10px 0 30px"></div>
     </main>
   </div>
   <div id="finManView" style="display:none">
@@ -6399,6 +6449,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('finOrdersView').style.display=name==='finorders'?'block':'none';
     document.getElementById('finCommView').style.display=name==='fincomm'?'block':'none';
     document.getElementById('finManView').style.display=name==='finman'?'block':'none';
+    document.getElementById('finStockView').style.display=name==='finstock'?'block':'none';
+    var _tfs=document.getElementById('tabFinStock'); if(_tfs)_tfs.classList.toggle('on',name==='finstock');
     document.getElementById('myExpView').style.display=name==='myexp'?'block':'none';
     document.getElementById('prodView').style.display=name==='prod'?'block':'none';
     document.getElementById('cortizoView').style.display=name==='cortizo'?'block':'none';
@@ -6455,6 +6507,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(name==='finorders')loadFinOrders();
     if(name==='fincomm')loadFinComm();
     if(name==='finman')loadFinMan();
+    if(name==='finstock')loadStockValue();
     if(name==='myexp')loadMyExp();
     if(name==='prod')loadProd();
     if(name==='cortizo')loadCortizo();
@@ -6575,9 +6628,129 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('cz_unm').onclick=czUnmatched;
     document.getElementById('cz_csv').onclick=czCsv;
   })();
+  // ---- Fin&Ops ▸ Stock value: open lots from Subiekt (FIFO purchase cost) + ageing; history per day ----
+  var SV={d:null,hist:null,histDay:'',open:{},shown:{}};
+  var SV_B=['0–90 d','91–180 d','181–365 d','1–2 y','> 2 y'];
+  function svDays(a,b){ return Math.round((Date.parse(b+'T00:00:00Z')-Date.parse(a+'T00:00:00Z'))/86400000); }
+  function svBucket(rec,day){ if(!rec)return 4; var d=svDays(rec,day); return d<=90?0:d<=180?1:d<=365?2:d<=730?3:4; }
+  function svMoney(n){ return Number(n||0).toLocaleString(FLOC(),{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function svNum(n,dec){ return n==null?'':Number(n).toLocaleString(FLOC(),{minimumFractionDigits:0,maximumFractionDigits:dec==null?3:dec}); }
+  function svDate(iso){ if(!iso)return ''; var p=String(iso).slice(0,10).split('-'); return p[2]+'.'+p[1]+'.'+p[0]; }
+  async function loadStockValue(){
+    var tb=document.getElementById('sv_rows'); if(!SV.d)tb.innerHTML='<tr><td colspan="10" class="sub" style="padding:16px">'+esc(TR('Loading…'))+'</td></tr>';
+    try{ var r=await api('/api/finops/stock'); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); SV.d=d; }
+    catch(e){ tb.innerHTML='<tr><td colspan="10" class="sub" style="padding:16px">'+esc(TR('Could not load.'))+'</td></tr>'; return; }
+    var d=SV.d, ds=document.getElementById('sv_day'), keep=ds.value;
+    ds.innerHTML='<option value="">'+esc(d.day?T('Today ({0})',svDate(d.day)):TR('Today'))+'</option>'+(d.historyDays||[]).filter(function(x){return x!==d.day;}).map(function(x){return '<option value="'+x+'">'+esc(svDate(x))+'</option>';}).join('');
+    ds.value=keep;
+    var whs={}; d.lots.forEach(function(l){ whs[l[1]]=1; });
+    var ws=document.getElementById('sv_wh'), kw=ws.value; ws.innerHTML='<option value="">'+esc(TR('All warehouses'))+'</option>'+Object.keys(whs).sort().map(function(w){return '<option>'+esc(w)+'</option>';}).join(''); ws.value=kw;
+    var gs=document.getElementById('sv_group'); if(!SV.groupSet){ SV.groupSet=1; var anyGrp=d.products.some(function(p){return !!p[3];}); gs.value=anyGrp?'grp':'supplier'; }
+    if(ds.value)await svLoadHistory(ds.value); else SV.hist=null;
+    renderStockValue();
+  }
+  async function svLoadHistory(day){
+    if(SV.histDay===day&&SV.hist)return;
+    try{ var r=await api('/api/finops/stock/history?day='+encodeURIComponent(day)); var x=await r.json(); SV.hist=x.rows||[]; SV.histDay=day; }catch(e){ SV.hist=[]; }
+  }
+  function svGroupName(key){ return key||TR('(none)'); }
+  // current lots → product × warehouse lines, filtered
+  function svLines(){
+    var d=SV.d, day=d.day, wh=document.getElementById('sv_wh').value, q=document.getElementById('sv_q').value.trim().toLowerCase(), slow=document.getElementById('sv_slow').checked;
+    var by={}, out=[];
+    d.lots.forEach(function(l){
+      if(wh&&l[1]!==wh)return;
+      var p=d.products[l[0]]; if(q&&(String(p[1]).toLowerCase().indexOf(q)<0)&&(String(p[2]||'').toLowerCase().indexOf(q)<0))return;
+      var k=l[0]+'|'+l[1], x=by[k];
+      if(!x){ x=by[k]={pi:l[0],p:p,wh:l[1],qty:0,value:0,b:[0,0,0,0,0],oldest:null,newest:null,last:l[5],lots:[]}; out.push(x); }
+      var v=l[3]==null?0:l[2]*l[3], b=svBucket(l[4],day);
+      x.qty+=l[2]; x.value+=v; x.b[b]+=v; x.lots.push(l);
+      if(l[4]&&(!x.oldest||l[4]<x.oldest))x.oldest=l[4]; if(l[4]&&(!x.newest||l[4]>x.newest))x.newest=l[4];
+      if(l[5]&&(!x.last||l[5]>x.last))x.last=l[5];
+    });
+    out.forEach(function(x){ x.slow=(!x.last||svDays(x.last,day)>180)&&(!x.newest||svDays(x.newest,day)>180); });
+    return slow?out.filter(function(x){return x.slow;}):out;
+  }
+  function svBar(b,total){ if(!total)return '<div class="svbar"></div>'; return '<div class="svbar">'+b.map(function(v,i){ return v>0?'<span class="svk'+i+'" style="width:'+(v/total*100).toFixed(2)+'%" title="'+esc(SV_B[i]+': '+svMoney(v))+'"></span>':''; }).join('')+'</div>'; }
+  function svStat(v,l){ return '<div class="stat"><div class="v">'+v+'</div><div class="l">'+esc(TR(l))+'</div></div>'; }
+  function renderStockValue(){
+    if(!SV.d)return;
+    var d=SV.d, gby=document.getElementById('sv_group').value, tb=document.getElementById('sv_rows'), hist=document.getElementById('sv_day').value&&SV.hist;
+    document.getElementById('sv_q').disabled=!!hist; document.getElementById('sv_slow').disabled=!!hist;
+    if(!d.lots.length&&!hist){ document.getElementById('sv_sub').textContent=TR('No stock data from Subiekt yet: the Subiekt agent 1.2 sends it on its next run.'); tb.innerHTML=''; document.getElementById('sv_stats').innerHTML=''; return; }
+    document.getElementById('sv_sub').textContent=hist?T('Stock on {0}, from the daily history (totals per group; products are shown for today only).',svDate(SV.histDay)):T('FIFO purchase cost of what is left of each delivery, net PLN; age from the original delivery date. Subiekt data of {0}.',czWhen(d.syncedAt));
+    var groups={}, list=[], tot={value:0,b:[0,0,0,0,0],products:0,slowN:0,slowV:0};
+    if(hist){
+      var wh=document.getElementById('sv_wh').value;
+      SV.hist.forEach(function(r){ if(wh&&r.warehouse!==wh)return; var k=gby==='wh'?r.warehouse:gby==='grp'?r.grp:r.supplier, g=groups[k];
+        if(!g){ g=groups[k]={key:k,products:0,value:0,b:[0,0,0,0,0],last:null,lines:null}; list.push(g); }
+        g.products+=r.products; g.value+=r.value; [r.b0,r.b1,r.b2,r.b3,r.b4].forEach(function(v,i){ g.b[i]+=v; }); });
+      list.forEach(function(g){ tot.value+=g.value; tot.products+=g.products; g.b.forEach(function(v,i){ tot.b[i]+=v; }); });
+    } else {
+      var lines=svLines(), seen={};
+      lines.forEach(function(x){ var k=gby==='wh'?x.wh:gby==='grp'?(x.p[3]||''):(x.p[4]||''), g=groups[k];
+        if(!g){ g=groups[k]={key:k,products:0,value:0,b:[0,0,0,0,0],last:null,lines:[],pset:{}}; list.push(g); }
+        g.lines.push(x); g.value+=x.value; x.b.forEach(function(v,i){ g.b[i]+=v; }); if(!g.pset[x.pi]){ g.pset[x.pi]=1; g.products++; }
+        if(x.last&&(!g.last||x.last>g.last))g.last=x.last;
+        tot.value+=x.value; x.b.forEach(function(v,i){ tot.b[i]+=v; }); if(!seen[x.pi]){ seen[x.pi]=1; tot.products++; } if(x.slow){ tot.slowN++; tot.slowV+=x.value; } });
+    }
+    list.sort(function(a,b){ return b.value-a.value; }); SV.list=list;
+    var old=tot.b[3]+tot.b[4];
+    document.getElementById('sv_stats').innerHTML=svStat(svMoney(tot.value),'Stock value (net PLN)')+svStat(svNum(tot.products,0),hist?'Product lines in stock':'Products in stock')
+      +svStat(svMoney(old)+' <span style="font-size:14px;color:var(--muted)">('+(tot.value?Math.round(old/tot.value*100):0)+'%)</span>','Older than 12 months')
+      +(hist?'':svStat(svNum(tot.slowN,0)+' <span style="font-size:14px;color:var(--muted)">· '+svMoney(tot.slowV)+'</span>','No movement for 6+ months'));
+    var h=list.map(function(g,gi){
+      var open=!hist&&SV.open[gby+'|'+g.key];
+      var r='<tr class="svg" data-svg="'+gi+'"><td><b>'+(hist?'':(open?'▾ ':'▸ '))+esc(svGroupName(g.key))+'</b></td><td class="r">'+svNum(g.products,0)+'</td><td class="r"><b>'+svMoney(g.value)+'</b></td>'
+        +g.b.map(function(v){ return '<td class="r">'+(v?svMoney(v):'')+'</td>'; }).join('')+'<td>'+svBar(g.b,g.value)+'</td><td>'+esc(svDate(g.last))+'</td></tr>';
+      if(open){
+        g.lines.sort(function(a,b){ return b.value-a.value; });
+        var lim=SV.shown[gby+'|'+g.key]||100;
+        r+=g.lines.slice(0,lim).map(function(x){ var li=d.lots.indexOf(x.lots[0]);
+          return '<tr class="svp" data-svp="'+gi+':'+g.lines.indexOf(x)+'"><td>'+(x.slow?'⚠ ':'')+'<b>'+esc(x.p[1])+'</b> <span class="sub" style="margin:0">'+esc(x.p[2]||'')+'</span></td><td class="r">'+esc(x.wh)+' · '+svNum(x.qty)+' '+esc(x.p[5]||'')+'</td><td class="r"><b>'+svMoney(x.value)+'</b></td>'
+            +x.b.map(function(v){ return '<td class="r">'+(v?svMoney(v):'')+'</td>'; }).join('')+'<td>'+svBar(x.b,x.value)+'</td><td>'+esc(svDate(x.last))+'</td></tr>'; }).join('');
+        if(g.lines.length>lim)r+='<tr><td colspan="10" style="padding-left:26px"><a href="#" data-svmore="'+gi+'">'+esc(T('Show {0} more',g.lines.length-lim))+'</a></td></tr>';
+      }
+      return r;
+    }).join('');
+    h+='<tr style="border-top:2px solid var(--line)"><td><b>'+esc(TR('Total'))+'</b></td><td class="r">'+svNum(tot.products,0)+'</td><td class="r"><b>'+svMoney(tot.value)+'</b></td>'+tot.b.map(function(v){ return '<td class="r"><b>'+svMoney(v)+'</b></td>'; }).join('')+'<td>'+svBar(tot.b,tot.value)+'</td><td></td></tr>'
+      +'<tr><td></td><td></td><td></td>'+tot.b.map(function(v){ return '<td class="r sub" style="margin:0">'+(tot.value?Math.round(v/tot.value*100):0)+'%</td>'; }).join('')+'<td></td><td></td></tr>';
+    tb.innerHTML=list.length?h:'<tr><td colspan="10" class="sub" style="padding:16px">'+esc(TR('Nothing matches.'))+'</td></tr>';
+    tb.querySelectorAll('tr.svg').forEach(function(tr){ tr.onclick=function(){ if(hist)return; var g=list[+tr.getAttribute('data-svg')], k=gby+'|'+g.key; SV.open[k]=!SV.open[k]; renderStockValue(); }; });
+    tb.querySelectorAll('tr.svp').forEach(function(tr){ tr.onclick=function(){ var a=tr.getAttribute('data-svp').split(':'); svOpenLine(list[+a[0]].lines[+a[1]]); }; });
+    tb.querySelectorAll('[data-svmore]').forEach(function(a){ a.onclick=function(e){ e.preventDefault(); var g=list[+a.getAttribute('data-svmore')], k=gby+'|'+g.key; SV.shown[k]=(SV.shown[k]||100)+300; renderStockValue(); }; });
+    document.getElementById('sv_foot').innerHTML=esc(TR('Value = what is left of each delivery × its purchase cost per unit (FIFO), as Subiekt’s “Remanent na dzień”. Age counts from the original delivery; a move between warehouses keeps it. ⚠ = no issue for 6 months and nothing received in 6 months.'));
+  }
+  function svOpenLine(x){
+    var day=SV.d.day, lots=x.lots.slice().sort(function(a,b){ return String(a[4]||'').localeCompare(String(b[4]||'')); });
+    var h='<div style="font-weight:700">'+esc(x.p[2]||'')+'</div><div class="sub" style="margin:2px 0 10px">'+esc(T('Warehouse {0} · supplier {1} · group {2}',x.wh,x.p[4]||'—',x.p[3]||'—'))+'</div>'
+      +'<table class="fjl"><thead><tr><th>'+esc(TR('DELIVERED'))+'</th><th style="text-align:right">'+esc(TR('AGE (DAYS)'))+'</th><th style="text-align:right">'+esc(TR('QUANTITY'))+'</th><th style="text-align:right">'+esc(TR('UNIT COST'))+'</th><th style="text-align:right">'+esc(TR('VALUE'))+'</th></tr></thead><tbody>'
+      +lots.map(function(l){ return '<tr><td>'+esc(svDate(l[4])||'—')+'</td><td class="r">'+(l[4]?svDays(l[4],day):'')+'</td><td class="r">'+svNum(l[2])+' '+esc(x.p[5]||'')+'</td><td class="r">'+(l[3]==null?'—':svNum(l[3],4))+'</td><td class="r">'+svMoney(l[3]==null?0:l[2]*l[3])+'</td></tr>'; }).join('')
+      +'<tr style="font-weight:700"><td>'+esc(TR('Total'))+'</td><td></td><td class="r">'+svNum(x.qty)+'</td><td class="r">'+(x.qty?svNum(x.value/x.qty,4):'')+'</td><td class="r">'+svMoney(x.value)+'</td></tr></tbody></table>'
+      +'<div class="sub" style="margin:10px 0 0">'+esc(T('Last issue: {0}',x.last?svDate(x.last):TR('never')))+'</div>';
+    openModal(esc(x.p[1]),h);
+  }
+  function svCsv(){
+    var q=function(v){ v=v==null?'':String(v); return /[";]/.test(v)||v.indexOf(String.fromCharCode(10))>=0?'"'+v.replace(/"/g,'""')+'"':v; }, n=function(v){ return v==null?'':String(Math.round(v*100)/100).replace('.',','); };
+    var hist=document.getElementById('sv_day').value&&SV.hist, rows;
+    if(hist) rows=[['Group','Products','Value'].concat(SV_B)].concat(SV.list.map(function(g){ return [svGroupName(g.key),g.products,n(g.value)].concat(g.b.map(n)); }));
+    else { rows=[['Symbol','Name','Group','Supplier','Warehouse','Qty','Unit','Avg unit cost','Value'].concat(SV_B).concat(['Oldest delivery','Last issue','No movement 6m+'])];
+      SV.list.forEach(function(g){ g.lines.forEach(function(x){ rows.push([x.p[1],x.p[2],x.p[3],x.p[4],x.wh,String(x.qty).replace('.',','),x.p[5],x.qty?n(x.value/x.qty):'',n(x.value)].concat(x.b.map(n)).concat([x.oldest||'',x.last||'',x.slow?'yes':''])); }); }); }
+    var nl=String.fromCharCode(13,10), a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+rows.map(function(r){ return r.map(q).join(';'); }).join(nl)],{type:'text/csv;charset=utf-8'}));
+    a.download='stock-value-'+(hist?SV.histDay:(SV.d.day||'today'))+'.csv'; a.click();
+  }
+  (function(){
+    var deb=null;
+    document.getElementById('sv_day').onchange=async function(){ if(this.value)await svLoadHistory(this.value); else SV.hist=null; renderStockValue(); };
+    ['sv_wh','sv_group','sv_slow'].forEach(function(id){ document.getElementById(id).onchange=renderStockValue; });
+    document.getElementById('sv_q').oninput=function(){ clearTimeout(deb); deb=setTimeout(renderStockValue,200); };
+    document.getElementById('sv_csv').onclick=svCsv;
+    document.getElementById('sv_print').onclick=function(){ window.print(); };
+  })();
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -6700,6 +6873,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabFinOrders',canCap('sales.orders'));
     show('tabFinComm',canCap('sales.orders'));
     show('tabFinMan',canCap('finops.view')||canCap('sales.orders'));
+    show('tabFinStock',canCap('finops.view'));
     show('tabMyExp',canCap('expenses.report'));
     show('tabProd',canCap('time.manage'));
     show('tabCortizo',canCap('stock.view'));
@@ -7897,8 +8071,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var I18N_RX=[["^Last sync (.*)$", "Ostatnia synchronizacja $1"], ["[(]last ([0-9]+) months[)]", "(ostatnie $1 mies.)"], ["[(]all history[)]", "(cała historia)"], ["Automatic [(]daily[)]", "Automatyczna (codzienna)"], ["^([0-9]+) invoices · ([0-9]+) new · ([0-9]+) changed$", "Faktury: $1 · nowe: $2 · zmienione: $3"], ["^failed: ", "błąd: "], ["^every day at (.*)$", "codziennie o $1"], ["[(]Poland time, last ([0-9]+) months[)]", "(czas polski, ostatnie $1 mies.)"], ["^Showing ([0-9]+) of ([0-9]+) jobs —$", "Pokazano $1 z $2 zleceń —"], ["^Showing ([0-9]+) of ([0-9]+) —$", "Pokazano $1 z $2 —"], ["^(.*) invoices · nothing to fix(.*)$", "Faktury: $1 · nic do poprawy$2"], ["^([0-9]+) changed after sync$", "Zmienione po synchronizacji: $1"], ["([0-9]+) without a month [(]not shown[)]", "bez miesiąca (pominięte): $1"], ["^([0-9]+) to fix in monday →$", "Do poprawy w monday: $1 →"], ["^(.*) invoices( ·)?$", "Faktury: $1$2"], ["^Data as of last sync: (.*)$", "Dane z ostatniej synchronizacji: $1"], ["^([0-9]{4}) · net zł$", "$1 · netto zł"], ["^(.*) — estimate, actuals not entered yet$", "$1 — szacunek, brak wartości rzeczywistych"], ["^(.*) — includes estimates$", "$1 — zawiera szacunki"], ["^fixed( · KONTO .*)?$", "stały$1"], ["^variable( · KONTO .*)?$", "zmienny$1"], ["Invoice date (.*) is not in its monday group “(.*)” — it is counted in (.*); correct the date or move the item", "Data faktury $1 nie pasuje do grupy monday „$2” — faktura jest liczona w miesiącu: $3; popraw datę lub przenieś pozycję"], ["KONTO (.*) does not match the category “(.*)” — one of them is wrong", "KONTO $1 nie zgadza się z kategorią „$2” — jedno z nich jest błędne"], ["No department and no category", "Brak działu i kategorii"], ["No department [(]Dział[)]", "Brak działu (Dział)"], ["No category [(]Podrodzaj kosztu[)]", "Brak kategorii (Podrodzaj kosztu)"], ["^This invoice was edited in monday after its Cost ID was created [(]first noticed (.*)[)][.]$", "Ta faktura została zmieniona w monday po utworzeniu Cost ID (zauważono: $1)."], ["^This invoice was edited in monday after its Cost ID was created[.]$", "Ta faktura została zmieniona w monday po utworzeniu Cost ID."], ["Reading invoices from monday", "Odczyt faktur z monday"], ["Saving to the app…", "Zapisywanie w aplikacji…"], ["Writing Cost IDs to monday…", "Zapisywanie Cost ID w monday…"], ["([0-9]+) read —", "odczytano: $1 —"], ["you can leave this page; it keeps running[.]", "możesz opuścić tę stronę — synchronizacja trwa dalej."], ["The invoices below are already up to date; the Cost IDs are now being copied into monday [(]the first time takes a while[)][.]", "Faktury poniżej są już aktualne; Cost ID są teraz kopiowane do monday (za pierwszym razem trwa to dłużej)."], ["^Jobs [(]([0-9]+) locked[)]$", "Zlecenia (zablokowane: $1)"], ["^Total [(]([0-9]+)[)]$", "Razem ($1)"], ["^(.*) zł / hour$", "$1 zł / godz."], ["^Labour cost = ", "Koszt robocizny = "], ["^Sales [(]net zł[)] — from ([0-9]+) sales invoices?$", "Sprzedaż (netto zł) — z faktur sprzedaży: $1"], ["^the sheet had (.*)$", "w arkuszu było $1"], ["^Frozen at lock[.] Invoices now add up to (.*)[.]$", "Zamrożone przy blokadzie. Faktury dają teraz razem $1."], ["^Imported ([0-9]+) job[(]s[)] with ([0-9]+) cost line[(]s[)][.]", "Zaimportowano zleceń: $1, pozycji kosztowych: $2."], [" Skipped ([0-9]+) that already existed[.]", " Pominięto już istniejących: $1."], ["^Imported ([0-9]+) invoice[(]s[)][.]", "Zaimportowano faktur: $1."], [" Skipped ([0-9]+) already here[.]", " Pominięto już istniejących: $1."], [" ([0-9]+) row[(]s[)] had no net amount and were left out[.]", " Pominięto wierszy bez kwoty netto: $1."], ["^Lock job (.*)[?] Nobody can change it until an admin unlocks it[.]$", "Zablokować zlecenie $1? Nikt nie będzie mógł go zmienić, dopóki administrator go nie odblokuje."], ["^Delete job (.*) and its ([0-9]+) cost line[(]s[)][?] This cannot be undone[.]$", "Usunąć zlecenie $1 wraz z pozycjami kosztowymi ($2)? Tej operacji nie można cofnąć."], ["^job row[(]s[)] recognised", "— tyle wierszy zleceń rozpoznano"], ["([0-9]+) already exist and will be skipped", "już istniejące (zostaną pominięte): $1"], ["· first: (.*), last: (.*)$", "· pierwszy: $1, ostatni: $2"], ["^invoice row[(]s[)] recognised", "— tyle wierszy faktur rozpoznano"], ["^Job (.*) already exists[.]$", "Zlecenie $1 już istnieje."], ["^Job (.*) is locked — an admin has to unlock it before it can be changed[.]$", "Zlecenie $1 jest zablokowane — administrator musi je odblokować, zanim będzie można je zmienić."], ["^Your role [(](.*)[)] is not allowed to do that[.]$", "Twoja rola ($1) nie ma uprawnień do tej operacji."]].map(function(r){ return [new RegExp(r[0]),r[1]]; });
   var I18N_HTML={"fo_desc": "Rejestr handlowca: każda wysłana oferta, informacja czy została zaakceptowana, jej wartość i koszty. Księgowość rejestruje wpłaty — faktury z zakładki <b>Sprzedaż</b> łączą się z zamówieniem po jego numerze, a wpłaty gotówkowe dodaje się tutaj. Zaakceptowane zamówienie liczy się do prowizji pełną wartością netto w miesiącu zaksięgowania <b>pierwszej wpłaty</b>. Gdy zamówienie OK trafia do produkcji w Orpiszewie, księgowość dopisuje jego <b>numer Z</b>; zamówienie zachowuje oba numery.", "fm_desc": "Prowizja miesięczna z zamówień, według zasad z arkusza <b>Zasady Prowizji</b>. Suma miesiąca to pełna wartość netto zaakceptowanych zamówień, których pierwsza wpłata została zaksięgowana w tym miesiącu; osiągnięty próg wyznacza stawkę, która dotyczy całego miesiąca.", "fo_import": "W skoroszycie otwórz arkusz <b>TomaszProwizja</b>, zaznacz wiersze od kolumny <b>A</b> (Lp) do kolumny <b>W</b> (Rok), skopiuj i wklej poniżej. Wiersze, które są już w rejestrze, zostaną pominięte, więc można bezpiecznie wkleić cały arkusz ponownie. Nic nie zostanie zapisane, dopóki nie klikniesz Importuj.", "fm_rules": "Miesięcznie: poniżej 300 000 zł — 0%; od 300 000 — 1%; powyżej 450 000 — 1,5%; powyżej 600 000 — 2%, od całego miesiąca. Prowizja jest wypłacana po zaksięgowaniu płatności od klienta. Bonus roczny: obrót firmy od 3,6 mln — do 5% rocznego wynagrodzenia brutto handlowca; powyżej 5 mln — do 10%; powyżej 10 mln — do 15%. Faktyczną wysokość ustala Zarząd; wypłata do 31 marca kolejnego roku.", "fp_desc": "Koszty według działu → stałe / zmienne → pozycja kosztowa, miesiąc po miesiącu — układ arkusza <b>New Performance Sheet</b>, liczony z zsynchronizowanych faktur z monday (netto). Kliknij dowolną liczbę, aby zobaczyć faktury, z których się składa.", "fp_foot_old": "", "fp_foot": "Dział pochodzi z kolumny <b>Dział</b> na tablicy, a pozycja z kolumny <b>Podrodzaj kosztu</b>. O tym, czy koszt jest stały czy zmienny, decyduje kategoria — tak jak w arkuszu: 469, 401, 412, 457, 489, 463, 464 i 467 są stałe; ich warianty <b>.V</b> i wszystkie pozostałe kategorie są zmienne (kolumna Koszt z tablicy nie jest używana). Wynagrodzenia i podatki od płac pochodzą z zakładki <b>Płace</b>; szacunki są oznaczone kursywą. Blok <b>Wynik</b> jest liczony jak w arkuszu: Sprzedaż − Materiały (RW zleceń z danego miesiąca, z Kosztów zleceń) − Koszty sprzedaży = Marża brutto; − Koszty ogólne (Biuro + płace Produkcji) = EBITDA; każda pozycja z udziałem % w sprzedaży. <b>Amortyzację</b> i <b>Koszty finansowe</b> wpisuje się ręcznie: kliknij miesiąc w tych wierszach. <b>Pozostałe przychody</b> to Handel z Polski; są już częścią Sprzedaży i, tak jak w arkuszu, są odejmowane przed Zyskiem przed opodatkowaniem. Aby odświeżyć faktury, uruchom <b>Synchronizuj z Monday</b> w zakładce Koszty.", "fc_desc": "Wszystkie faktury zakupowe z tablicy monday <b id=\\"fc_board\\">FAKTURY WSZYSTKIE</b>. Każda faktura przy pierwszej synchronizacji dostaje <b>Cost ID</b> (dostawca # nr faktury # netto), przechowywany tutaj i zapisywany w monday; miesiąc, w którym faktura jest liczona, wynika z jej grupy w monday. Jeśli dostawca, numer faktury lub kwota netto zostaną później zmienione, faktura zostanie oznaczona jako <b>Zmieniona</b>.", "fj_desc": "Zysk i strata na zleceniu — arkusz <b>Koszty</b>. Każde zlecenie ma pozycje kosztowe (materiał, koszty dodatkowe, malowanie, transport, odprawa celna, robocizna = godziny × stawka; po kilka na zlecenie, np. kilka faktur). Koszt całkowity = suma wszystkich kosztów; zysk = sprzedaż − koszt całkowity. Kliknij zlecenie, aby je otworzyć. Zablokowanego zlecenia nie można zmienić, dopóki administrator go nie odblokuje.", "fs_desc": "Faktury sprzedaży — arkusz <b>Sprzedaż</b>, wpisywane ręcznie do czasu podłączenia Subiekta. Jeden wiersz na <b>zlecenie</b>, zawierający wszystkie jego faktury (zaliczki i fakturę końcową); kliknij zlecenie, aby je zobaczyć. Suma netto faktur zlecenia jest jego sprzedażą w Kosztach zleceń. <b>Orpiszew</b> = producent Acemark PL; wszystko inne to <b>Handel z Polski</b>.", "fy_desc": "Łączne wynagrodzenia i łączne podatki od płac dla każdego działu, w każdym miesiącu. Wpisz kwoty i zaznacz <b>Rzeczywiste</b>, gdy są ostateczne. Do tego czasu miesiąc pokazuje <b>szacunek</b>: średnią z 3 ostatnich miesięcy z wartościami rzeczywistymi — albo własną kwotę, jeśli wpiszesz ją bez zaznaczania pola. Zaznaczenie miesiąca przesuwa szacunek na kolejny. Te liczby wypełniają wiersze Wynagrodzenia i Podatki w zakładce Wyniki.", "fy_foot": "Szare liczby w pustym polu to szacunek, który zostanie użyty. Zaznaczony miesiąc jest chroniony: odznacz <b>Rzeczywiste</b>, aby go zmienić.", "fj_import": "W arkuszu <b>Koszty</b> zaznacz wiersze zleceń od kolumny <b>A (LP.)</b> do kolumny <b>U (klient)</b>, skopiuj i wklej tutaj. Każdy wiersz stanie się zleceniem z jedną pozycją kosztową na każdą wypełnioną kolumnę; robocizna zachowuje godziny i koszt. Zlecenia, które już istnieją, są pomijane, więc można wkleić ponownie.", "fs_import": "W arkuszu <b>Sprzedaż</b> zaznacz wiersze faktur od kolumny <b>A (Data wystawienia)</b> do kolumny <b>L (Sprzedawca)</b>, skopiuj i wklej tutaj. Każdy wiersz stanie się jedną fakturą przy swoim zleceniu. Wiersze, które już tu są (ten sam numer faktury, zlecenie i kwota netto), są pomijane, więc można wkleić ponownie."};
   Object.assign(I18N_PL,{"Cortizo profiles": "Profile Cortizo", "Search reference or description": "Szukaj: referencja lub opis", "Profiles": "Profile", "Accessories": "Akcesoria", "Profiles and accessories": "Profile i akcesoria", "Any stock": "Dowolny stan", "In stock": "Na stanie", "In Subiekt": "W Subiekcie", "Not in Subiekt": "Brak w Subiekcie", "Export CSV": "Eksport CSV", "Show more": "Pokaż więcej", "SKETCH": "RYSUNEK", "REFERENCE": "REFERENCJA", "DESCRIPTION": "OPIS", "SYSTEMS": "SYSTEMY", "WEIGHT g/m": "WAGA g/m", "STOCK IN SUBIEKT": "STAN W SUBIEKCIE", "All systems": "Wszystkie systemy", "never": "nigdy", "Loading…": "Wczytywanie…", "Could not load.": "Nie udało się wczytać.", "{0} references from the Cortizo Center catalogues (imported {1}) · stock from Subiekt, synced {2}": "Referencji z katalogów Cortizo Center: {0} (import {1}) · stany z Subiekta, synchronizacja {2}", "The Cortizo catalogue has not been imported yet.": "Katalog Cortizo nie został jeszcze zaimportowany.", "Subiekt symbols with no reference ({0})": "Symbole w Subiekcie bez referencji ({0})", "Subiekt symbols with no reference": "Symbole w Subiekcie bez referencji", "not in Subiekt": "brak w Subiekcie", "{0} lines": "pozycji: {0}", "{0} mm bars": "sztangi {0} mm", "{0} of {1}": "{0} z {1}", "Nothing matches.": "Nic nie pasuje.", "Profile": "Profil", "Accessory": "Akcesorium", "Show more ({0} left)": "Pokaż więcej (zostało {0})", "Type": "Rodzaj", "Weight": "Waga", "Surface": "Powierzchnia", "Colour": "Kolor", "Stock in Subiekt": "Stan w Subiekcie", "SYMBOL": "SYMBOL", "NAME": "NAZWA", "WAREHOUSE": "MAGAZYN", "QUANTITY": "ILOŚĆ", "RESERVED": "ZAREZERWOWANE", "No Subiekt product has this symbol.": "Żaden towar w Subiekcie nie ma tego symbolu.", "In the catalogues": "W katalogach", "SYSTEM": "SYSTEM", "CATALOGUE PAGE": "STRONA KATALOGU", "VERSION": "WERSJA", "Products in Subiekt whose symbol looks like a Cortizo reference but matches none from the catalogues: a typo in Subiekt, an old reference, or one from a catalogue that is not imported.": "Towary w Subiekcie, których symbol wygląda jak referencja Cortizo, ale nie pasuje do żadnej z katalogów: literówka w Subiekcie, stara referencja albo referencja z katalogu, którego nie zaimportowano."});   // Production ▸ Cortizo profiles
-  var I18N_TABS={"tabFinPerf": "Wyniki", "tabFinCosts": "Koszty", "tabFinJobs": "Koszty zleceń", "tabFinSales": "Sprzedaż", "tabFinOrders": "Zamówienia", "tabFinComm": "Prowizja", "tabFinPay": "Płace", "tabFinMan": "Instrukcje", "tabMyExp": "Koszty montażu", "tabProd": "Czas produkcji", "tabCortizo": "Profile Cortizo", "grpbtn_production": "Produkcja \u25be"};
-  var I18N_VIEWS=['finPerfView','finCostsView','finJobsView','finSalesView','finPayView','finOrdersView','finCommView','cortizoView'];
+  Object.assign(I18N_PL,{"Stock value": "Wartość magazynu", "Export CSV": "Eksport CSV", "Print / PDF": "Drukuj / PDF", "All warehouses": "Wszystkie magazyny", "Group by supplier": "Grupuj wg dostawcy", "Group by product group": "Grupuj wg grupy towarów", "Group by warehouse": "Grupuj wg magazynu", "Search symbol or name": "Szukaj: symbol lub nazwa", "Only no movement 6+ months": "Tylko bez ruchu od 6+ miesięcy", "GROUP": "GRUPA", "PRODUCTS": "TOWARY", "VALUE (PLN)": "WARTOŚĆ (PLN)", "LAST ISSUE": "OSTATNIE WYDANIE", "Today ({0})": "Dziś ({0})", "Today": "Dziś", "(none)": "(brak)", "No stock data from Subiekt yet: the Subiekt agent 1.2 sends it on its next run.": "Brak danych magazynowych z Subiekta: agent Subiekta 1.2 wyśle je przy następnym uruchomieniu.", "Stock on {0}, from the daily history (totals per group; products are shown for today only).": "Stan na {0} z historii dziennej (sumy wg grup; towary widać tylko dla dnia dzisiejszego).", "FIFO purchase cost of what is left of each delivery, net PLN; age from the original delivery date. Subiekt data of {0}.": "Koszt zakupu (FIFO) tego, co zostało z każdej dostawy, netto PLN; wiek od daty pierwotnej dostawy. Dane z Subiekta z {0}.", "Stock value (net PLN)": "Wartość magazynu (netto PLN)", "Product lines in stock": "Pozycje na stanie", "Products in stock": "Towary na stanie", "Older than 12 months": "Starsze niż 12 miesięcy", "No movement for 6+ months": "Bez ruchu od 6+ miesięcy", "Show {0} more": "Pokaż kolejne {0}", "Total": "Razem", "Value = what is left of each delivery × its purchase cost per unit (FIFO), as Subiekt’s “Remanent na dzień”. Age counts from the original delivery; a move between warehouses keeps it. ⚠ = no issue for 6 months and nothing received in 6 months.": "Wartość = to, co zostało z każdej dostawy × jej jednostkowy koszt zakupu (FIFO), jak w „Remanencie na dzień” Subiekta. Wiek liczony od pierwotnej dostawy; przesunięcie między magazynami go nie zmienia. ⚠ = brak wydań od 6 miesięcy i brak przyjęć od 6 miesięcy.", "Warehouse {0} · supplier {1} · group {2}": "Magazyn {0} · dostawca {1} · grupa {2}", "DELIVERED": "DOSTAWA", "AGE (DAYS)": "WIEK (DNI)", "UNIT COST": "KOSZT JEDN.", "VALUE": "WARTOŚĆ", "Last issue: {0}": "Ostatnie wydanie: {0}"});   // Fin&Ops ▸ Stock value
+  var I18N_TABS={"tabFinPerf": "Wyniki", "tabFinCosts": "Koszty", "tabFinJobs": "Koszty zleceń", "tabFinSales": "Sprzedaż", "tabFinOrders": "Zamówienia", "tabFinComm": "Prowizja", "tabFinPay": "Płace", "tabFinMan": "Instrukcje", "tabFinStock": "Wartość magazynu", "tabMyExp": "Koszty montażu", "tabProd": "Czas produkcji", "tabCortizo": "Profile Cortizo", "grpbtn_production": "Produkcja \u25be"};
+  var I18N_VIEWS=['finPerfView','finCostsView','finJobsView','finSalesView','finPayView','finOrdersView','finCommView','cortizoView','finStockView'];
   var EN_MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
   var PL_MONTHS=['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
   var I18N_OBS=null;

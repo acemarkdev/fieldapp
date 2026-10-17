@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.28.0';
+export const APP_VERSION = '1.29.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.29.0', date: '2026-10-17', changes: [
+    'Fin&Ops \u25b8 Stock value: what the stock in Subiekt is worth (FIFO purchase cost of what is left of each delivery, net PLN) and how old it is \u2014 0\u201390 days, 91\u2013180, 181\u2013365, 1\u20132 years, over 2 years \u2014 by supplier, product group or warehouse, with a bar per group.',
+    'Click a group for its products, a product for its deliveries (date, age, quantity, unit cost). \u26a0 marks stock with no issue and no receipt for 6 months; a filter shows only those. Age counts from the original delivery: moving stock between warehouses does not make it new.',
+    'A history row is kept every day, so any past day and every month-end can be looked at again. Export CSV, Print / PDF. Reconciled with Subiekt\u2019s \u201cRemanent na dzie\u0144\u201d product by product. Needs migration 0081 and Subiekt agent 1.2.',
+  ] },
   { version: '1.28.0', date: '2026-10-17', changes: [
     'Production \u25b8 Cortizo profiles: every reference from the Cortizo Center catalogues \u2014 profiles with their sketch, weight (g/m) and surface, and accessories with colour and type \u2014 with the systems and catalogue pages where it appears.',
     'Next to each reference: its stock in Subiekt nexo (warehouses ACE and PROD, pieces and metres from the bar length in the symbol, with the Subiekt products it was matched to). Matched on the custom field, else the symbol: \u201c2015 RAL 7016 CM 1000 mm\u201d is COR-2015, \u201c15919 RAL 9005 CM 1500 mm\u201d is 15919. Search, filter by system and by stock (in stock / in Subiekt / not in Subiekt), export CSV; products supplied by Cortizo that match no catalogue reference are listed separately.',

@@ -1,7 +1,7 @@
 <#
   ACE office app - Subiekt nexo agent.
-  Reads this year's sales invoices (FS, FL, KFS, KFL) and material issues (RW), and the stock of
-  every product per warehouse, from the Subiekt database with a READ-ONLY SQL login and posts them
+  Reads this year's sales invoices (FS, FL, KFS, KFL) and material issues (RW), the stock of
+  every product per warehouse and the open delivery lots (stock value and ageing), from the Subiekt database with a READ-ONLY SQL login and posts them
   to the office app. It changes nothing in Subiekt.
 
   First time (in a PowerShell window opened "as administrator", in this folder):
@@ -19,7 +19,7 @@
 param([switch]$Setup, [switch]$Preview, [switch]$Install, [switch]$Uninstall, [switch]$Explore)
 
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '1.1'
+$AgentVersion = '1.2'
 $TaskName = 'ACE Subiekt agent'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigPath = Join-Path $Here 'config.json'
@@ -78,6 +78,51 @@ left join ModelDanychContainer.Magazyny m on m.Id = s.Magazyn_Id
 left join ModelDanychContainer.JednostkiMiarAsortymentow jma on jma.AsortymentPodstawowej_Id = a.Id
 left join ModelDanychContainer.JednostkiMiar jm on jm.Id = jma.JednostkaMiary_Id
 where a.IsInRecycleBin = 0
+'@
+
+# The open delivery lots, for Fin&Ops > Stock value (value and ageing). Remaining = the lot minus
+# everything issued from it (equals StanyMagazynowe for every product); unit cost = the receipt's
+# LATEST purchase cost entry / its quantity (Przychody > Partie > Przyjecia > KosztyZakupu: a cost
+# correction holds the new full value, it replaces the original - it is not added to it);
+# received = the ORIGINAL delivery (a transfer between warehouses points back to it). Reconciled
+# with "Remanent na dzien" product by product (October 2026).
+$LotsQuery = @'
+with issued as (
+  select r.PrzychodZrodlowy_Id as lot_id, sum(r.Ilosc) as qty_out
+  from ModelDanychContainer.Rozchody r group by r.PrzychodZrodlowy_Id),
+lastissue as (
+  select r.Asortyment_Id, r.Magazyn_Id, max(r.Data) as last_issue
+  from ModelDanychContainer.Rozchody r where r.Wydanie_Id is not null group by r.Asortyment_Id, r.Magazyn_Id),
+unitcost as (
+  select prz.Id as prz_id, kz.unit_cost
+  from ModelDanychContainer.Przyjecia prz
+  outer apply (select top 1 k.Wartosc * coalesce(nullif(k.Kurs, 0), 1) / coalesce(nullif(k.Ilosc, 0), nullif(prz.Ilosc, 0)) as unit_cost
+               from ModelDanychContainer.KosztyZakupu k
+               where k.Id = prz.KosztPierwotny_Id or k.PrzyjecieDlaKtoregoKorekta_Id = prz.Id
+               order by k.Data desc, k.Id desc) kz),
+supplier as (
+  select d.Asortyment_Id, min(p.NazwaSkrocona) as supplier
+  from ModelDanychContainer.DaneAsortymentuDlaPodmiotow d
+  join ModelDanychContainer.Podmioty p on p.Id = d.Podmiot_Id
+  where d.Rola = 2 group by d.Asortyment_Id)
+select p.Id as lot, a.Id as product_id, a.Symbol as symbol, left(a.Nazwa, 200) as name, g.Nazwa as grp,
+       sp.supplier, jm.Symbol as unit, m.Symbol as warehouse,
+       p.Ilosc - coalesce(i.qty_out, 0) as qty, u.unit_cost,
+       convert(varchar(10), coalesce(o.Data, p.Data), 23) as received,
+       convert(varchar(10), li.last_issue, 23) as last_issue
+from ModelDanychContainer.Przychody p
+left join issued i on i.lot_id = p.Id
+left join ModelDanychContainer.Przychody o on o.Id = p.PrzychodPierwotny_Id
+join ModelDanychContainer.Asortymenty a on a.Id = p.Asortyment_Id
+left join ModelDanychContainer.GrupyAsortymentu g on g.Id = a.Grupa_Id
+join ModelDanychContainer.Magazyny m on m.Id = p.Magazyn_Id
+left join ModelDanychContainer.JednostkiMiarAsortymentow jma on jma.AsortymentPodstawowej_Id = a.Id
+left join ModelDanychContainer.JednostkiMiar jm on jm.Id = jma.JednostkaMiary_Id
+left join ModelDanychContainer.Partie pa on pa.Id = p.Partia_Id
+left join unitcost u on u.prz_id = pa.Przyjecie_Id
+left join lastissue li on li.Asortyment_Id = p.Asortyment_Id and li.Magazyn_Id = p.Magazyn_Id
+left join supplier sp on sp.Asortyment_Id = a.Id
+where p.Ilosc - coalesce(i.qty_out, 0) > 0
 '@
 
 function Open-Subiekt($cfg, $sec) {
@@ -191,11 +236,12 @@ try {
   $sec = Read-Secrets
   if ($cfg.stockQuery) { $StockQuery = $cfg.stockQuery }
   $conn = Open-Subiekt $cfg $sec
-  $stock = $null; $stockErr = $null
+  $stock = $null; $stockErr = $null; $lots = $null; $lotsErr = $null
   try {
     $docs = Read-Rows $conn $Query @{ '@since' = [datetime]::ParseExact($cfg.since, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
     # stock is separate: if its query fails, the invoices are still sent
     try { $stock = Read-Rows $conn $StockQuery @{} } catch { $stockErr = $_.Exception.Message }
+    try { $lots = Read-Rows $conn $LotsQuery @{} } catch { $lotsErr = $_.Exception.Message }
   } finally { $conn.Close() }
 
   $bySymbol = ($docs | Group-Object symbol | Sort-Object Name | ForEach-Object { $_.Name + ' ' + $_.Count }) -join ', '
@@ -204,6 +250,11 @@ try {
     $docs | Select-Object -Last 8 | Format-Table symbol, number, issued, net, currency, rate, subtitle, customer, country -AutoSize | Out-String -Width 220 | Write-Host
     if ($stockErr) { Write-Host ('Stock: query failed - ' + $stockErr) }
     else { Write-Host ('Stock: {0} rows' -f $stock.Count); $stock | Select-Object -First 8 | Format-Table symbol, name, cref, unit, warehouse, qty -AutoSize | Out-String -Width 220 | Write-Host }
+    if ($lotsErr) { Write-Host ('Lots: query failed - ' + $lotsErr) }
+    else {
+      $val = 0; foreach ($l in $lots) { if ($l.unit_cost -ne $null) { $val += [double]$l.qty * [double]$l.unit_cost } }
+      Write-Host ('Lots: {0} open, value {1:N2} PLN' -f $lots.Count, $val)
+    }
     Write-Host 'Preview only - nothing was sent.'
     exit 0
   }
@@ -216,11 +267,22 @@ try {
   Write-Log ("OK  sent {0} ({1}) | sales +{2} ~{3} adopted {4} -{5} | material lines {6}, typed replaced {7}, jobs created {8} | to check {9}" -f `
     $docs.Count, $bySymbol, $s.sales.added, $s.sales.updated, $s.sales.adopted, $s.sales.removed, $s.material.lines, $s.material.typedReplaced, $s.material.jobsCreated, $s.toCheck)
 
-  if ($stockErr) { Write-Log ('ERROR  stock not sent: ' + $stockErr); exit 1 }
-  $sbody = @{ agent = $AgentVersion; stock = $stock.ToArray() } | ConvertTo-Json -Depth 3 -Compress
-  $sresp = Invoke-RestMethod -Method Post -Uri ($cfg.url.TrimEnd('/') + '/api/agent/subiekt-stock') -Headers @{ 'x-agent-key' = $sec.key } `
-    -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($sbody)) -TimeoutSec 300
-  Write-Log ("OK  stock {0} rows, {1} products" -f $sresp.rows, $sresp.products)
+  $failed = $false
+  if ($stockErr) { Write-Log ('ERROR  stock not sent: ' + $stockErr); $failed = $true }
+  else {
+    $sbody = @{ agent = $AgentVersion; stock = $stock.ToArray() } | ConvertTo-Json -Depth 3 -Compress
+    $sresp = Invoke-RestMethod -Method Post -Uri ($cfg.url.TrimEnd('/') + '/api/agent/subiekt-stock') -Headers @{ 'x-agent-key' = $sec.key } `
+      -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($sbody)) -TimeoutSec 300
+    Write-Log ("OK  stock {0} rows, {1} products" -f $sresp.rows, $sresp.products)
+  }
+  if ($lotsErr) { Write-Log ('ERROR  lots not sent: ' + $lotsErr); $failed = $true }
+  else {
+    $lbody = @{ agent = $AgentVersion; lots = $lots.ToArray() } | ConvertTo-Json -Depth 3 -Compress
+    $lresp = Invoke-RestMethod -Method Post -Uri ($cfg.url.TrimEnd('/') + '/api/agent/subiekt-lots') -Headers @{ 'x-agent-key' = $sec.key } `
+      -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($lbody)) -TimeoutSec 300
+    Write-Log ("OK  lots {0}, value {1} PLN" -f $lresp.lots, $lresp.value)
+  }
+  if ($failed) { exit 1 }
   exit 0
 } catch {
   $msg = $_.Exception.Message
