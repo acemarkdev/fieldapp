@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.27.0';
+export const APP_VERSION = '1.28.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.28.0', date: '2026-10-17', changes: [
+    'Production \u25b8 Cortizo profiles: every reference from the Cortizo Center catalogues \u2014 profiles with their sketch, weight (g/m) and surface, and accessories with colour and type \u2014 with the systems and catalogue pages where it appears.',
+    'Next to each reference: its stock in Subiekt nexo (warehouses ACE and PROD, pieces and metres from the bar length in the symbol, with the Subiekt products it was matched to). Matched on the custom field, else the symbol: \u201c2015 RAL 7016 CM 1000 mm\u201d is COR-2015, \u201c15919 RAL 9005 CM 1500 mm\u201d is 15919. Search, filter by system and by stock (in stock / in Subiekt / not in Subiekt), export CSV; products supplied by Cortizo that match no catalogue reference are listed separately.',
+    'The Subiekt agent (1.1) also sends the stock of every product; -Explore checks Subiekt\u2019s stock tables first. For admins, Production managers and Logistics. Needs migration 0079 and the catalogue import (tools/cortizo-catalogue).',
+  ] },
   { version: '1.27.0', date: '2026-10-17', changes: [
     'Specification parameters: every field of the Emplas order forms and the Building Regulations checks (Parts B, F, K, L, O, Q, planning), each set at the level agreed in the Spec Matrix — Customer, Job, Elevation, Flat, Room type or Item — and inherited by the items below it. The most specific level wins (item > room type > flat > elevation > job > customer).',
     'New item types with their own order form: Door, Casement, Flush Casement, Flush Casement Optima, Patio, Shaped and Bay (Window stays for older items). A Patio is priced and paid as a door.',

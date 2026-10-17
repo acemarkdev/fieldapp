@@ -38,7 +38,8 @@ export type Capability =
   | 'sales.orders'     // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
   | 'expenses.report'  // report an extra installation cost (allowance, fitting bonus…) against a sales order
   | 'time.log'         // production: start / stop a task in the phone app
-  | 'time.manage';     // production: import tasks, correct time entries, set worker rates, export
+  | 'time.manage'      // production: import tasks, correct time entries, set worker rates, export
+  | 'stock.view';      // Production ▸ Cortizo profiles: the catalogue references with their Subiekt stock
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
   { key: 'dashboard.view', label: 'View dashboard', desc: 'Office dashboard & reports' },
@@ -69,6 +70,7 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'time.log', label: 'Log production time', desc: 'Start and stop production tasks in the phone app' },
   { key: 'time.manage', label: 'Manage production time', desc: 'Import tasks, correct time entries, set worker rates, export' },
   { key: 'sales.orders', label: 'Sales orders', desc: 'Sales orders register and commission; a Sales rep sees only their own orders' },
+  { key: 'stock.view', label: 'Cortizo profiles & stock', desc: 'Cortizo catalogue references with sketches and their stock in Subiekt' },
 ];
 
 // The matrix. `admin` implicitly has everything (see `can`). Edit the arrays to change access.
@@ -83,7 +85,7 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
   customer: [],
   // Logistics menu only (Labels, Confirmations) — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
-  logistics: ['labels.print', 'confirmations.manage'],
+  logistics: ['labels.print', 'confirmations.manage', 'stock.view'],
   // Fin&Ops menu only (company cost control) — no jobs, items or anything else.
   acemark_finance: ['finops.view', 'sales.orders'],
   sales_rep: ['sales.orders'],
@@ -91,7 +93,7 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   acemark_fitter: ['expenses.report'],
   // Production time: workers log time in the phone app; the manager runs the office pages only.
   production: ['time.log'],
-  production_manager: ['time.manage'],
+  production_manager: ['time.manage', 'stock.view'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

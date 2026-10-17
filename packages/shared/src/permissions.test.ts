@@ -27,10 +27,10 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   ok(`${r} lacks finance.view`, can(r, 'finance.view') === false);
 }
 
-// --- logistics: the Logistics menu (labels + confirmations) and nothing else ---
+// --- logistics: the Logistics menu (labels + confirmations) and the Cortizo profiles stock, nothing else ---
 {
   const { CAPABILITIES } = await import('./permissions');
-  const LOGI = ['labels.print', 'confirmations.manage'];
+  const LOGI = ['labels.print', 'confirmations.manage', 'stock.view'];
   for (const c of CAPABILITIES) ok(`logistics ${c.key} === ${LOGI.includes(c.key)}`, can('logistics', c.key) === LOGI.includes(c.key));
   ok('office lacks confirmations.manage', can('office', 'confirmations.manage') === false);
   ok('admin has labels.print', can('admin', 'labels.print') === true);
@@ -46,7 +46,7 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   // --- sales_rep: the sales orders register and nothing else ---
   for (const c of CAPABILITIES) ok(`sales_rep ${c.key} === ${c.key === 'sales.orders'}`, can('sales_rep', c.key) === (c.key === 'sales.orders'));
   for (const c of CAPABILITIES) ok(`production ${c.key}`, can('production', c.key) === (c.key === 'time.log'));
-  for (const c of CAPABILITIES) ok(`production_manager ${c.key}`, can('production_manager', c.key) === (c.key === 'time.manage'));
+  for (const c of CAPABILITIES) ok(`production_manager ${c.key}`, can('production_manager', c.key) === (c.key === 'time.manage' || c.key === 'stock.view'));
   // --- acemark_fitter: the cost reports form and nothing else ---
   for (const c of CAPABILITIES) ok(`acemark_fitter ${c.key} === ${c.key === 'expenses.report'}`, can('acemark_fitter', c.key) === (c.key === 'expenses.report'));
   for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'] as const) ok(`${r} lacks sales.orders`, can(r, 'sales.orders') === false);

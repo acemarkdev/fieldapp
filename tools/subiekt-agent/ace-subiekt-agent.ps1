@@ -1,7 +1,8 @@
 <#
   ACE office app - Subiekt nexo agent.
-  Reads this year's sales invoices (FS, FL, KFS, KFL) and material issues (RW) from the Subiekt
-  database with a READ-ONLY SQL login and posts them to the office app. It changes nothing in Subiekt.
+  Reads this year's sales invoices (FS, FL, KFS, KFL) and material issues (RW), and the stock of
+  every product per warehouse, from the Subiekt database with a READ-ONLY SQL login and posts them
+  to the office app. It changes nothing in Subiekt.
 
   First time (in a PowerShell window opened "as administrator", in this folder):
       .\ace-subiekt-agent.ps1 -Setup      asks for the settings, the SQL password and the agent key
@@ -9,14 +10,16 @@
       .\ace-subiekt-agent.ps1             one real sync
       .\ace-subiekt-agent.ps1 -Install    runs it every 30 minutes from Windows Task Scheduler
       .\ace-subiekt-agent.ps1 -Uninstall  removes the scheduled task
+      .\ace-subiekt-agent.ps1 -Explore    lists Subiekt's product / stock tables and a few product symbols
+                                          (sends nothing) - used once to check the stock query
 
   Settings are in config.json next to this file; the SQL password and the agent key are stored
   encrypted (Windows DPAPI, this computer only) in secrets.bin. Works with Windows PowerShell 5.1.
 #>
-param([switch]$Setup, [switch]$Preview, [switch]$Install, [switch]$Uninstall)
+param([switch]$Setup, [switch]$Preview, [switch]$Install, [switch]$Uninstall, [switch]$Explore)
 
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '1.0'
+$AgentVersion = '1.1'
 $TaskName = 'ACE Subiekt agent'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigPath = Join-Path $Here 'config.json'
@@ -52,6 +55,85 @@ function Read-Plain([string]$Prompt) {
 function Read-Config {
   if (-not (Test-Path $ConfigPath)) { throw 'config.json is missing - run:  .\ace-subiekt-agent.ps1 -Setup' }
   return (Get-Content -Raw -Path $ConfigPath -Encoding UTF8 | ConvertFrom-Json)
+}
+
+# The stock of every product, per warehouse (checked on the Acemark PL database, October 2026:
+# warehouses ACE and PROD; profiles are counted in pieces, the bar length is in the symbol).
+# qty = IloscDostepna; reserved = reserved + allocated; cref = the custom field L0, which starts
+# with the Cortizo reference ("2015 White Powder Coating 9010"); cortizo = 1 when the supplier
+# (role 2) is CORTIZO SPÓŁKA Z O.O. config.json may override it with "stockQuery".
+$StockQuery = @'
+select a.Id as id, a.Symbol as symbol, left(a.Nazwa, 200) as name, jm.Symbol as unit,
+       m.Symbol as warehouse, s.IloscDostepna as qty,
+       coalesce(s.IloscZarezerwowanaIlosciowo, 0) + coalesce(s.IloscZadysponowana, 0) as reserved,
+       left(adv.L0, 120) as cref,
+       case when exists (select 1 from ModelDanychContainer.DaneAsortymentuDlaPodmiotow d
+                         join ModelDanychContainer.Podmioty p on p.Id = d.Podmiot_Id
+                         where d.Asortyment_Id = a.Id and d.Rola = 2 and p.NazwaSkrocona like '%CORTIZO%')
+            then 1 else 0 end as cortizo
+from ModelDanychContainer.StanyMagazynowe s
+join ModelDanychContainer.Asortymenty a on a.Id = s.Asortyment_Id
+left join ModelDanychContainer.Asortymenty_PolaWlasneAsortyment_Adv2 adv on adv.Id = a.Id
+left join ModelDanychContainer.Magazyny m on m.Id = s.Magazyn_Id
+left join ModelDanychContainer.JednostkiMiarAsortymentow jma on jma.AsortymentPodstawowej_Id = a.Id
+left join ModelDanychContainer.JednostkiMiar jm on jm.Id = jma.JednostkaMiary_Id
+where a.IsInRecycleBin = 0
+'@
+
+function Open-Subiekt($cfg, $sec) {
+  $cs = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+  $cs['Data Source'] = $cfg.server; $cs['Initial Catalog'] = $cfg.database
+  $cs['User ID'] = $cfg.sqlUser; $cs['Password'] = $sec.sql
+  $cs['Application Name'] = 'ACE Subiekt agent'; $cs['ApplicationIntent'] = 'ReadOnly'; $cs['Connect Timeout'] = 20
+  $conn = New-Object System.Data.SqlClient.SqlConnection($cs.ConnectionString)
+  $conn.Open()
+  return $conn
+}
+function Read-Rows($conn, [string]$sql, [hashtable]$params) {
+  $out = New-Object System.Collections.Generic.List[object]
+  $cmd = $conn.CreateCommand(); $cmd.CommandText = $sql; $cmd.CommandTimeout = 120
+  if ($params) { foreach ($k in $params.Keys) { $null = $cmd.Parameters.AddWithValue($k, $params[$k]) } }
+  $rd = $cmd.ExecuteReader()
+  try {
+    while ($rd.Read()) {
+      $row = [ordered]@{}
+      for ($i = 0; $i -lt $rd.FieldCount; $i++) { $v = $rd.GetValue($i); $row[$rd.GetName($i)] = $(if ($v -is [DBNull]) { $null } else { $v }) }
+      $out.Add([pscustomobject]$row)
+    }
+  } finally { $rd.Close() }
+  return ,$out
+}
+
+if ($Explore) {
+  $cfg = Read-Config; $sec = Read-Secrets
+  if ($cfg.stockQuery) { $StockQuery = $cfg.stockQuery }
+  $conn = Open-Subiekt $cfg $sec
+  try {
+    Write-Host '=== Tables and columns (products, stock, warehouses, units) ==='
+    $cols = Read-Rows $conn @"
+select c.TABLE_NAME as t, c.COLUMN_NAME as c, c.DATA_TYPE as ty
+from INFORMATION_SCHEMA.COLUMNS c
+where c.TABLE_SCHEMA = 'ModelDanychContainer'
+  and (c.TABLE_NAME like '%Asortyment%' or c.TABLE_NAME like '%Stan%' or c.TABLE_NAME like '%Magazyn%' or c.TABLE_NAME like '%JednostkiMiar%' or c.TABLE_NAME like '%Rezerwac%')
+order by c.TABLE_NAME, c.ORDINAL_POSITION
+"@ @{}
+    $cols | Group-Object t | ForEach-Object { Write-Host ($_.Name + ': ' + (($_.Group | ForEach-Object { $_.c + '(' + $_.ty + ')' }) -join ', ')); Write-Host '' }
+    Write-Host '=== 40 product symbols that look like Cortizo references ==='
+    try {
+      $ex = Read-Rows $conn @"
+select top 40 a.Id, a.Symbol, left(a.Nazwa, 80) as Nazwa from ModelDanychContainer.Asortymenty a
+where a.Symbol like 'COR%' or a.Symbol like '[0-9][0-9][0-9][0-9][0-9][0-9]%' order by a.Symbol
+"@ @{}
+      $ex | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
+      $n = Read-Rows $conn 'select count(*) as n from ModelDanychContainer.Asortymenty' @{}
+      Write-Host ('Products in total: ' + $n[0].n)
+    } catch { Write-Host ('(could not read ModelDanychContainer.Asortymenty: ' + $_.Exception.Message + ')') }
+    Write-Host '=== Stock query test ==='
+    try { $st = Read-Rows $conn $StockQuery @{}; Write-Host ('Stock rows: ' + $st.Count); $st | Select-Object -First 15 | Format-Table -AutoSize | Out-String -Width 220 | Write-Host }
+    catch { Write-Host ('Stock query failed: ' + $_.Exception.Message) }
+  } finally { $conn.Close() }
+  Write-Host 'Nothing was sent. Copy everything above into the chat with Claude.'
+  exit 0
 }
 
 if ($Setup) {
@@ -107,30 +189,21 @@ order by d.Id
 try {
   $cfg = Read-Config
   $sec = Read-Secrets
-  $cs = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
-  $cs['Data Source'] = $cfg.server; $cs['Initial Catalog'] = $cfg.database
-  $cs['User ID'] = $cfg.sqlUser; $cs['Password'] = $sec.sql
-  $cs['Application Name'] = 'ACE Subiekt agent'; $cs['ApplicationIntent'] = 'ReadOnly'; $cs['Connect Timeout'] = 20
-  $conn = New-Object System.Data.SqlClient.SqlConnection($cs.ConnectionString)
-  $docs = New-Object System.Collections.Generic.List[object]
-  $conn.Open()
+  if ($cfg.stockQuery) { $StockQuery = $cfg.stockQuery }
+  $conn = Open-Subiekt $cfg $sec
+  $stock = $null; $stockErr = $null
   try {
-    $cmd = $conn.CreateCommand(); $cmd.CommandText = $Query; $cmd.CommandTimeout = 120
-    $null = $cmd.Parameters.AddWithValue('@since', [datetime]::ParseExact($cfg.since, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture))
-    $rd = $cmd.ExecuteReader()
-    try {
-      while ($rd.Read()) {
-        $row = [ordered]@{}
-        for ($i = 0; $i -lt $rd.FieldCount; $i++) { $v = $rd.GetValue($i); $row[$rd.GetName($i)] = $(if ($v -is [DBNull]) { $null } else { $v }) }
-        $docs.Add([pscustomobject]$row)
-      }
-    } finally { $rd.Close() }
+    $docs = Read-Rows $conn $Query @{ '@since' = [datetime]::ParseExact($cfg.since, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+    # stock is separate: if its query fails, the invoices are still sent
+    try { $stock = Read-Rows $conn $StockQuery @{} } catch { $stockErr = $_.Exception.Message }
   } finally { $conn.Close() }
 
   $bySymbol = ($docs | Group-Object symbol | Sort-Object Name | ForEach-Object { $_.Name + ' ' + $_.Count }) -join ', '
   if ($Preview) {
     Write-Host ("Read {0} documents since {1}: {2}" -f $docs.Count, $cfg.since, $bySymbol)
     $docs | Select-Object -Last 8 | Format-Table symbol, number, issued, net, currency, rate, subtitle, customer, country -AutoSize | Out-String -Width 220 | Write-Host
+    if ($stockErr) { Write-Host ('Stock: query failed - ' + $stockErr) }
+    else { Write-Host ('Stock: {0} rows' -f $stock.Count); $stock | Select-Object -First 8 | Format-Table symbol, name, cref, unit, warehouse, qty -AutoSize | Out-String -Width 220 | Write-Host }
     Write-Host 'Preview only - nothing was sent.'
     exit 0
   }
@@ -142,6 +215,12 @@ try {
   $s = $resp.summary
   Write-Log ("OK  sent {0} ({1}) | sales +{2} ~{3} adopted {4} -{5} | material lines {6}, typed replaced {7}, jobs created {8} | to check {9}" -f `
     $docs.Count, $bySymbol, $s.sales.added, $s.sales.updated, $s.sales.adopted, $s.sales.removed, $s.material.lines, $s.material.typedReplaced, $s.material.jobsCreated, $s.toCheck)
+
+  if ($stockErr) { Write-Log ('ERROR  stock not sent: ' + $stockErr); exit 1 }
+  $sbody = @{ agent = $AgentVersion; stock = $stock.ToArray() } | ConvertTo-Json -Depth 3 -Compress
+  $sresp = Invoke-RestMethod -Method Post -Uri ($cfg.url.TrimEnd('/') + '/api/agent/subiekt-stock') -Headers @{ 'x-agent-key' = $sec.key } `
+    -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($sbody)) -TimeoutSec 300
+  Write-Log ("OK  stock {0} rows, {1} products" -f $sresp.rows, $sresp.products)
   exit 0
 } catch {
   $msg = $_.Exception.Message
