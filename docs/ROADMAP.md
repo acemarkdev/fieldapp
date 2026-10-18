@@ -54,6 +54,7 @@ A running backlog. Append as we go.
 ## Backlog — requested, not started
 - **Mobile Jobs screen: find a job by address** *(requested 2026-10-18, for scanners on site)* — a search box at the top of the Jobs list; typing narrows the list to jobs whose address (site address, postcode, name or code) matches. Online and offline (cached jobs).
 - **Mobile Jobs screen: open the address in maps** *(requested 2026-10-18)* — the job's address is a link; tapping it opens the address in Apple Maps on iPhone or Google Maps on Android (choice of app if both are installed). Needs only a link, no new permissions — a JavaScript change, so it can ship as an over-the-air update (0.75.0+).
+- **Office jobs list: search by address and open in maps** *(requested 2026-10-18)* — the same two features in the office app's job list: a search box that narrows the jobs by address, postcode, name or code, and the address as a link that opens Google Maps (or Apple Maps on a Mac/iPhone).
 
 ## Later
 - **Photo frame recognition** — *Phase A started (v0.11.0)*: recognition schema/taxonomy frozen in `@ace/shared`; server-side vision service `recognise.ts` (OpenAI-compatible, hosted or self-hosted Qwen-VL) + `POST /api/recognise/:itemId` + CLI `npm run recognise` returns a window's layout + style from its photo. Off until `VISION_API_URL/MODEL` are set. Next: wire the mobile app to call it and pre-fill the config picker; bootstrap the labelled dataset. Inference spec: `docs/window-segment-recognition.md`; data/model plan: `docs/frame-recognition-data-strategy.md`.
