@@ -42,4 +42,7 @@
 // 0.74.0 — Production time: compact clock box, "Moje zadania" (last 6 tasks used, Z number + task, one tap
 //   to switch), today's entries can be corrected (start/end time ±1/±15 min or typed, never the date) and
 //   commented (100 characters); older entries are locked (the production manager changes them).
-export const APP_VERSION = '0.74.0';
+// 0.75.0 — Scanners may add a plan from the phone (migration 0082). The demo gets a "View as" bar —
+//   Office · Surveyor · Fitter · Production — with today's schedule and sample production tasks. Over-the-air
+//   updates (expo-updates): later JavaScript-only fixes reach phones without a store release.
+export const APP_VERSION = '0.75.0';

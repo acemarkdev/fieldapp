@@ -23,6 +23,8 @@ import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
 import { can, isFitter } from './src/lib/permissions';
 
+const DEMO_ROLES: [string, string][] = [['office', 'Office'], ['surveyor', 'Surveyor'], ['fitter', 'Fitter'], ['production', 'Production']];
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
@@ -69,7 +71,7 @@ export default function App() {
   }, [session]);
 
   function resetNav() { setJob(null); setItemId(null); setCreating(false); setEditingPending(null); setEditingItem(null); setViewingPlan(false); setMapping(false); setImporting(false); setMappingPicker(false); setCreatingJob(false); setBrowsingJobs(false); }
-  function enterDemo(email: string) { resetDemoDb(); setDemoMode(true); resetNav(); setRole('admin'); setTeamId('demo-team-a'); setDemo(true); setDemoEmail(email); recordLead(email, 'demo_started'); }
+  function enterDemo(email: string) { resetDemoDb(); setDemoMode(true); resetNav(); setRole('office'); setTeamId('demo-team-a'); setDemo(true); setDemoEmail(email); recordLead(email, 'demo_started'); }
   function exitDemo() { setDemoMode(false); setDemo(false); setDemoEmail(null); resetNav(); setRole(null); setTeamId(null); }
   function demoBlock(what: string) { Alert.alert('Demo mode', what + ' is disabled in the demo — explore and edit the sample data, or tap \u201CRequest a quote\u201D.'); }
 
@@ -97,6 +99,18 @@ export default function App() {
           <TouchableOpacity style={s.quoteBtn} onPress={() => setQuoting(true)} activeOpacity={0.85}>
             <Text style={s.quoteBtnText}>Request a quote</Text>
           </TouchableOpacity>
+        </View>
+      )}
+      {demo && (
+        // See the app as each role really sees it: office, surveyor, fitter (schedule + two-button item
+        // screen) and production (the task timer).
+        <View style={s.roleBar}>
+          <Text style={s.roleBarLabel}>View as</Text>
+          {DEMO_ROLES.map(([r, label]) => (
+            <TouchableOpacity key={r} style={[s.roleChip, role === r && s.roleChipOn]} onPress={() => { resetNav(); setBrowsingJobs(false); setRole(r); setTeamId('demo-team-a'); }} activeOpacity={0.85}>
+              <Text style={[s.roleChipText, role === r && s.roleChipTextOn]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       )}
       <View style={s.fill}>
@@ -147,6 +161,12 @@ const s = StyleSheet.create({
   demoBarText: { color: '#fff', fontSize: 12, fontWeight: '700', flex: 1 },
   quoteBtn: { backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
   quoteBtnText: { color: C.magenta, fontSize: 12, fontWeight: '800' },
+  roleBar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: C.soft, flexWrap: 'wrap' },
+  roleBarLabel: { fontSize: 11, fontWeight: '800', color: C.muted, marginRight: 2 },
+  roleChip: { borderWidth: 1, borderColor: C.line, backgroundColor: C.white, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
+  roleChipOn: { backgroundColor: C.purple, borderColor: C.purple },
+  roleChipText: { fontSize: 12, fontWeight: '700', color: C.ink },
+  roleChipTextOn: { color: C.white },
 });
 
 

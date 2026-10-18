@@ -11,6 +11,8 @@ export interface DemoDb {
   job_plans: any[];
   item_photos: any[];
   pick_events: any[];
+  prod_tasks: any[];
+  time_entries: any[];
 }
 
 const T = 'demo-tenant';
@@ -19,6 +21,10 @@ const TEAM_B = 'demo-team-b';
 const JOB1 = 'demo-job-1';
 const JOB2 = 'demo-job-2';
 const PLAN1 = 'demo-plan-1';
+
+// Dates relative to the day the demo starts, so the schedule always shows today and the coming days.
+const day = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const at = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
 
 // A hosted placeholder so plan/photo images render in the demo without bundling assets.
 const img = (w: number, h: number, label: string) =>
@@ -58,19 +64,19 @@ export function seedDemoDb(): DemoDb {
       { id: JOB2, tenant_id: T, client_code: 'AXS', job_code: 'BELL', name: 'Bell Court (Demo)', site_address: 'Bell Court, Havant', postcode: 'PO9 1AA', active: true, monday_board_id: null, status: 'new' },
     ],
     survey_items: [
-      item({ id: 'demo-i1', full_code: 'AXS.DEMO.A.E1.F1.LOUNGE.W1', item_code: 'W1', room_code: 'LOUNGE', flat: '1', install_status: 'scheduled', planned_install_date: '2026-09-15', plan_id: PLAN1, plan_x: 0.24, plan_y: 0.32, window_type: 'Casement' }),
-      item({ id: 'demo-i2', full_code: 'AXS.DEMO.A.E1.F1.KITCHEN.W2', item_code: 'W2', room_code: 'KITCHEN', flat: '1', install_status: 'installed_no_snag', actual_install_date: '2026-09-10', plan_id: PLAN1, plan_x: 0.55, plan_y: 0.30, window_type: 'Fixed', glass: 'Obscure', safety_glass: 'Toughened' }),
-      item({ id: 'demo-i3', full_code: 'AXS.DEMO.A.E1.F1.BED1.W3', item_code: 'W3', room_code: 'BED1', flat: '1', install_status: 'scheduled', planned_install_date: '2026-09-15', window_type: 'Tilt & Turn' }),
-      item({ id: 'demo-i4', full_code: 'AXS.DEMO.A.E1.F1.BATH.W4', item_code: 'W4', room_code: 'BATH', flat: '1', install_status: 'installed_snag', actual_install_date: '2026-09-10', glass: 'Obscure', safety_glass: 'Toughened', comments: 'Cill scratched on delivery' }),
-      item({ id: 'demo-i5', full_code: 'AXS.DEMO.A.E1.F2.LOUNGE.W1', item_code: 'W1', room_code: 'LOUNGE', flat: '2', floor: 'F2', install_status: 'scheduled', planned_install_date: '2026-09-16', team_id: TEAM_B }),
-      item({ id: 'demo-i6', full_code: 'AXS.DEMO.A.E1.F2.KITCHEN.D1', item_code: 'D1', room_code: 'KITCHEN', flat: '2', floor: 'F2', item_type: 'Door', install_status: 'scheduled', planned_install_date: '2026-09-16', team_id: TEAM_B, width_mm: 900, height_mm: 2100 }),
+      item({ id: 'demo-i1', full_code: 'AXS.DEMO.A.E1.F1.LOUNGE.W1', item_code: 'W1', room_code: 'LOUNGE', flat: '1', install_status: 'scheduled', planned_install_date: day(0), plan_id: PLAN1, plan_x: 0.24, plan_y: 0.32, window_type: 'Casement' }),
+      item({ id: 'demo-i2', full_code: 'AXS.DEMO.A.E1.F1.KITCHEN.W2', item_code: 'W2', room_code: 'KITCHEN', flat: '1', install_status: 'installed_no_snag', actual_install_date: day(-3), plan_id: PLAN1, plan_x: 0.55, plan_y: 0.30, window_type: 'Fixed', glass: 'Obscure', safety_glass: 'Toughened' }),
+      item({ id: 'demo-i3', full_code: 'AXS.DEMO.A.E1.F1.BED1.W3', item_code: 'W3', room_code: 'BED1', flat: '1', install_status: 'scheduled', planned_install_date: day(0), window_type: 'Tilt & Turn' }),
+      item({ id: 'demo-i4', full_code: 'AXS.DEMO.A.E1.F1.BATH.W4', item_code: 'W4', room_code: 'BATH', flat: '1', install_status: 'installed_snag', actual_install_date: day(-3), glass: 'Obscure', safety_glass: 'Toughened', comments: 'Cill scratched on delivery' }),
+      item({ id: 'demo-i5', full_code: 'AXS.DEMO.A.E1.F2.LOUNGE.W1', item_code: 'W1', room_code: 'LOUNGE', flat: '2', floor: 'F2', install_status: 'scheduled', planned_install_date: day(1), team_id: TEAM_B }),
+      item({ id: 'demo-i6', full_code: 'AXS.DEMO.A.E1.F2.KITCHEN.D1', item_code: 'D1', room_code: 'KITCHEN', flat: '2', floor: 'F2', item_type: 'Door', install_status: 'scheduled', planned_install_date: day(1), team_id: TEAM_B, width_mm: 900, height_mm: 2100 }),
       item({ id: 'demo-i7', full_code: 'AXS.DEMO.A.E1.F2.BED1.W2', item_code: 'W2', room_code: 'BED1', flat: '2', floor: 'F2', install_status: 'delayed', team_id: TEAM_B }),
       // A snag child of i4, to show the snag flow read-only.
       item({ id: 'demo-i4s1', full_code: 'AXS.DEMO.A.E1.F1.BATH.W4-S1', item_code: 'W4', room_code: 'BATH', flat: '1', kind: 'snag', parent_item_id: 'demo-i4', install_status: 'snag', snag_comment: 'Replace scratched cill', comments: 'Replace scratched cill' }),
       // Job 2
-      item({ id: 'demo-j2i1', job_id: JOB2, full_code: 'AXS.BELL.A.E1.F1.LOUNGE.W1', item_code: 'W1', room_code: 'LOUNGE', flat: '1', install_status: 'scheduled', planned_install_date: '2026-09-22' }),
-      item({ id: 'demo-j2i2', job_id: JOB2, full_code: 'AXS.BELL.A.E1.F1.KITCHEN.W2', item_code: 'W2', room_code: 'KITCHEN', flat: '1', install_status: 'scheduled', planned_install_date: '2026-09-22' }),
-      item({ id: 'demo-j2i3', job_id: JOB2, full_code: 'AXS.BELL.A.E1.F1.BED1.W3', item_code: 'W3', room_code: 'BED1', flat: '1', install_status: 'scheduled', planned_install_date: '2026-09-23' }),
+      item({ id: 'demo-j2i1', job_id: JOB2, full_code: 'AXS.BELL.A.E1.F1.LOUNGE.W1', item_code: 'W1', room_code: 'LOUNGE', flat: '1', install_status: 'scheduled', planned_install_date: day(2) }),
+      item({ id: 'demo-j2i2', job_id: JOB2, full_code: 'AXS.BELL.A.E1.F1.KITCHEN.W2', item_code: 'W2', room_code: 'KITCHEN', flat: '1', install_status: 'scheduled', planned_install_date: day(2) }),
+      item({ id: 'demo-j2i3', job_id: JOB2, full_code: 'AXS.BELL.A.E1.F1.BED1.W3', item_code: 'W3', room_code: 'BED1', flat: '1', install_status: 'scheduled', planned_install_date: day(3) }),
     ],
     job_plans: [
       { id: PLAN1, tenant_id: T, job_id: JOB1, name: 'Ground floor', storage_path: img(1200, 800, 'Demo Floor Plan'), sort: 0 },
@@ -78,6 +84,15 @@ export function seedDemoDb(): DemoDb {
     item_photos: [
       { id: 'demo-ph1', tenant_id: T, item_id: 'demo-i2', kind: 'after', storage_path: img(800, 600, 'Installed W2'), created_at: '2026-09-10T12:00:00Z' },
       { id: 'demo-ph2', tenant_id: T, item_id: 'demo-i4', kind: 'before', storage_path: img(800, 600, 'Before W4'), created_at: '2026-09-09T12:00:00Z' },
+    ],
+    // Production time: the tasks of two production jobs, and the demo worker's entries for today.
+    prod_tasks: [
+      ...['ciecie', 'szykowanie profili', 'szklenie', 'pakowanie'].map((op, i) => ({ id: `demo-t394-${i}`, tenant_id: T, job_ref: 'Z.394', job_key: 'Z.394', export_name: `Z_394_${op.replace(/ /g, '_')}`, operation: op, alias: op, active: true })),
+      ...['ciecie', 'cnc', 'skladanie', 'szklenie', 'pakowanie'].map((op, i) => ({ id: `demo-t410-${i}`, tenant_id: T, job_ref: 'Z.410', job_key: 'Z.410', export_name: `Z_410_${op}`, operation: op, alias: op, active: true })),
+    ],
+    time_entries: [
+      { id: 'demo-te1', user_id: 'demo-user', task_id: 'demo-t394-0', task_name: 'Z_394_ciecie', job_key: 'Z.394', started_at: at(6, 0), ended_at: at(7, 40), note: null },
+      { id: 'demo-te2', user_id: 'demo-user', task_id: 'demo-t410-1', task_name: 'Z_410_cnc', job_key: 'Z.410', started_at: at(7, 45), ended_at: at(9, 10), note: 'wymiana frezu' },
     ],
     pick_events: [
       { id: 'demo-pe1', tenant_id: T, style_number: '27', room_code: 'LOUNGE', job_id: JOB1 },

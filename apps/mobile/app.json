@@ -2,7 +2,7 @@
   "expo": {
     "name": "FitAWindow",
     "slug": "ace-field",
-    "version": "0.74.0",
+    "version": "0.75.0",
     "orientation": "portrait",
     "scheme": "acefield",
     "userInterfaceStyle": "light",
@@ -60,6 +60,14 @@
       "eas": {
         "projectId": "fb009dd5-8383-4f04-b82f-d3afe4b9395a"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/fb009dd5-8383-4f04-b82f-d3afe4b9395a",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

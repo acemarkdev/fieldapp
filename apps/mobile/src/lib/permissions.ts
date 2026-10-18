@@ -14,7 +14,7 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   admin: ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.manage'],
   office: ['jobs.manage', 'items.create', 'items.edit', 'items.fit', 'snags.raise', 'photos.add', 'plans.manage'],
   surveyor: ['items.create', 'items.edit', 'snags.raise', 'photos.add', 'plans.manage'],
-  scanner: ['items.create', 'photos.add'],
+  scanner: ['items.create', 'photos.add', 'plans.manage'],   // may add a plan from the phone (0.75.0)
   fitter: ['items.fit', 'snags.raise', 'photos.add'],
   invoice_manager: [], // finance-only; no field capabilities on the phone
   customer: [],        // customer portal is web-only; no field capabilities

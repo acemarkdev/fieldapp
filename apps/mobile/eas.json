@@ -17,7 +17,8 @@
         "EXPO_PUBLIC_SUPABASE_URL": "https://kmmnlbksxncdzlorobcc.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_iivZfsC5sz8kYx8A5Y4sIQ_wVV8w95J",
         "EXPO_PUBLIC_AZURE_SSO_ENABLED": "true"
-      }
+      },
+      "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
@@ -28,7 +29,8 @@
         "EXPO_PUBLIC_SUPABASE_URL": "https://swvquulcchcwyyhpjfsm.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_DNKQ0jm5H6YcSr5mM4m1jA_trGEf_B5",
         "EXPO_PUBLIC_AZURE_SSO_ENABLED": "true"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {
