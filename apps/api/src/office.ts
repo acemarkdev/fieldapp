@@ -269,6 +269,7 @@ async function dashboardData(tenantId: string) {
     for (const it of items) statusCounts[it.install_status ?? 'none'] = (statusCounts[it.install_status ?? 'none'] ?? 0) + 1;
     return {
       id: j.id, code: `${j.client_code}.${j.job_code}`, name: j.name, board: !!j.monday_board_id,
+      site_code: (j as any).site_code ?? null, site_address: (j as any).site_address ?? null, postcode: (j as any).postcode ?? null,
       items: items.length, windows: items.length - snags.length, snags: snags.length,
       synced, installed, openSnags, dirty, labour: formatPennies(labourP), labourP,
     };
@@ -3759,7 +3760,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="sub">Live status across all jobs — straight from the store.</div>
       <div id="dashCards" class="statgrid"></div>
       <div id="dashBreakdown"></div>
-      <div class="groupt" style="padding:16px 0 0">BY JOB</div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 0 0"><div class="groupt" style="padding:0">BY JOB</div><input id="djSearch" class="tinput" style="flex:1;min-width:220px;max-width:420px" placeholder="Search: address, postcode, job name or code"><span class="sub" id="djCount" style="margin:0"></span></div>
       <div id="dashJobs"></div>
     </main>
   </div>
@@ -6849,17 +6850,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var bd=d.breakdown||[];
     var bdHtml=bd.length?bd.map(function(s){var p=pct(s.count,t.items);return '<div class="barrow"><span class="barlabel" style="width:120px">'+esc(s.label)+'</span><div class="bartrack"><div class="barfill" style="width:'+p+'%"></div></div><span class="barpct">'+s.count+'</span></div>';}).join(''):'<div style="color:var(--muted);font-size:13px">No items yet.</div>';
     document.getElementById('dashBreakdown').innerHTML='<div class="groupt" style="padding:16px 0 0">INSTALL STATUS</div><div class="jobcard" style="cursor:default">'+bdHtml+'</div>';
-    var jc=document.getElementById('dashJobs');jc.innerHTML='';
-    d.jobs.forEach(function(j){
+    DJ.jobs=d.jobs||[]; DJ.pct=pct;
+    var q=document.getElementById('djSearch'); if(q&&!q.dataset.ready){ q.dataset.ready='1'; q.oninput=function(){ DJ.q=this.value.trim(); renderDashJobs(); }; }
+    renderDashJobs();
+  }
+  // Dashboard ▸ By job: search by address / postcode / name / code, and the address as a maps link.
+  var DJ={jobs:[],q:''};
+  function mapsUrl(addr){ var q=encodeURIComponent(addr); return /Mac|iPhone|iPad|iPod/.test(navigator.platform||navigator.userAgent||'')?'https://maps.apple.com/?q='+q:'https://www.google.com/maps/search/?api=1&query='+q; }
+  function djAddress(j){ return [j.site_address,j.postcode].filter(function(x){ return x&&String(x).trim(); }).join(', '); }
+  function djMatch(j,q){ if(!q)return true; var hay=[j.code,j.site_code,j.name,j.site_address,j.postcode].join(' ').toLowerCase().replace(/[ ]+/g,' '); return q.toLowerCase().split(' ').filter(Boolean).every(function(w){ return hay.indexOf(w)>=0; }); }
+  function renderDashJobs(){
+    var jc=document.getElementById('dashJobs'); if(!jc)return; jc.innerHTML='';
+    var list=DJ.jobs.filter(function(j){ return djMatch(j,DJ.q); });
+    var cnt=document.getElementById('djCount'); if(cnt)cnt.textContent=DJ.q?(list.length+' of '+DJ.jobs.length+' jobs'):(DJ.jobs.length+' jobs');
+    if(!list.length){ jc.innerHTML='<div class="empty" style="margin-top:12px">No job matches “'+esc(DJ.q)+'”.</div>'; return; }
+    list.forEach(function(j){
       var el=document.createElement('div');el.className='jobcard clickable';
       el.setAttribute('onclick',"openItemsFiltered('"+j.id+"','all')");
-      el.innerHTML='<div class="jobtop"><div><b class="mono">'+esc(j.code)+'</b> <span style="color:var(--muted)">'+esc(j.name)+'</span></div>'
+      var addr=djAddress(j);
+      el.innerHTML='<div class="jobtop"><div><b class="mono">'+esc(j.code)+'</b> <span style="color:var(--muted)">'+esc(j.name)+'</span>'
+        +(addr?'<div style="margin-top:3px;font-size:12.5px"><a class="codelink" href="'+av(mapsUrl(addr))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">📍 '+esc(addr)+'</a></div>':'')+'</div>'
         +'<div class="jobmeta">'+(j.board?'<span class="count green">board linked</span>':'<span class="count amber">no board</span>')+' · '+j.items+' items · '+j.snags+' snags · labour '+esc(j.labour)+'</div></div>'
-        +bar('Synced',pct(j.synced,j.items),'')+bar('Installed',pct(j.installed,j.items),'green')
+        +bar('Synced',DJ.pct(j.synced,j.items),'')+bar('Installed',DJ.pct(j.installed,j.items),'green')
         +(j.openSnags?'<div class="opensnag" onclick="event.stopPropagation();openItemsFiltered(\\''+j.id+'\\',\\'open_snags\\')">⚠ '+j.openSnags+' open snag'+(j.openSnags>1?'s':'')+' →</div>':'');
       jc.appendChild(el);
     });
   }
+
   function applyRole(){
     applyLang();
     var isAdmin=(myRole==='admin');
