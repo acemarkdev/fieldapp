@@ -4321,7 +4321,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
 
   <div id="usersView" style="display:none">
-    <main style="max-width:1080px">
+    <main style="max-width:none">
       <h2>Users</h2>
       <div class="sub">Create logins for office and field staff, set their role, and deactivate anyone who leaves. Roles: <b>admin</b> (full access + this tab), <b>office</b>, <b>surveyor</b>, <b>scanner</b>, <b>fitter</b>, and <b>invoice manager</b> (budget/pricing only — no operational data).</div>
       <div class="addrow" style="flex-wrap:wrap">
@@ -4332,7 +4332,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="add" onclick="addUser()">Add user</button>
       </div>
       <div class="ferr" id="userErr" style="padding:6px 2px 0"></div>
-      <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="min-width:1000px"><thead><tr>
+      <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="width:100%"><thead><tr>
         <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>CLIENT</th><th>TEAM</th><th title="Interface language. Default = English. Polish currently covers the Fin&amp;Ops screens.">LANGUAGE</th><th>LOGIN</th><th>STATUS</th><th></th>
       </tr></thead><tbody id="userRows"></tbody></table></div>
       <div class="sub" style="margin-top:8px">A <b>fitter's</b> team decides which items they see in the phone app. Set it here; item→team assignment itself comes from Monday (Sync tab → Pull fitters). A <b>customer</b> only signs in to a read-only portal — set their <b>CLIENT</b> code (e.g. AXS) to control which jobs they can see and download the rate-free install report for.</div>
@@ -7255,7 +7255,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var self=u.id===myId;
       var attr=function(s){return esc(s).replace(/"/g,'&quot;');};
       var nameInput='<input class="tname" value="'+attr(u.name)+'" onchange="saveUserField(\\''+u.id+'\\',\\'name\\',this.value)">';
-      var emailInput='<input class="tname" style="width:205px" value="'+attr(u.email)+'" onchange="saveUserField(\\''+u.id+'\\',\\'email\\',this.value)">';
+      var emailInput='<input class="tname" style="width:100%;min-width:205px" value="'+attr(u.email)+'" onchange="saveUserField(\\''+u.id+'\\',\\'email\\',this.value)">';
       var roleSel='<select class="sel" '+(self?'disabled':'')+' onchange="saveUserField(\\''+u.id+'\\',\\'role\\',this.value)">'+USER_ROLES.map(function(r){return opt(r,roleLabel(r),u.role)}).join('')+'</select>';
       var teamOpts='<option value="">— none —</option>'+allTeams.filter(function(t){return t.active!==false||t.id===u.team_id;}).map(function(t){return '<option value="'+t.id+'"'+(u.team_id===t.id?' selected':'')+'>'+esc(t.name)+(t.active===false?' (retired)':'')+'</option>';}).join('');
       var teamSel='<select class="sel" onchange="saveUserField(\\''+u.id+'\\',\\'team_id\\',this.value)">'+teamOpts+'</select>';

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.29.0';
+export const APP_VERSION = '1.29.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.29.1', date: '2026-10-18', changes: [
+    'Admin \u25b8 Users: the page and the users table use the full width of the screen, so all columns are visible without scrolling sideways.',
+  ] },
   { version: '1.29.0', date: '2026-10-17', changes: [
     'Fin&Ops \u25b8 Stock value: what the stock in Subiekt is worth (FIFO purchase cost of what is left of each delivery, net PLN) and how old it is \u2014 0\u201390 days, 91\u2013180, 181\u2013365, 1\u20132 years, over 2 years \u2014 by supplier, product group or warehouse, with a bar per group.',
     'Click a group for its products, a product for its deliveries (date, age, quantity, unit cost). \u26a0 marks stock with no issue and no receipt for 6 months; a filter shows only those. Age counts from the original delivery: moving stock between warehouses does not make it new.',
