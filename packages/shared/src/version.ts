@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.30.1';
+export const APP_VERSION = '1.31.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.31.0', date: '2026-10-19', changes: [
+    'Fin&Ops \u25b8 Job costs: a budget per job. In the job window: the price offered to the customer, the expected costs of producing it in Orpiszew (the same cost lines as the actual costs; labour = hours \u00d7 rate) and of buying it in and trading it instead, each with its profit and margin, and which option earns more.',
+    'An admin decides: produce, trade or reject (the Z number is dropped); the budget is then frozen and can be reopened by an admin. Once costs come in, the window shows budget vs actual line by line, flagged when actual costs are more than 10 % over.',
+    'The job list gets Budget (decision + budgeted margin) and vs budget (actual cost minus budget) columns, and filters for the budget state and for jobs over budget. Needs migration 0083.',
+  ] },
   { version: '1.30.1', date: '2026-10-19', changes: [
     'Production time: an imported task is named by its Eksport_Clockify text (e.g. Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1), so workers see which position it is; the short operation (\u201ccnc cor 70 ind HO\u201d) is kept for searching. A task added by hand is named the same way. Tasks loaded earlier are renamed with a one-off SQL.',
   ] },
