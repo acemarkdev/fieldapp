@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.30.0';
+export const APP_VERSION = '1.30.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.30.1', date: '2026-10-19', changes: [
+    'Production time: an imported task is named by its Eksport_Clockify text (e.g. Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1), so workers see which position it is; the short operation (\u201ccnc cor 70 ind HO\u201d) is kept for searching. A task added by hand is named the same way. Tasks loaded earlier are renamed with a one-off SQL.',
+  ] },
   { version: '1.30.0', date: '2026-10-18', changes: [
     'Dashboard \u25b8 By job: a search box narrows the job list by address, postcode, job name or code as you type, and each job shows its site address \u2014 click it to open the address in Google Maps (Apple Maps on a Mac or iPhone).',
   ] },

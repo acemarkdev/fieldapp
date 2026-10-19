@@ -6,7 +6,7 @@ const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++
 
 ok('job numbers', jobRefOf('Z_394') === 'Z.394' && jobRefOf('z 394') === 'Z.394' && jobRefOf('Z.394') === 'Z.394' && jobRefOf('Z_282_poprawka') === 'Z.282 poprawka' && jobRefOf('AKCESORIA') === 'AKCESORIA');
 const t = taskFromRow(['Z_394_cnc_Poz_1_swietlik_staly_011_w0', 'UTWORZONO', 'Z_394', 'A0025', 'cnc swietlik staly', 'cnc swietlik staly']);
-ok('a wejście row → a task', !!t && t.export_name === 'Z_394_cnc_Poz_1_swietlik_staly_011_w0' && t.job_ref === 'Z.394' && t.job_key === 'Z.394' && t.op_id === 'A0025' && t.operation === 'cnc swietlik staly', t);
+ok('a wejście row → a task', !!t && t.export_name === 'Z_394_cnc_Poz_1_swietlik_staly_011_w0' && t.job_ref === 'Z.394' && t.job_key === 'Z.394' && t.op_id === 'A0025' && t.operation === 'Z_394_cnc_Poz_1_swietlik_staly_011_w0' && t.alias === 'cnc swietlik staly', t);
 ok('the header and empty rows are skipped', taskFromRow(['Eksport_Clockify', 'Status_Clockify', 'Zlecenie', 'ID_operacji', 'Operacja', 'Alias_operacji']) === null && taskFromRow(['', '', '', '', '', '']) === null && taskFromRow(['Z_1_x', '', 'Z_1', '', '', '']) === null);
 ok('job taken from the task name when the Zlecenie column is empty', taskFromRow(['Z_400_szklenie', '', '', 'A0007', 'szklenie', ''])?.job_ref === 'Z.400');
 
@@ -27,5 +27,7 @@ ok('only start or end changes count as a time edit', !timesChanged({ started_at:
   && timesChanged({ started_at: '2026-10-15T06:00:00Z', ended_at: '2026-10-15T07:00:00Z' }, { started_at: '2026-10-15T06:05:00Z', ended_at: '2026-10-15T07:00:00Z' })
   && timesChanged({ started_at: '2026-10-15T06:00:00Z', ended_at: null }, { started_at: '2026-10-15T06:00:00Z', ended_at: '2026-10-15T07:00:00Z' }) && timesChanged(null, { started_at: 'x' }));
 
+const t2 = taskFromRow(['Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1', 'UTWORZONO', 'Z_437', 'A0031', 'cnc cor 70 ind HO', '']);
+ok('the task is named by Eksport_Clockify; the short operation stays as the alias', !!t2 && t2.operation === 'Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1' && t2.alias === 'cnc cor 70 ind HO' && t2.job_ref === 'Z.437', t2);
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('prodTime: all passed');

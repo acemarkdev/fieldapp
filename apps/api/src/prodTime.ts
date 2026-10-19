@@ -18,13 +18,15 @@ export function jobRefOf(v: unknown): string {
   return m ? ('Z.' + m[1] + (clean(m[2].replace(/^[\s._-]+/, '')) ? ' ' + clean(m[2].replace(/^[\s._-]+/, '')) : '')) : s;
 }
 export interface TaskRow { export_name: string; job_ref: string; job_key: string; op_id: string | null; operation: string; alias: string | null }
-/** One pasted row of the wejście sheet (columns A–F) → a task; null for the header or an unusable row. */
+/** One pasted row of the wejście sheet (columns A–F) → a task; null for the header or an unusable row.
+ *  The task's name is the Eksport_Clockify text ("Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1"): it says which
+ *  position it is. The short operation ("cnc cor 70 ind HO") is kept as the alias, so searching for it still works. */
 export function taskFromRow(cells: unknown[]): TaskRow | null {
   const [exp, , job, op, operation, alias] = cells.map(clean);
   if (!exp || /^eksport/i.test(exp) || !operation) return null;
   const job_ref = jobRefOf(job || exp.split('_').slice(0, 2).join('_'));
   if (!job_ref) return null;
-  return { export_name: exp.slice(0, 160), job_ref: job_ref.slice(0, 80), job_key: referenceKey(job_ref).slice(0, 80), op_id: op.slice(0, 20) || null, operation: operation.slice(0, 120), alias: alias.slice(0, 120) || null };
+  return { export_name: exp.slice(0, 160), job_ref: job_ref.slice(0, 80), job_key: referenceKey(job_ref).slice(0, 80), op_id: op.slice(0, 20) || null, operation: exp.slice(0, 160), alias: (alias || operation).slice(0, 120) || null };
 }
 export const hoursBetween = (start: string, end: string | null) => (end ? Math.max(0, (Date.parse(end) - Date.parse(start)) / 3600000) : 0);
 
@@ -98,7 +100,7 @@ export async function addTask(tenantId: string, by: string, b: any): Promise<Res
   const job_ref = jobRefOf(b?.job_ref), operation = clean(b?.operation);
   if (!job_ref || !operation) return fail(400, 'Enter the job and the operation.');
   const export_name = (job_ref.replace('.', '_').replace(/\s+/g, '_') + '_' + operation.replace(/\s+/g, '_')).slice(0, 160);
-  const { data, error } = await db().from('prod_tasks').insert({ tenant_id: tenantId, created_by: by, export_name, job_ref, job_key: referenceKey(job_ref).slice(0, 80), op_id: clean(b?.op_id) || null, operation, alias: operation }).select('id').single();
+  const { data, error } = await db().from('prod_tasks').insert({ tenant_id: tenantId, created_by: by, export_name, job_ref, job_key: referenceKey(job_ref).slice(0, 80), op_id: clean(b?.op_id) || null, operation: export_name, alias: operation }).select('id').single();
   if (error) return /duplicate/i.test(error.message) ? fail(409, 'This task already exists.') : (() => { throw error; })();
   return { ok: true, id: data.id };
 }
