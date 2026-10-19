@@ -93,7 +93,7 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   acemark_fitter: ['expenses.report'],
   // Production time: workers log time in the phone app; the manager runs the office pages only.
   production: ['time.log'],
-  production_manager: ['time.manage', 'stock.view'],
+  production_manager: ['time.manage', 'stock.view', 'time.log'],   // time.log: also logs own time in the phone app
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

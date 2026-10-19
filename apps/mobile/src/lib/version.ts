@@ -45,4 +45,6 @@
 // 0.75.0 — Scanners may add a plan from the phone (migration 0082). The demo gets a "View as" bar —
 //   Office · Surveyor · Fitter · Production — with today's schedule and sample production tasks. Over-the-air
 //   updates (expo-updates): later JavaScript-only fixes reach phones without a store release.
-export const APP_VERSION = '0.75.0';
+// 0.75.1 — Production managers can sign in on the phone too and get the same time screen as
+//   production workers (log their own time). Needs migration 0084.
+export const APP_VERSION = '0.75.1';

@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.31.0';
+export const APP_VERSION = '1.31.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.31.1', date: '2026-10-19', changes: [
+    'Production managers can also sign in to the FitAWindow phone app and log their own time there, with the same time screen and rules as production workers (phone app 0.75.1). Their office pages are unchanged. Needs migration 0084.',
+  ] },
   { version: '1.31.0', date: '2026-10-19', changes: [
     'Fin&Ops \u25b8 Job costs: a budget per job. In the job window: the price offered to the customer, the expected costs of producing it in Orpiszew (the same cost lines as the actual costs; labour = hours \u00d7 rate) and of buying it in and trading it instead, each with its profit and margin, and which option earns more.',
     'An admin decides: produce, trade or reject (the Z number is dropped); the budget is then frozen and can be reopened by an admin. Once costs come in, the window shows budget vs actual line by line, flagged when actual costs are more than 10 % over.',
