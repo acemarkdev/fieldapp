@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.31.1';
+export const APP_VERSION = '1.32.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.32.0', date: '2026-10-19', changes: [
+    'Fin&Ops \u25b8 Job costs: Load from monday (admin). Reads the board PRODUCTION ACEMARK PL and compares it with Job costs by Z number, showing first what it would do: Z jobs not in Job costs yet are created with their budget filled from the board (Wartosc Zlecenia = offered price net, Godziny zalozone = labour hours \u00d7 the default rate); Z numbers that appear more than once on the board are listed and never loaded; jobs already in Job costs are left alone, and only if you tick them their still-empty budget is filled (never a locked job or a decided budget).',
+  ] },
   { version: '1.31.1', date: '2026-10-19', changes: [
     'Production managers can also sign in to the FitAWindow phone app and log their own time there, with the same time screen and rules as production workers (phone app 0.75.1). Their office pages are unchanged. Needs migration 0084.',
   ] },

@@ -129,9 +129,9 @@ export class Monday {
 
   /** Every item with its group, last-updated time and the text of the given columns (500 per page).
    *  Used by the Fin&Ops cost sync (thousands of invoices). */
-  async listItemsDetailed(boardId: string, columnIds: string[], onProgress?: (n: number) => void): Promise<{ id: string; name: string; group: string | null; updated_at: string | null; cols: Record<string, string | null> }[]> {
-    const out: { id: string; name: string; group: string | null; updated_at: string | null; cols: Record<string, string | null> }[] = [];
-    const fields = `cursor items { id name updated_at group { title } column_values(ids: $col) { id text } }`;
+  async listItemsDetailed(boardId: string, columnIds: string[], onProgress?: (n: number) => void): Promise<{ id: string; name: string; group: string | null; updated_at: string | null; created_at?: string | null; cols: Record<string, string | null> }[]> {
+    const out: { id: string; name: string; group: string | null; updated_at: string | null; created_at?: string | null; cols: Record<string, string | null> }[] = [];
+    const fields = `cursor items { id name created_at updated_at group { title } column_values(ids: $col) { id text } }`;
     let cursor: string | null = null;
     for (let page = 0; page < 200; page++) {
       const d: any = cursor
@@ -139,7 +139,7 @@ export class Monday {
         : await this.gqlRetry(`query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 500) { ${fields} } } }`, { b: [boardId], col: columnIds });
       const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
       const items = pageData?.items ?? [];
-      for (const i of items) { const cols: Record<string, string | null> = {}; for (const cv of (i.column_values ?? [])) cols[cv.id] = cv.text ?? null; out.push({ id: i.id, name: i.name, group: i.group?.title ?? null, updated_at: i.updated_at ?? null, cols }); }
+      for (const i of items) { const cols: Record<string, string | null> = {}; for (const cv of (i.column_values ?? [])) cols[cv.id] = cv.text ?? null; out.push({ id: i.id, name: i.name, group: i.group?.title ?? null, updated_at: i.updated_at ?? null, created_at: i.created_at ?? null, cols }); }
       onProgress?.(out.length);
       cursor = pageData?.cursor ?? null;
       if (!cursor || items.length === 0) break;
