@@ -11,9 +11,10 @@ import { parseMoney } from './finJobs';
 export const PAYROLL_DEPTS = ['Office', 'Sales', 'Production'] as const;
 export type PayrollDept = (typeof PAYROLL_DEPTS)[number];
 export type PayrollStatus = 'actual' | 'manual' | 'forecast';
-export interface PayrollRow { period_year: number; period_month: number; department: string; salaries: number | null; taxes: number | null; actual: boolean }
-export interface PayrollCell { salaries: number | null; taxes: number | null; salariesStatus: PayrollStatus | null; taxesStatus: PayrollStatus | null }
-export interface PayrollMonth { year: number; month: number; actual: boolean; depts: Record<PayrollDept, PayrollCell> }
+export interface PayrollRow { period_year: number; period_month: number; department: string; salaries: number | null; taxes: number | null; actual: boolean; lump?: number | null; lump_note?: string | null; source?: string | null }
+// salaries = the base figure (files, typed or estimated) + the lump sum; base is what is typed in the box.
+export interface PayrollCell { salaries: number | null; taxes: number | null; salariesStatus: PayrollStatus | null; taxesStatus: PayrollStatus | null; base: number | null; lump: number | null; lumpNote: string | null }
+export interface PayrollMonth { year: number; month: number; actual: boolean; files: boolean; depts: Record<PayrollDept, PayrollCell> }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const ym = (y: number, m: number) => y * 12 + (m - 1);
@@ -30,10 +31,11 @@ export function payrollView(rows: PayrollRow[], now: { year: number; month: numb
   for (let i = first; i <= last; i++) {
     const year = Math.floor(i / 12), month = (i % 12) + 1;
     const depts = {} as Record<PayrollDept, PayrollCell>;
-    let anyActual = false;
+    let anyActual = false, files = false;
     for (const d of PAYROLL_DEPTS) {
       const r = by.get(`${i}|${d}`);
       if (r?.actual) anyActual = true;
+      if (r?.source === 'files') files = true;
       const field = (k: 'salaries' | 'taxes'): [number | null, PayrollStatus | null] => {
         const v = r ? r[k] : null;
         if (r?.actual) return [v ?? 0, 'actual'];
@@ -41,13 +43,15 @@ export function payrollView(rows: PayrollRow[], now: { year: number; month: numb
         if (i > ym(now.year, now.month)) return [null, null];          // no forecasts into the future
         // average of the 3 most recent actual months before this one
         const prev: number[] = [];
-        for (let j = i - 1; j >= first && prev.length < 3; j--) { const p = by.get(`${j}|${d}`); if (p?.actual) prev.push(Number(p[k]) || 0); }
+        for (let j = i - 1; j >= first && prev.length < 3; j--) { const p = by.get(`${j}|${d}`); if (p?.actual) prev.push((Number(p[k]) || 0) + (k === 'salaries' ? Number(p.lump) || 0 : 0)); }
         return prev.length ? [round2(prev.reduce((s, x) => s + x, 0) / prev.length), 'forecast'] : [null, null];
       };
       const [s, ss] = field('salaries'), [t, ts] = field('taxes');
-      depts[d] = { salaries: s, taxes: t, salariesStatus: ss, taxesStatus: ts };
+      const lump = r?.lump === null || r?.lump === undefined ? null : Number(r.lump);
+      const total = s === null && !lump ? s : round2((s ?? 0) + (lump ?? 0));
+      depts[d] = { salaries: total, taxes: t, salariesStatus: ss ?? (lump ? 'manual' : null), taxesStatus: ts, base: ss === 'forecast' ? null : s, lump, lumpNote: r?.lump_note ?? null };
     }
-    out.push({ year, month, actual: anyActual, depts });
+    out.push({ year, month, actual: anyActual, files, depts });
   }
   return out;
 }
@@ -67,9 +71,11 @@ export function payrollFields(b: any): Result<{ year: number; month: number; act
 }
 
 export async function listPayroll(tenantId: string): Promise<PayrollRow[]> {
-  const { data, error } = await db().from('fin_payroll').select('period_year,period_month,department,salaries,taxes,actual').eq('tenant_id', tenantId).order('period_year').order('period_month');
+  const q = (cols: string) => db().from('fin_payroll').select(cols).eq('tenant_id', tenantId).order('period_year').order('period_month');
+  let { data, error } = await q('period_year,period_month,department,salaries,taxes,actual,lump,lump_note,source');
+  if (error && /lump|source/.test(error.message)) ({ data, error } = await q('period_year,period_month,department,salaries,taxes,actual'));   // before migration 0085
   if (error) throw error;
-  return (data ?? []).map((r: any) => ({ ...r, salaries: r.salaries === null ? null : Number(r.salaries), taxes: r.taxes === null ? null : Number(r.taxes) }));
+  return (data ?? []).map((r: any) => ({ ...r, salaries: r.salaries === null ? null : Number(r.salaries), taxes: r.taxes === null ? null : Number(r.taxes), lump: r.lump == null ? null : Number(r.lump) }));
 }
 export async function savePayrollMonth(tenantId: string, by: string, b: any): Promise<Result<{ year: number; month: number; actual: boolean }>> {
   const f = payrollFields(b); if (!f.ok) return f;

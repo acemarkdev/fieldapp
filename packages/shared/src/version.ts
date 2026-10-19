@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.32.0';
+export const APP_VERSION = '1.33.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.33.0', date: '2026-10-19', changes: [
+    'Fin&Ops \u25b8 Payroll: Load accountant\u2019s files. Choose the month\u2019s three PDFs (payroll list, ZUS transfer, PIT-4 transfer); the app reads them, checks the people add up to the list\u2019s totals and that the PIT-4 period matches, and shows the split before anything is saved. Salaries = net to pay per group; taxes = ZUS + PIT-4 split by each group\u2019s share of gross pay. The month is then marked From the accountant\u2019s files and is not typed by hand.',
+    'Every person on the list belongs to a group: Office, Sales, Production or Other (employed here but recharged elsewhere, e.g. to the UK \u2014 left out of Payroll). New names are asked for when loading; the People on the payroll list table below the months changes groups for the next load.',
+    '+ Lump sum on any month adds an amount on top of a department\u2019s salaries (e.g. pay that is not on the list), with a note; no tax is added for it. Needs migration 0085.',
+  ] },
   { version: '1.32.0', date: '2026-10-19', changes: [
     'Fin&Ops \u25b8 Job costs: Load from monday (admin). Reads the board PRODUCTION ACEMARK PL and compares it with Job costs by Z number, showing first what it would do: Z jobs not in Job costs yet are created with their budget filled from the board (Wartosc Zlecenia = offered price net, Godziny zalozone = labour hours \u00d7 the default rate); Z numbers that appear more than once on the board are listed and never loaded; jobs already in Job costs are left alone, and only if you tick them their still-empty budget is filled (never a locked job or a decided budget).',
   ] },
