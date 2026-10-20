@@ -47,4 +47,6 @@
 //   updates (expo-updates): later JavaScript-only fixes reach phones without a store release.
 // 0.75.1 — Production managers can sign in on the phone too and get the same time screen as
 //   production workers (log their own time). Needs migration 0084.
-export const APP_VERSION = '0.75.1';
+// 0.75.2 — Production time: a task whose name already starts with its job number (Z_437_cnc_…) is shown
+//   without the job in front again ("Moje zadania", the running task, the correction sheet).
+export const APP_VERSION = '0.75.2';

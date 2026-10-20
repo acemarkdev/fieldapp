@@ -17,6 +17,7 @@ const E = (id: string, task: string, h: number) => ({ id, task_id: task, task_na
 const rec = recentTasks([E('a', '1', 6), E('b', '2', 7), E('c', '1', 8), E('d', '9', 9), E('e', '3', 10)], tasks, 2);
 ok('recent tasks: newest first, each once, only open tasks, at most n', rec.map((t) => t.id).join() === '3,1', rec.map((t) => t.id));
 ok('task label carries the Z number', taskLabel(tasks[1]) === 'Z.394 · szklenie');
+ok('no second Z number when the name already starts with the job', taskLabel({ job_ref: 'Z.437', operation: 'Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1' }) === 'Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1' && taskLabel({ job_ref: 'Z.43', operation: 'Z_437_cnc' }) === 'Z.43 · Z_437_cnc' && taskLabel({ job_ref: 'Z.437', operation: 'cnc Z_437' }) === 'Z.437 · cnc Z_437');
 
 // Correcting an entry
 const day = new Date(2026, 9, 14, 7, 30);

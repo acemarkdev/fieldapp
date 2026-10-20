@@ -42,7 +42,12 @@ export function recentTasks(entries: TimeEntry[], tasks: ProdTask[], n = 6): Pro
   return out;
 }
 /** "Z.394 · szklenie" */
-export const taskLabel = (t: Pick<ProdTask, 'job_ref' | 'operation'>) => `${t.job_ref} · ${t.operation}`;
+/** "Z.394 · szklenie" — or just the name when it already starts with the job ("Z_437_cnc_Poz_1_…"). */
+export function taskLabel(t: Pick<ProdTask, 'job_ref' | 'operation'>): string {
+  const m = /^([A-Za-z]+)[.\s_-]?(\d+)/.exec(t.job_ref.trim());
+  const startsWithJob = !!m && new RegExp(`^${m[1]}[.\\s_-]?${m[2]}(?!\\d)`, 'i').test(t.operation.trim());
+  return startsWithJob ? t.operation : `${t.job_ref} · ${t.operation}`;
+}
 
 // ---- correcting an entry on the phone: same day only, the time moves, the date never does ------------
 export const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
