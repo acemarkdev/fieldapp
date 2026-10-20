@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, AppState, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { C } from '../lib/theme';
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, shiftWithinDay, atTime, hhmm, editProblem, type ProdTask, type TimeEntry } from '../lib/timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, type ProdTask, type TimeEntry } from '../lib/timeLogic';
 
 export default function TimeScreen() {
   const [tasks, setTasks] = useState<ProdTask[]>([]);
@@ -18,6 +18,8 @@ export default function TimeScreen() {
   const [query, setQuery] = useState('');
   const [now, setNow] = useState(Date.now());
   const [editing, setEditing] = useState<TimeEntry | null>(null);
+  // Two tabs under the running task: the tasks (with Moje zadania on top) and the worker's own entries.
+  const [tab, setTab] = useState<'tasks' | 'entries'>('tasks');
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +50,10 @@ export default function TimeScreen() {
   const recent = recentTasks(entries, tasks, 6);
   const groups = groupTasks(tasks, query);
   const today = hoursToday(entries, new Date(now));
+  const byTask = todayByTask(entries, new Date(now));
+  const nToday = countToday(entries, new Date(now));
+  const short = (ms: number) => { const m = Math.round(ms / 60000); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+  const dayLabel = (iso: string) => { const d = new Date(iso), n = new Date(now), y = new Date(n); y.setDate(n.getDate() - 1); return sameDay(d, n) ? 'Dziś' : sameDay(d, y) ? 'Wczoraj' : d.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }); };
   // Delete one of today's own entries (prod_delete_entry checks the same on the server and logs it).
   const removeEntry = (e: TimeEntry) => Alert.alert('Usunąć wpis?',
     `${e.task_name ?? ''}\n${fmtT(e.started_at)}–${e.ended_at ? fmtT(e.ended_at) : 'trwa'}${e.ended_at ? '' : '\nZadanie zostanie zatrzymane i usunięte.'}`,
@@ -59,10 +65,13 @@ export default function TimeScreen() {
 
   // a plain function, not a component: the clock re-renders every second and must not remount the rows
   const taskRow = (t: ProdTask, label: string) => {
-    const on = running?.task_id === t.id;
+    const on = running?.task_id === t.id, done = byTask.get(t.id);
     return (
       <View key={t.id} style={s.row}>
-        <Text style={[s.op, on && { color: C.green, fontWeight: '800' }]} numberOfLines={2}>{label}</Text>
+        <View style={{ flex: 1, marginRight: 10 }}>
+          <Text style={[s.op, { marginRight: 0 }, on && { color: C.green, fontWeight: '800' }]} numberOfLines={2}>{label}</Text>
+          {!!done && <Text style={s.today}>dziś {short(done)}</Text>}
+        </View>
         {on ? <Text style={s.onT}>trwa</Text>
           : <TouchableOpacity style={s.start} onPress={() => start(t)} disabled={busy} activeOpacity={0.85}><Text style={s.startT}>Start</Text></TouchableOpacity>}
       </View>
@@ -93,6 +102,13 @@ export default function TimeScreen() {
           )}
         </View>
 
+        <View style={s.tabs}>
+          {([['tasks', 'Zadania'], ['entries', `Moje wpisy${nToday ? ` (${nToday})` : ''}`]] as const).map(([k, l]) => (
+            <TouchableOpacity key={k} style={[s.tab, tab === k && s.tabOn]} onPress={() => setTab(k)} activeOpacity={0.8}><Text style={[s.tabT, tab === k && s.tabTOn]}>{l}</Text></TouchableOpacity>
+          ))}
+        </View>
+
+        {tab === 'tasks' && <>
         {recent.length > 0 && (
           <View style={[s.group, { borderColor: C.purple }]}>
             <Text style={s.job}>Moje zadania</Text>
@@ -109,10 +125,16 @@ export default function TimeScreen() {
           </View>
         ))}
 
-        {entries.length > 0 && <Text style={[s.job, { marginTop: 18 }]}>Ostatnie wpisy</Text>}
-        {entries.slice(0, 20).map((e) => {
+        </>}
+
+        {tab === 'entries' && <>
+        {entries.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 20 }]}>Brak wpisów — uruchom zadanie w zakładce Zadania.</Text>}
+        {entries.map((e, i) => {
           const can = editableToday(e, new Date(now));
-          return (
+          const t = e.task_id ? tasks.find((x) => x.id === e.task_id) : undefined;   // only open tasks can be continued
+          const head = i === 0 || !sameDay(new Date(e.started_at), new Date(entries[i - 1].started_at));
+          return (<View key={e.id}>
+            {head && <Text style={[s.small, { marginTop: i ? 16 : 4, marginBottom: 2 }]}>{dayLabel(e.started_at).toUpperCase()}</Text>}
             <TouchableOpacity key={e.id} style={s.entry} onPress={() => (can ? setEditing(e) : Alert.alert('Starszy wpis', 'Wpisy z poprzednich dni zmienia kierownik produkcji.'))} activeOpacity={0.7}>
               <View style={{ flex: 1 }}>
                 <Text style={s.entryT} numberOfLines={1}>{e.task_name}</Text>
@@ -124,10 +146,13 @@ export default function TimeScreen() {
                   <TouchableOpacity style={s.eBtn} onPress={() => setEditing(e)}><Text style={s.eBtnT}>Zmień</Text></TouchableOpacity>
                   <TouchableOpacity style={[s.eBtn, s.eDel]} onPress={() => removeEntry(e)}><Text style={[s.eBtnT, { color: C.magenta }]}>Usuń</Text></TouchableOpacity>
                 </View>
+              ) : t && running?.task_id !== t.id ? (
+                <TouchableOpacity style={[s.start, { marginLeft: 8, paddingHorizontal: 12 }]} onPress={() => start(t)} disabled={busy} activeOpacity={0.85}><Text style={[s.startT, { fontSize: 14 }]}>Kontynuuj</Text></TouchableOpacity>
               ) : <Text style={[s.edit, { color: C.muted }]}>🔒</Text>}
             </TouchableOpacity>
-          );
+          </View>);
         })}
+        </>}
       </ScrollView>
       {editing && <EditEntry entry={editing} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskLabel(t) : editing.task_name ?? ''; })()}
         onClose={() => setEditing(null)}
@@ -228,6 +253,12 @@ const s = StyleSheet.create({
   entryT: { fontSize: 14, color: C.ink, fontWeight: '600' },
   note: { fontSize: 12, color: C.ink, fontStyle: 'italic', marginTop: 2 },
   edit: { color: C.purple, fontWeight: '800', paddingLeft: 10 },
+  today: { fontSize: 12, color: C.muted, marginTop: 1 },
+  tabs: { flexDirection: 'row', backgroundColor: C.soft, borderRadius: 12, padding: 4, marginBottom: 10, gap: 4 },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
+  tabOn: { backgroundColor: C.white, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+  tabT: { fontSize: 15, fontWeight: '700', color: C.muted },
+  tabTOn: { color: C.purple, fontWeight: '800' },
   eBtn: { borderWidth: 1, borderColor: C.purple, borderRadius: 9, paddingVertical: 7, paddingHorizontal: 11 },
   eDel: { borderColor: C.magenta },
   eBtnT: { color: C.purple, fontWeight: '800', fontSize: 13 },

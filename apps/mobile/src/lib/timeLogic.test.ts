@@ -1,5 +1,5 @@
 // Run: npx tsx apps/mobile/src/lib/timeLogic.test.ts
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, shiftWithinDay, atTime, hhmm, editProblem, type ProdTask } from './timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, type ProdTask } from './timeLogic';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -26,6 +26,13 @@ ok('time moves within the day only', hhmm(shiftWithinDay(new Date(2026, 9, 14, 7
 ok('typed time keeps the date', hhmm(atTime(day, '6:05')!) === '06:05' && atTime(day, '06.45')!.getDate() === 14 && atTime(day, '25:00') === null && atTime(day, 'abc') === null);
 const now2 = new Date(2026, 9, 14, 12, 0);
 ok('edit checks', editProblem(new Date(2026, 9, 14, 6), new Date(2026, 9, 14, 7), false, now2, '') === null && !!editProblem(new Date(2026, 9, 14, 8), new Date(2026, 9, 14, 7), false, now2, '') && !!editProblem(new Date(2026, 9, 14, 13), null, true, now2, '') && editProblem(new Date(2026, 9, 14, 6), null, true, now2, 'ok') === null && !!editProblem(new Date(2026, 9, 14, 6), new Date(2026, 9, 14, 7), false, now2, 'x'.repeat(101)) && !!editProblem(new Date(2026, 9, 14, 6), new Date(2026, 9, 14, 13), false, now2, ''));
+
+// "dziś" per task and the count on the entries tab
+const tbt = [{ id: 'a', task_id: '1', task_name: 'x', started_at: iso(7), ended_at: iso(8, 30), note: null }, { id: 'b', task_id: '1', task_name: 'x', started_at: iso(11), ended_at: null, note: null },
+  { id: 'c', task_id: '2', task_name: 'y', started_at: new Date(2026, 9, 13, 23, 0).toISOString(), ended_at: iso(1), note: null }, { id: 'd', task_id: '3', task_name: 'z', started_at: new Date(2026, 9, 13, 8).toISOString(), ended_at: new Date(2026, 9, 13, 9).toISOString(), note: null }] as any;
+const byTask = todayByTask(tbt, now);
+ok('today per task: finished + running up to now; across midnight only the part after 00:00; yesterday not at all', byTask.get('1') === 2.5 * 3600000 && byTask.get('2') === 3600000 && !byTask.has('3'), [...byTask]);
+ok('entries started today', countToday(tbt, now) === 2);
 
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('timeLogic: all passed');

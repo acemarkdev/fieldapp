@@ -50,6 +50,18 @@ export function taskLabel(t: Pick<ProdTask, 'job_ref' | 'operation'>): string {
 }
 
 // ---- correcting an entry on the phone: same day only, the time moves, the date never does ------------
+/** Time logged today per task (ms), the running entry up to now — for the "dziś 1:30" note on each task. */
+export function todayByTask(entries: TimeEntry[], now: Date): Map<string, number> {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(), out = new Map<string, number>();
+  for (const e of entries) {
+    if (!e.task_id) continue;
+    const a = Math.max(Date.parse(e.started_at), start), b = e.ended_at ? Date.parse(e.ended_at) : now.getTime();
+    if (b > a) out.set(e.task_id, (out.get(e.task_id) ?? 0) + (b - a));
+  }
+  return out;
+}
+/** Entries started today (the number on the "Moje wpisy" tab). */
+export const countToday = (entries: TimeEntry[], now: Date) => entries.filter((e) => sameDay(new Date(e.started_at), now)).length;
 export const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 /** A worker may correct an entry only on the day it was made (older ones: the production manager). */
 export const editableToday = (e: TimeEntry, now: Date) => sameDay(new Date(e.started_at), now);
