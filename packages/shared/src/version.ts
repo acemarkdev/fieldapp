@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.34.0';
+export const APP_VERSION = '1.34.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.34.1', date: '2026-10-20', changes: [
+    'Logistics \u25b8 Labels: the phone under the company details is now a setting on the Labels page (next to Company details), saved as the default for everyone. New default: +48 510 744 727 (was +48 690 126 185).',
+  ] },
   { version: '1.34.0', date: '2026-10-20', changes: [
     'Admin \u25b8 Roles: App access. Each Fin&Ops tab (Performance, Costs, Job costs, Sales, Payroll, Stock value) can be set per role to off, view or edit \u2014 e.g. give Production managers Job costs to look at. Changes apply at once (people already signed in get them on reload); a changed setting is highlighted against the role\u2019s standard access.',
     'View means look only: the tab opens with no new / import / load buttons, no typing in the grids and job or invoice windows locked; the server refuses any change. Someone with Performance but not Payroll sees the department totals there, not the names on the payroll list.',

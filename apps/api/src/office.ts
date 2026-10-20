@@ -56,7 +56,7 @@ import { buildJobPricePdf } from './pricingPdf';
 import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
-import { parseLabelPdf, buildLabelsPdf } from './labels';
+import { parseLabelPdf, buildLabelsPdf, formatLabelPhone, DEFAULT_LABEL_PHONE } from './labels';
 import { JOB_KINDS, JOB_KIND_LABEL, listJobs as listFinJobs, getJob as getFinJob, createJob as createFinJob, updateJob as updateFinJob, deleteJob as deleteFinJob, deleteJobs as deleteFinJobs, setJobLock, setJobCell, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
 import { listPayroll, savePayrollMonth, payrollView, PAYROLL_DEPTS, listResultItems, saveResultItem } from './finPayroll';
 import { PAY_GROUPS, listPeople as listPayPeople, listLoads as listPayLoads, previewFiles as previewPayFiles, applyFiles as applyPayFiles, getLoad as getPayLoad, removeLoad as removePayLoad, saveLump as savePayLump, setPersonGroup as setPayPersonGroup } from './payrollFiles';
@@ -655,6 +655,17 @@ const server = createServer(async (req, res) => {
       catch (e: any) { send(res, 400, { error: 'Could not read the PDF: ' + (e?.message ?? String(e)) }); }
       return;
     }
+    // The phone printed on the labels: a saved default, changed on the Labels page.
+    if (p === '/api/labels/settings' && (req.method === 'GET' || req.method === 'PUT')) {
+      if (!allow('labels.print')) return;
+      if (req.method === 'PUT') {
+        const phone = formatLabelPhone((await readJson(req)).phone);
+        await setConfig('label_phone', phone);
+        audit(ctx, 'labels.phone', 'labels', null, `Phone on labels set to ${phone || '(none)'}`);
+      }
+      const phone = (await getConfig('label_phone')) ?? DEFAULT_LABEL_PHONE;
+      send(res, 200, { phone, formatted: formatLabelPhone(phone) }); return;
+    }
     // Savings counter (admin only): label PDFs downloaded so far; 1 PDF = 1 hour saved = 50 PLN.
     if (p === '/api/labels/stats' && req.method === 'GET') {
       if (ctx.role !== 'admin') { send(res, 403, { error: 'Admins only' }); return; }
@@ -672,7 +683,7 @@ const server = createServer(async (req, res) => {
       const dim = (v: unknown) => String(v ?? '').replace(/[^0-9.,]/g, '').slice(0, 7);
       const labels = rows.map((r: any) => (r?.kind === 'hardware' ? { w: '', h: '', ref: '', kind: 'hardware' as const } : { w: dim(r?.w), h: dim(r?.h), ref: String(r?.ref ?? '').trim().slice(0, 40) }));
       const title = String(b.title ?? '').trim().slice(0, 200);
-      const pdf = await buildLabelsPdf({ title, labels, logo: b.logo !== false, company: b.company !== false, skipRows: Number(b.skipRows) || 0 });
+      const pdf = await buildLabelsPdf({ title, labels, logo: b.logo !== false, company: b.company !== false, skipRows: Number(b.skipRows) || 0, phone: (await getConfig('label_phone')) ?? DEFAULT_LABEL_PHONE });
       // Awaited (not fire-and-forget): this row is what the admin savings counter counts.
       try { await insertAuditLog({ tenant_id: ctx.tenant_id, actor_user_id: ctx.id, actor_name: ctx.name, actor_role: ctx.role, action: 'labels.print', entity: null, entity_id: null, summary: `Printed ${labels.length * 2} label(s) (${labels.length} × 2) — ${title}`, details: null }); } catch (e: any) { console.warn('[audit]', e?.message ?? e); }
       const fname = ('Etykiety ' + (String(b.order ?? '').trim() || 'labels')).replace(/[^\w .-]/g, '_');
@@ -4359,6 +4370,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <div class="porow" style="gap:18px">
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="lbl_logo" checked> WEM logo</label>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="lbl_company" checked> Company details</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px" title="Printed under the company details on every label. Saved as the default for everyone.">Phone <input class="tinput" id="lbl_phone" style="width:150px;padding:4px 8px" placeholder="+48 510 744 727"></label>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px">Skip first <input type="number" id="lbl_skip" class="tinput" min="0" max="3" value="0" style="width:64px"> rows on the sheet</label>
           </div>
         </div>
@@ -9289,7 +9301,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function initLabels(){
     loadLabelStats();
+    var ph=document.getElementById('lbl_phone');
+    api('/api/labels/settings').then(function(r){ return r.json(); }).then(function(d){ if(d&&d.formatted!=null&&document.activeElement!==ph)ph.value=d.formatted; }).catch(function(){});
     var fin=document.getElementById('lbl_file'); if(fin.dataset.ready)return; fin.dataset.ready='1';
+    ph.onchange=async function(){ try{ var r=await api('/api/labels/settings',{method:'PUT',body:JSON.stringify({phone:ph.value})}); var d=await r.json(); if(!r.ok)throw new Error(d.error); ph.value=d.formatted; tShow('Phone saved — used on every label'); }catch(e){ tShow(e.message||'Could not save'); } };
     fin.onchange=labelsRead;
     document.getElementById('lbl_all').onchange=function(){ var on=this.checked; LBL_ROWS.forEach(function(r){r.on=on;}); renderLabelRows(); };
     document.getElementById('lbl_go').onclick=labelsDownload;

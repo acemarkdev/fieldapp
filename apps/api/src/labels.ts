@@ -100,7 +100,7 @@ export async function parseLabelPdf(bytes: Uint8Array): Promise<LabelSpec> {
 export interface LabelItem { w: number | string; h: number | string; ref: string; kind?: 'hardware'; }
 // Each label is printed twice, side by side: the label in the left column and its copy in the right,
 // so one sheet row = one piece. `skipRows` leaves already-used rows at the top of the sheet empty.
-export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: boolean; company: boolean; skipRows?: number; }
+export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: boolean; company: boolean; skipRows?: number; phone?: string; }
 
 const MM = 72 / 25.4;
 const PAGE_W = 210 * MM, PAGE_H = 297 * MM;
@@ -111,7 +111,15 @@ export const LABEL_W_MM = 103, LABEL_H_MM = 72, SAFE_MM = 5;
 const COLS = 2, ROWS = 4, CELL_W = LABEL_W_MM * MM, CELL_H = LABEL_H_MM * MM;
 const OFF_X = (PAGE_W - COLS * CELL_W) / 2, OFF_Y = (PAGE_H - ROWS * CELL_H) / 2;
 const PAD = SAFE_MM * MM;
-const COMPANY = ['Ul. Koźmińska 10', '63-440 Raszków', 'NIP: PL6222839864', 'Email: biuro@wemokna.pl', 'Tel. +48 690 126 185'];
+const COMPANY = ['Ul. Koźmińska 10', '63-440 Raszków', 'NIP: PL6222839864', 'Email: biuro@wemokna.pl'];
+/** The phone printed under the company details — a setting on the Labels page (config key label_phone). */
+export const DEFAULT_LABEL_PHONE = '+48 510 744 727';
+/** "510744727" / "+48510744727" / "0048 510 744 727" → "+48 510 744 727"; anything else is kept as typed. */
+export function formatLabelPhone(v: unknown): string {
+  const raw = String(v ?? '').trim(), d = raw.replace(/[^0-9+]/g, '').replace(/^00/, '+');
+  const m = /^(?:\+?48)?(\d{9})$/.exec(d);
+  return m ? `+48 ${m[1].slice(0, 3)} ${m[1].slice(3, 6)} ${m[1].slice(6)}` : raw.slice(0, 30);
+}
 
 export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -142,7 +150,8 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
       if (opts.company) {
         const cx = x + (logo ? 19 * MM : 0), lh = 3.9 * MM;
         doc.font('B').fontSize(10).fillColor('#000').text('WEM Sp. z o.o.', cx, top, { lineBreak: false });
-        COMPANY.forEach((t, j) => doc.font('R').fontSize(9.5).text(t, cx, top + lh * (j + 1), { lineBreak: false }));
+        const phone = formatLabelPhone(opts.phone ?? DEFAULT_LABEL_PHONE);
+        [...COMPANY, ...(phone ? ['Tel. ' + phone] : [])].forEach((t, j) => doc.font('R').fontSize(9.5).text(t, cx, top + lh * (j + 1), { lineBreak: false }));
       }
 
       let y = y0 + (header ? 30 : 20) * MM;
