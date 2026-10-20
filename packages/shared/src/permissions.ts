@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager' | 'production_lead';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager', production_lead: 'Production team leader',
 };
 
 export type Capability =
@@ -38,7 +38,8 @@ export type Capability =
   | 'sales.orders'     // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
   | 'expenses.report'  // report an extra installation cost (allowance, fitting bonus…) against a sales order
   | 'time.log'         // production: start / stop a task in the phone app
-  | 'time.manage'      // production: import tasks, correct time entries, set worker rates, export
+  | 'time.manage'      // production: import tasks, correct time entries, export (hours)
+  | 'time.rates'       // production: see and set worker rates and the zł amounts of logged time
   | 'stock.view';      // Production ▸ Cortizo profiles: the catalogue references with their Subiekt stock
 
 export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = [
@@ -68,7 +69,8 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'finops.manage', label: 'Manage Fin&Ops', desc: 'Accept edited invoices as the new trusted record' },
   { key: 'expenses.report', label: 'Report costs', desc: 'Report an extra installation cost against a sales order; sees only own reports' },
   { key: 'time.log', label: 'Log production time', desc: 'Start and stop production tasks in the phone app' },
-  { key: 'time.manage', label: 'Manage production time', desc: 'Import tasks, correct time entries, set worker rates, export' },
+  { key: 'time.manage', label: 'Manage production time', desc: 'Import tasks, correct time entries, export the hours' },
+  { key: 'time.rates', label: 'Production rates', desc: 'See and set worker rates and the zł amounts of logged time' },
   { key: 'sales.orders', label: 'Sales orders', desc: 'Sales orders register and commission; a Sales rep sees only their own orders' },
   { key: 'stock.view', label: 'Cortizo profiles & stock', desc: 'Cortizo catalogue references with sketches and their stock in Subiekt' },
 ];
@@ -93,7 +95,10 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   acemark_fitter: ['expenses.report'],
   // Production time: workers log time in the phone app; the manager runs the office pages only.
   production: ['time.log'],
-  production_manager: ['time.manage', 'stock.view', 'time.log'],   // time.log: also logs own time in the phone app
+  production_manager: ['time.manage', 'time.rates', 'stock.view', 'time.log'],   // time.log: also logs own time in the phone app
+  // A team leader among the production workers: logs own time on the phone and runs the Production time
+  // pages (tasks, entries) — but never sees rates or zł amounts (the server leaves them out).
+  production_lead: ['time.manage', 'time.log'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

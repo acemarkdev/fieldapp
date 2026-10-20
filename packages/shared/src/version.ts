@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.36.0';
+export const APP_VERSION = '1.37.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.37.0', date: '2026-10-21', changes: [
+    'New role: Production team leader. Logs own time in the phone app like a production worker, and runs Production time in the office app \u2014 tasks (import, add, close, reopen) and everyone\u2019s time entries (correct, add, delete, export the hours) \u2014 but never sees rates or z\u0142 amounts: no Workers and rates tab, no amount column or total, rate and amount empty in the export; the server leaves the rates out of what it sends.',
+    'Rates are now their own permission (Production rates): production manager and admin keep everything as before. Needs migrations 0088 then 0089, and the phone update so the team leader sees the time screen.',
+  ] },
   { version: '1.36.0', date: '2026-10-20', changes: [
     'Production time \u25b8 Time entries: a From \u2013 to date range instead of month + day (opens on today), with quick buttons Today, This week, This month, Last month. The export covers the chosen range.',
     'Phone app (over-the-air update for 0.75.2): today\u2019s entries in Ostatnie wpisy get clear Zmie\u0144 and Usu\u0144 buttons; Usu\u0144 deletes the worker\u2019s own entry after a confirmation (also from the edit window). Same rules as changing: own entries, today only; it shows in the change log. Needs migration 0087.',

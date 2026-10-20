@@ -114,7 +114,7 @@ export default function App() {
         </View>
       )}
       <View style={s.fill}>
-        {(role === 'production' || role === 'production_manager') ? <TimeScreen /> : !job
+        {(role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
               ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />

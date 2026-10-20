@@ -109,3 +109,12 @@ Fin&Ops request against the tabs that use it (`allowApp` in office.ts), and lets
 (production manager, logistics…) reach `/api/finops/` only when one of its tabs is on. Admin-only
 actions (import, delete, lock, accept edits) still need `finops.manage`. The operational apps (jobs,
 items, plans…) are not in this screen: they depend on database rules tied to the role.
+
+## Production team leader (v1.37.0)
+
+`production_lead` — a production worker who also runs the office **Production time** pages: tasks
+(import, add, close, reopen) and everyone's time entries (correct, add, delete; exported as hours).
+It never sees rates or zł amounts: `time.rates` (worker rates, the Workers and rates tab, amounts in
+the entries list and export) is a separate capability that only the production manager and admin
+have, and the server leaves rates out of what it sends to the role (not just hidden in the page).
+On the phone and in the database it is a production worker (migrations 0088–0089).

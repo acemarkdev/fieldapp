@@ -44,7 +44,7 @@ export function hasApp(role: string | null | undefined, apps: AppKey[], need: 'v
 /** Screen input → the stored overrides; a level equal to the default is not stored. */
 export function setOverride(cur: AppOverrides, role: unknown, app: unknown, level: unknown): { ok: true; overrides: AppOverrides } | { ok: false; error: string } {
   const r = String(role ?? ''), a = String(app ?? '') as AppKey, l = String(level ?? '') as AppLevel;
-  if (!isEditableRole(r) || !(['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager'] as Role[]).includes(r as Role)) return { ok: false, error: 'This role’s access cannot be changed.' };
+  if (!isEditableRole(r) || !(['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead'] as Role[]).includes(r as Role)) return { ok: false, error: 'This role’s access cannot be changed.' };
   if (!APPS.some((x) => x.key === a)) return { ok: false, error: 'Unknown app.' };
   if (!APP_LEVELS.includes(l)) return { ok: false, error: 'Choose off, view or edit.' };
   if (a === 'fin.stock' && l === 'edit') return { ok: false, error: 'Stock value can only be viewed.' };
