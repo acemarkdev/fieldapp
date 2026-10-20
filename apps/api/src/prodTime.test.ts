@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/prodTime.test.ts   (rows as in the real wejście / wyjście sheets)
-import { jobRefOf, taskFromRow, labourByJob, exportRow, hms, hoursBetween, timesChanged } from './prodTime';
+import { jobRefOf, taskFromRow, labourByJob, exportRow, hms, hoursBetween, timesChanged, rateBook, rateFor, rowOn, entryDay } from './prodTime';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -18,6 +18,20 @@ const z = lab.get('Z.394')!;
 ok('hours and cost per job, each worker at their rate', z.hours === 3.34 && z.cost === 156.89 && z.unrated === 0.45, z);
 ok('a running entry does not count yet', !lab.has('Z.395'));
 ok('entries after a job was locked do not count', labourByJob(entries, new Map(), 45, new Map([['Z.394', '2026-08-10T00:00:00Z']])).get('Z.394')!.hours === 0.45);
+
+// rates over time: an entry is priced at the rate valid on the day it started (Polish time)
+const book = rateBook([
+  { user_id: 'gk', rate: 50, valid_from: '2000-01-01' }, { user_id: 'gk', rate: 60, valid_from: '2026-08-18' },
+  { user_id: 'rc', rate: 40, valid_from: '2000-01-01' }, { user_id: 'rc', rate: null, valid_from: '2026-08-17' },
+  { user_id: null, rate: 45, valid_from: '2000-01-01' }, { user_id: null, rate: 55, valid_from: '2026-08-10' },
+]);
+ok('a rate change applies from its day on, earlier hours keep the old rate', rateFor(book, 99, 'gk', '2026-08-17T10:00:00Z').rate === 50 && rateFor(book, 99, 'gk', '2026-08-18T04:00:00Z').rate === 60);
+ok('the day is the Polish day: 23:30 UTC on the 17th is the 18th in Poland', entryDay('2026-08-17T23:30:00Z') === '2026-08-18' && rateFor(book, 99, 'gk', '2026-08-17T23:30:00Z').rate === 60);
+ok('rate removed → the default valid on that day, reported as not own', rateFor(book, 99, 'rc', '2026-08-17T04:00:18Z').rate === 55 && rateFor(book, 99, 'rc', '2026-08-17T04:00:18Z').own === null);
+ok('no own rate → the default on that day; before any default row → the current default', rateFor(book, 99, 'kt', '2026-08-04T04:18:15Z').rate === 45 && rateFor(rateBook([]), 99, 'kt', '2026-08-04T04:18:15Z').rate === 99);
+ok('rowOn picks the last row on or before the day', rowOn(book.workers.get('gk'), '2026-08-18')?.rate === 60 && rowOn(book.workers.get('gk'), '1999-01-01') === undefined);
+const lab2 = labourByJob(entries, book, 99).get('Z.394')!;
+ok('job labour with dated rates: gk 2.10 h × 60, rc 0.79 h × default 55, kt 0.45 h × default 45', lab2.cost === Math.round((hoursBetween('2026-08-18T04:43:23Z', '2026-08-18T06:49:26Z') * 60 + hoursBetween('2026-08-17T04:00:18Z', '2026-08-17T04:47:23Z') * 55 + hoursBetween('2026-08-04T04:18:15Z', '2026-08-04T04:45:32Z') * 45) * 100) / 100 && lab2.unrated === 1.24, lab2);
 
 ok('h:m:s', hms(0.21027) === '00:12:37' && hms(2.1) === '02:06:00' && hoursBetween('2026-08-18T04:43:23Z', '2026-08-18T06:49:26Z').toFixed(2) === '2.10');
 const row = exportRow({ task_name: 'Z_394_pakowanie', user_name: 'G.kozlowski', user_email: 'g@x.pl', note: null, started_at: '2026-08-19T07:31:46Z', ended_at: '2026-08-19T07:44:23Z', created_at: '2026-08-19T07:44:23Z' }, 50);

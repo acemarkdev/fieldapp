@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.34.2';
+export const APP_VERSION = '1.35.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.35.0', date: '2026-10-20', changes: [
+    'Production time \u25b8 Workers and rates: a rate now has a valid-from date (today by default, can be earlier). Every time entry is priced at the worker\u2019s rate valid on the day it was started, so changing a rate no longer re-prices hours already reported \u2014 in Job costs, the entries list and the export. Each worker shows their rate history; a mistaken change can be removed (the earlier rate applies again).',
+    'The default labour rate in Job costs works the same way: a change applies to hours logged from today; earlier hours keep the old default. Needs migration 0086 (it copies today\u2019s rates in as valid since the start, so current figures do not move).',
+  ] },
   { version: '1.34.2', date: '2026-10-20', changes: [
     'Sign-in page: the email box no longer comes pre-filled with a fixed address (left over from the first version); it starts empty, and the browser can still offer your own saved login.',
   ] },
