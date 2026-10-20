@@ -12,5 +12,7 @@ const eas = JSON.parse(readFileSync(new URL('../eas.json', import.meta.url)));
 const p = eas.build[profile];
 const env = { ...process.env, ...p.env };
 console.log(`Publishing to channel "${p.channel}" with ${p.env.EXPO_PUBLIC_SUPABASE_URL}`);
-const r = spawnSync('npx', ['eas-cli', 'update', '--channel', p.channel, '--message', message, '--non-interactive'], { stdio: 'inherit', env });
+// --environment is required by eas-cli in non-interactive mode; the database address and key still come from
+// eas.json above (process env), the EAS environment only adds variables set on expo.dev (none for this app).
+const r = spawnSync('npx', ['eas-cli', 'update', '--channel', p.channel, '--environment', profile, '--message', message, '--non-interactive'], { stdio: 'inherit', env });
 process.exit(r.status ?? 1);
