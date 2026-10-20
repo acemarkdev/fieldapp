@@ -141,14 +141,14 @@ export default function TimeScreen() {
                 <Text style={s.muted}>{new Date(e.started_at).toLocaleDateString('pl-PL')} {fmtT(e.started_at)}–{e.ended_at ? fmtT(e.ended_at) : 'trwa'}{e.ended_at ? ` · ${clock(Date.parse(e.ended_at) - Date.parse(e.started_at))}` : ''}</Text>
                 {!!e.note && <Text style={s.note} numberOfLines={2}>„{e.note}”</Text>}
               </View>
-              {can ? (
-                <View style={{ flexDirection: 'row', gap: 6, paddingLeft: 8 }}>
-                  <TouchableOpacity style={s.eBtn} onPress={() => setEditing(e)}><Text style={s.eBtnT}>Zmień</Text></TouchableOpacity>
-                  <TouchableOpacity style={[s.eBtn, s.eDel]} onPress={() => removeEntry(e)}><Text style={[s.eBtnT, { color: C.magenta }]}>Usuń</Text></TouchableOpacity>
-                </View>
-              ) : t && running?.task_id !== t.id ? (
-                <TouchableOpacity style={[s.start, { marginLeft: 8, paddingHorizontal: 12 }]} onPress={() => start(t)} disabled={busy} activeOpacity={0.85}><Text style={[s.startT, { fontSize: 14 }]}>Kontynuuj</Text></TouchableOpacity>
-              ) : <Text style={[s.edit, { color: C.muted }]}>🔒</Text>}
+              {/* Today: change (delete is inside the edit window) + start the same task again. Earlier days: start again only. */}
+              <View style={{ flexDirection: 'row', gap: 6, paddingLeft: 8, alignItems: 'center' }}>
+                {can && <TouchableOpacity style={s.eBtn} onPress={() => setEditing(e)}><Text style={s.eBtnT}>Zmień</Text></TouchableOpacity>}
+                {t && running?.task_id !== t.id
+                  ? <TouchableOpacity style={[s.start, { paddingHorizontal: 12, paddingVertical: 7 }]} onPress={() => start(t)} disabled={busy} activeOpacity={0.85}><Text style={[s.startT, { fontSize: 14 }]}>▶ Start</Text></TouchableOpacity>
+                  : running?.task_id === t?.id && t ? <Text style={s.onT}>trwa</Text>
+                  : !can ? <Text style={[s.edit, { color: C.muted }]}>🔒</Text> : null}
+              </View>
             </TouchableOpacity>
           </View>);
         })}
@@ -260,7 +260,6 @@ const s = StyleSheet.create({
   tabT: { fontSize: 15, fontWeight: '700', color: C.muted },
   tabTOn: { color: C.purple, fontWeight: '800' },
   eBtn: { borderWidth: 1, borderColor: C.purple, borderRadius: 9, paddingVertical: 7, paddingHorizontal: 11 },
-  eDel: { borderColor: C.magenta },
   eBtnT: { color: C.purple, fontWeight: '800', fontSize: 13 },
   delLink: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
   delLinkT: { color: C.magenta, fontWeight: '800', fontSize: 15 },
