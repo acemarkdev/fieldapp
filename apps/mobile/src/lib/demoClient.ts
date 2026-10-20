@@ -146,6 +146,18 @@ export function demoRpc(name: string, a: any): Result {
     return { data: id, error: null };
   }
   if (name === 'prod_stop') { stopRunning(); return { data: 1, error: null }; }
+  // Warehouse issues (demo): the demo user's open issues, a tiny stock list, open jobs.
+  const issues: Row[] = db.wh_issues ?? (db.wh_issues = []);
+  const stock = [{ symbol: 'COR-80-RAMA', name: 'Profil Cortizo 80 rama', unit: 'szt', stock: 120 }, { symbol: 'USZ-12', name: 'Uszczelka EPDM 12 mm', unit: 'm', stock: 850 }, { symbol: 'KAT-90', name: 'Kątownik 90°', unit: 'szt', stock: 64 }];
+  if (name === 'wh_items') { const q = String(a.p_query ?? '').toUpperCase(); return { data: q.length < 2 ? [] : stock.filter((x) => x.symbol.startsWith(q) || x.name.toUpperCase().includes(q)), error: null }; }
+  if (name === 'wh_jobs') return { data: ['Z.437', 'Z.440', 'Z.445', 'Z.450'].map((job_ref) => ({ job_ref })), error: null };
+  if (name === 'wh_save_issue') {
+    const it = stock.find((x) => x.symbol === String(a.p_symbol).toUpperCase());
+    const row = { job_ref: a.p_job, symbol: String(a.p_symbol).toUpperCase(), name: it?.name ?? null, unit: it?.unit ?? null, qty: a.p_qty, location: a.p_location || null, box: a.p_box || null, note: a.p_note || null };
+    if (a.p_id) { const e = issues.find((x) => x.id === a.p_id); if (!e) return { data: null, error: { message: 'Issue not found.' } }; Object.assign(e, row); return { data: e.id, error: null }; }
+    const id = 'wh-' + Math.random().toString(36).slice(2); issues.unshift({ id, user_id: me, created_at: now, exported_at: null, ...row }); return { data: id, error: null };
+  }
+  if (name === 'wh_delete_issue') { const i = issues.findIndex((x) => x.id === a.p_id); if (i >= 0) issues.splice(i, 1); return { data: null, error: null }; }
   if (name === 'prod_delete_entry') {
     const i = entries.findIndex((x) => x.id === a.p_entry);
     if (i < 0) return { data: null, error: { message: 'Entry not found.' } };

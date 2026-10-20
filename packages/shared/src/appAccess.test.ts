@@ -17,5 +17,7 @@ ok('back to the default → nothing stored', s.ok && !s.overrides.production_man
 ok('refused: admin, customer, unknown app/level, editing stock', !setOverride({}, 'admin', 'fin.jobs', 'off').ok && !setOverride({}, 'customer', 'fin.jobs', 'view').ok && !setOverride({}, 'office', 'fin.x', 'view').ok && !setOverride({}, 'office', 'fin.jobs', 'all').ok && !setOverride({}, 'office', 'fin.stock', 'edit').ok);
 ok('stock is never edit', appLevel('office', 'fin.stock', { office: { 'fin.stock': 'edit' } }) === 'view' && defaultAppLevel('admin', 'fin.stock') === 'edit');
 
+ok('warehouse issues: finance edits by default, others off, admin edit', appLevel('acemark_finance', 'wh.issues') === 'edit' && appLevel('warehouse', 'wh.issues') === 'off' && appLevel('production_manager', 'wh.issues') === 'off' && appLevel('admin', 'wh.issues') === 'edit');
+
 if (fail) { console.error(fail + ' check(s) failed'); process.exit(1); }
 console.log('appAccess: all checks passed');

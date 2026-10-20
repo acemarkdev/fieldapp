@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.37.0';
+export const APP_VERSION = '1.38.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.38.0', date: '2026-10-21', changes: [
+    'New: Warehouse issues (replaces the Wydania Power App). New role Warehouse: in the FitAWindow phone app (0.76.0) a Wydania tab \u2014 the Z order, the Subiekt item symbol (scan the QR code or type it; name, unit and stock from the Subiekt stock list), quantity, location (scan or type), box and a note \u2014 and the production time log. Workers see and correct only their own issues until they are exported.',
+    'Office \u25b8 Production \u25b8 Warehouse issues: filter by status, Z order, person and dates, select and Export to Excel for the RW in Subiekt \u2014 one sheet per Z order (Symbol, Name, Quantity, Unit; the same symbol added up) and a sheet with every issue. Exported issues get an export number and leave the phones; an export can be downloaded again, and an admin can undo it. Open issues can be corrected or deleted. Access per role in Admin \u25b8 Roles (finance edits by default). Needs migrations 0090 then 0091.',
+  ] },
   { version: '1.37.0', date: '2026-10-21', changes: [
     'New role: Production team leader. Logs own time in the phone app like a production worker, and runs Production time in the office app \u2014 tasks (import, add, close, reopen) and everyone\u2019s time entries (correct, add, delete, export the hours) \u2014 but never sees rates or z\u0142 amounts: no Workers and rates tab, no amount column or total, rate and amount empty in the export; the server leaves the rates out of what it sends.',
     'Rates are now their own permission (Production rates): production manager and admin keep everything as before. Needs migrations 0088 then 0089, and the phone update so the team leader sees the time screen.',

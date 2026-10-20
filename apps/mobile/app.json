@@ -2,7 +2,7 @@
   "expo": {
     "name": "FitAWindow",
     "slug": "ace-field",
-    "version": "0.75.2",
+    "version": "0.76.0",
     "orientation": "portrait",
     "scheme": "acefield",
     "userInterfaceStyle": "light",
@@ -44,7 +44,8 @@
         "expo-image-picker",
         {
           "photosPermission": "FitAWindow needs access to your photos to attach survey images.",
-          "cameraPermission": "FitAWindow needs the camera to take survey photos."
+          "cameraPermission": "FitAWindow needs the camera to take survey photos and to scan item and location codes in the warehouse.",
+          "microphonePermission": false
         }
       ],
       [
@@ -53,6 +54,14 @@
           "android": {
             "enableMinifyInReleaseBuilds": true
           }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "FitAWindow needs the camera to take survey photos and to scan item and location codes in the warehouse.",
+          "recordAudioAndroid": false,
+          "microphonePermission": false
         }
       ]
     ],

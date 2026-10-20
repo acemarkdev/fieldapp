@@ -19,11 +19,12 @@ import MappingJobsScreen from './src/screens/MappingJobsScreen';
 import MappingStepperScreen from './src/screens/MappingStepperScreen';
 import ScheduleScreen from './src/screens/ScheduleScreen';
 import TimeScreen from './src/screens/TimeScreen';
+import WarehouseScreen from './src/screens/WarehouseScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
 import { can, isFitter } from './src/lib/permissions';
 
-const DEMO_ROLES: [string, string][] = [['office', 'Office'], ['surveyor', 'Surveyor'], ['fitter', 'Fitter'], ['production', 'Production']];
+const DEMO_ROLES: [string, string][] = [['office', 'Office'], ['surveyor', 'Surveyor'], ['fitter', 'Fitter'], ['production', 'Production'], ['warehouse', 'Warehouse']];
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -114,7 +115,7 @@ export default function App() {
         </View>
       )}
       <View style={s.fill}>
-        {(role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
+        {role === 'warehouse' ? <WarehouseScreen /> : (role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
               ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />

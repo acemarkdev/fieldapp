@@ -6,7 +6,7 @@
 // plans…) depend on database rules tied to the role and stay fixed in the matrix.
 import { can, type Role } from './permissions';
 
-export type AppKey = 'fin.performance' | 'fin.costs' | 'fin.jobs' | 'fin.sales' | 'fin.payroll' | 'fin.stock';
+export type AppKey = 'fin.performance' | 'fin.costs' | 'fin.jobs' | 'fin.sales' | 'fin.payroll' | 'fin.stock' | 'wh.issues';
 export type AppLevel = 'off' | 'view' | 'edit';
 export const APP_LEVELS: AppLevel[] = ['off', 'view', 'edit'];
 export const APPS: { key: AppKey; label: string; group: string; desc: string }[] = [
@@ -16,6 +16,7 @@ export const APPS: { key: AppKey; label: string; group: string; desc: string }[]
   { key: 'fin.sales', label: 'Sales', group: 'Fin&Ops', desc: 'Sales invoices per job, Subiekt to-check list; edit = invoices' },
   { key: 'fin.payroll', label: 'Payroll', group: 'Fin&Ops', desc: 'Salaries and taxes per department, people on the payroll list; edit = load files, lump sums' },
   { key: 'fin.stock', label: 'Stock value', group: 'Fin&Ops', desc: 'Stock value and ageing from Subiekt (view only)' },
+  { key: 'wh.issues', label: 'Warehouse issues', group: 'Warehouse', desc: 'What the warehouse issued per Z order (logged on the phone); edit = correct, export to Excel for the RW' },
 ];
 /** Roles whose app access can be set on the screen. */
 export const isEditableRole = (role: string) => role !== 'admin' && role !== 'customer';
@@ -44,7 +45,7 @@ export function hasApp(role: string | null | undefined, apps: AppKey[], need: 'v
 /** Screen input → the stored overrides; a level equal to the default is not stored. */
 export function setOverride(cur: AppOverrides, role: unknown, app: unknown, level: unknown): { ok: true; overrides: AppOverrides } | { ok: false; error: string } {
   const r = String(role ?? ''), a = String(app ?? '') as AppKey, l = String(level ?? '') as AppLevel;
-  if (!isEditableRole(r) || !(['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead'] as Role[]).includes(r as Role)) return { ok: false, error: 'This role’s access cannot be changed.' };
+  if (!isEditableRole(r) || !(['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse'] as Role[]).includes(r as Role)) return { ok: false, error: 'This role’s access cannot be changed.' };
   if (!APPS.some((x) => x.key === a)) return { ok: false, error: 'Unknown app.' };
   if (!APP_LEVELS.includes(l)) return { ok: false, error: 'Choose off, view or edit.' };
   if (a === 'fin.stock' && l === 'edit') return { ok: false, error: 'Stock value can only be viewed.' };

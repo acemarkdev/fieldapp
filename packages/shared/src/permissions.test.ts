@@ -48,6 +48,7 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   for (const c of CAPABILITIES) ok(`production ${c.key}`, can('production', c.key) === (c.key === 'time.log'));
   for (const c of CAPABILITIES) ok(`production_manager ${c.key}`, can('production_manager', c.key) === (c.key === 'time.manage' || c.key === 'time.rates' || c.key === 'stock.view' || c.key === 'time.log'));
   for (const c of CAPABILITIES) ok(`production_lead ${c.key}`, can('production_lead', c.key) === (c.key === 'time.manage' || c.key === 'time.log'));
+  for (const c of CAPABILITIES) ok(`warehouse ${c.key}`, can('warehouse', c.key) === (c.key === 'time.log'));
   // --- acemark_fitter: the cost reports form and nothing else ---
   for (const c of CAPABILITIES) ok(`acemark_fitter ${c.key} === ${c.key === 'expenses.report'}`, can('acemark_fitter', c.key) === (c.key === 'expenses.report'));
   for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics'] as const) ok(`${r} lacks sales.orders`, can(r, 'sales.orders') === false);

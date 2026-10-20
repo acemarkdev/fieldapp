@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager' | 'production_lead';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager' | 'production_lead' | 'warehouse';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager', production_lead: 'Production team leader',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager', production_lead: 'Production team leader', warehouse: 'Warehouse',
 };
 
 export type Capability =
@@ -99,6 +99,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   // A team leader among the production workers: logs own time on the phone and runs the Production time
   // pages (tasks, entries) — but never sees rates or zł amounts (the server leaves them out).
   production_lead: ['time.manage', 'time.log'],
+  // Warehouse: logs issues for Z orders on the phone (Wydania) and own production time — no office pages.
+  warehouse: ['time.log'],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone
