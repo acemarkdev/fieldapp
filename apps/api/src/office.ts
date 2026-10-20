@@ -3800,8 +3800,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body>
 <div id="loginView" class="login"><div class="card">
   <h1>ACE<b>GROUP</b></h1><p>Office web app — sign in</p>
-  <label>Email</label><input id="email" type="email" value="milosz@acegroup-uk.com">
-  <label>Password</label><input id="password" type="password">
+  <label>Email</label><input id="email" type="email" autocomplete="username" placeholder="name@company.com">
+  <label>Password</label><input id="password" type="password" autocomplete="current-password">
   <button onclick="login()">Sign in</button>
   <div id="ssoWrap" style="display:none">
     <div class="ordiv"><span>or</span></div>

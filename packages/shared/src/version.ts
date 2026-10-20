@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.34.1';
+export const APP_VERSION = '1.34.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.34.2', date: '2026-10-20', changes: [
+    'Sign-in page: the email box no longer comes pre-filled with a fixed address (left over from the first version); it starts empty, and the browser can still offer your own saved login.',
+  ] },
   { version: '1.34.1', date: '2026-10-20', changes: [
     'Logistics \u25b8 Labels: the phone under the company details is now a setting on the Labels page (next to Company details), saved as the default for everyone. New default: +48 510 744 727 (was +48 690 126 185).',
   ] },
