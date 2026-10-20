@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.33.0';
+export const APP_VERSION = '1.34.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.34.0', date: '2026-10-20', changes: [
+    'Admin \u25b8 Roles: App access. Each Fin&Ops tab (Performance, Costs, Job costs, Sales, Payroll, Stock value) can be set per role to off, view or edit \u2014 e.g. give Production managers Job costs to look at. Changes apply at once (people already signed in get them on reload); a changed setting is highlighted against the role\u2019s standard access.',
+    'View means look only: the tab opens with no new / import / load buttons, no typing in the grids and job or invoice windows locked; the server refuses any change. Someone with Performance but not Payroll sees the department totals there, not the names on the payroll list.',
+  ] },
   { version: '1.33.0', date: '2026-10-19', changes: [
     'Fin&Ops \u25b8 Payroll: Load accountant\u2019s files. Choose the month\u2019s three PDFs (payroll list, ZUS transfer, PIT-4 transfer); the app reads them, checks the people add up to the list\u2019s totals and that the PIT-4 period matches, and shows the split before anything is saved. Salaries = net to pay per group; taxes = ZUS + PIT-4 split by each group\u2019s share of gross pay. The month is then marked From the accountant\u2019s files and is not typed by hand.',
     'Every person on the list belongs to a group: Office, Sales, Production or Other (employed here but recharged elsewhere, e.g. to the UK \u2014 left out of Payroll). New names are asked for when loading; the People on the payroll list table below the months changes groups for the next load.',

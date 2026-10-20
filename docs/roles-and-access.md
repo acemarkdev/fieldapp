@@ -98,3 +98,14 @@ The budget & customer-pricing module is deliberately isolated so **only `admin` 
   - `npx tsx apps/api/src/financeGuards.test.ts` — static audit: every finance route in `office.ts` has a finance guard, and the mobile app never queries a finance table. (A future refactor that drops a guard fails this.)
 - **Database:** run `supabase/tests/finance_rls_check.sql` in the SQL editor — it raises if RLS is off or a policy is missing on any finance table, and prints the policies.
 - **Manual:** sign into the office as an `office` user → the **Budget** tab is absent; their token calling `GET /api/pricing-rules` returns `403`.
+
+## App access (Admin ▸ Roles, v1.34.0)
+
+On top of the capability matrix, each Fin&Ops tab (Performance, Costs, Job costs, Sales, Payroll,
+Stock value) can be set per role to **off**, **view** or **edit** on Admin ▸ Roles. The setting is stored
+in `server_config` (`role_app_access`); with nothing set, a role gets what its capabilities give it
+(`finops.view` → every tab, edit). Rules: `packages/shared/src/appAccess.ts`. The server checks every
+Fin&Ops request against the tabs that use it (`allowApp` in office.ts), and lets a menu-only role
+(production manager, logistics…) reach `/api/finops/` only when one of its tabs is on. Admin-only
+actions (import, delete, lock, accept edits) still need `finops.manage`. The operational apps (jobs,
+items, plans…) are not in this screen: they depend on database rules tied to the role.

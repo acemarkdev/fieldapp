@@ -8,3 +8,4 @@ export * from './import';
 export * from './mapping';
 export * from './signoff';
 export * from './spec';
+export * from './appAccess';
