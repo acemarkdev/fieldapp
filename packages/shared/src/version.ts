@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.35.1';
+export const APP_VERSION = '1.36.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.36.0', date: '2026-10-20', changes: [
+    'Production time \u25b8 Time entries: a From \u2013 to date range instead of month + day (opens on today), with quick buttons Today, This week, This month, Last month. The export covers the chosen range.',
+    'Phone app (over-the-air update for 0.75.2): today\u2019s entries in Ostatnie wpisy get clear Zmie\u0144 and Usu\u0144 buttons; Usu\u0144 deletes the worker\u2019s own entry after a confirmation (also from the edit window). Same rules as changing: own entries, today only; it shows in the change log. Needs migration 0087.',
+  ] },
   { version: '1.35.1', date: '2026-10-20', changes: [
     'Production time \u25b8 Time entries: opens on today (current month + today\u2019s date). A date box picks any day (switching the month if needed); Whole month and Today buttons next to it.',
     'Production time \u25b8 Tasks: a large Select all shown button above the list (Clear selection when all are ticked).',

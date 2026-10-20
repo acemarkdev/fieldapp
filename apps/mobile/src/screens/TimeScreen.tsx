@@ -48,6 +48,13 @@ export default function TimeScreen() {
   const recent = recentTasks(entries, tasks, 6);
   const groups = groupTasks(tasks, query);
   const today = hoursToday(entries, new Date(now));
+  // Delete one of today's own entries (prod_delete_entry checks the same on the server and logs it).
+  const removeEntry = (e: TimeEntry) => Alert.alert('Usunąć wpis?',
+    `${e.task_name ?? ''}\n${fmtT(e.started_at)}–${e.ended_at ? fmtT(e.ended_at) : 'trwa'}${e.ended_at ? '' : '\nZadanie zostanie zatrzymane i usunięte.'}`,
+    [{ text: 'Anuluj', style: 'cancel' }, { text: 'Usuń', style: 'destructive', onPress: async () => {
+      const ok = await act(() => supabase.rpc('prod_delete_entry', { p_entry: e.id }));
+      if (ok) setEditing(null);
+    } }]);
   const fmtT = (iso: string) => hhmm(new Date(iso));
 
   // a plain function, not a component: the clock re-renders every second and must not remount the rows
@@ -112,13 +119,19 @@ export default function TimeScreen() {
                 <Text style={s.muted}>{new Date(e.started_at).toLocaleDateString('pl-PL')} {fmtT(e.started_at)}–{e.ended_at ? fmtT(e.ended_at) : 'trwa'}{e.ended_at ? ` · ${clock(Date.parse(e.ended_at) - Date.parse(e.started_at))}` : ''}</Text>
                 {!!e.note && <Text style={s.note} numberOfLines={2}>„{e.note}”</Text>}
               </View>
-              <Text style={[s.edit, !can && { color: C.muted }]}>{can ? 'zmień' : '🔒'}</Text>
+              {can ? (
+                <View style={{ flexDirection: 'row', gap: 6, paddingLeft: 8 }}>
+                  <TouchableOpacity style={s.eBtn} onPress={() => setEditing(e)}><Text style={s.eBtnT}>Zmień</Text></TouchableOpacity>
+                  <TouchableOpacity style={[s.eBtn, s.eDel]} onPress={() => removeEntry(e)}><Text style={[s.eBtnT, { color: C.magenta }]}>Usuń</Text></TouchableOpacity>
+                </View>
+              ) : <Text style={[s.edit, { color: C.muted }]}>🔒</Text>}
             </TouchableOpacity>
           );
         })}
       </ScrollView>
       {editing && <EditEntry entry={editing} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskLabel(t) : editing.task_name ?? ''; })()}
         onClose={() => setEditing(null)}
+        onDelete={() => editing && removeEntry(editing)}
         onSave={async (startD, endD, note) => {
           const ok = await act(() => supabase.rpc('prod_edit_entry', { p_entry: editing.id, p_start: startD.toISOString(), p_end: endD ? endD.toISOString() : null, p_note: note }));
           if (ok) setEditing(null);
@@ -161,7 +174,7 @@ function TimeField({ title, d, text, setD, setText }: { title: string; d: Date; 
   );
 }
 
-function EditEntry({ entry, label, onClose, onSave }: { entry: TimeEntry; label: string; onClose: () => void; onSave: (start: Date, end: Date | null, note: string) => void }) {
+function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; onClose: () => void; onSave: (start: Date, end: Date | null, note: string) => void; onDelete: () => void }) {
   const running = !entry.ended_at;
   const [start, setStart] = useState(new Date(entry.started_at));
   const [end, setEnd] = useState<Date | null>(entry.ended_at ? new Date(entry.ended_at) : null);
@@ -185,6 +198,7 @@ function EditEntry({ entry, label, onClose, onSave }: { entry: TimeEntry; label:
             <TouchableOpacity style={[s.btn, { backgroundColor: C.soft }]} onPress={onClose}><Text style={[s.btnT, { color: C.ink }]}>Anuluj</Text></TouchableOpacity>
             <TouchableOpacity style={[s.btn, !!problem && { opacity: 0.4 }]} disabled={!!problem} onPress={() => onSave(start, running ? null : end, note.trim())}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
           </View>
+          <TouchableOpacity style={s.delLink} onPress={onDelete}><Text style={s.delLinkT}>Usuń ten wpis</Text></TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -214,6 +228,11 @@ const s = StyleSheet.create({
   entryT: { fontSize: 14, color: C.ink, fontWeight: '600' },
   note: { fontSize: 12, color: C.ink, fontStyle: 'italic', marginTop: 2 },
   edit: { color: C.purple, fontWeight: '800', paddingLeft: 10 },
+  eBtn: { borderWidth: 1, borderColor: C.purple, borderRadius: 9, paddingVertical: 7, paddingHorizontal: 11 },
+  eDel: { borderColor: C.magenta },
+  eBtnT: { color: C.purple, fontWeight: '800', fontSize: 13 },
+  delLink: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
+  delLinkT: { color: C.magenta, fontWeight: '800', fontSize: 15 },
   sheetWrap: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
   sheet: { backgroundColor: C.white, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 18, paddingBottom: 30 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },

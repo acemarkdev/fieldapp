@@ -146,6 +146,12 @@ export function demoRpc(name: string, a: any): Result {
     return { data: id, error: null };
   }
   if (name === 'prod_stop') { stopRunning(); return { data: 1, error: null }; }
+  if (name === 'prod_delete_entry') {
+    const i = entries.findIndex((x) => x.id === a.p_entry);
+    if (i < 0) return { data: null, error: { message: 'Entry not found.' } };
+    entries.splice(i, 1);
+    return { data: null, error: null };
+  }
   if (name === 'prod_edit_entry') {
     const e = entries.find((x) => x.id === a.p_entry);
     if (!e) return { data: null, error: { message: 'Entry not found.' } };
