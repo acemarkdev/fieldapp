@@ -4750,7 +4750,21 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function mfSet(hostId,v,on){ var m=MF[hostId]; if(!m)return; var i=m.state.indexOf(v); if(on&&i<0)m.state.push(v); else if(!on&&i>=0)m.state.splice(i,1); mfBtn(hostId); renderItems(); }
   function mfClear(hostId){ var m=MF[hostId]; if(!m)return; m.state=[]; var host=document.getElementById(hostId); Array.prototype.forEach.call(host.querySelectorAll('input[type=checkbox]'),function(cb){cb.checked=false;}); mfBtn(hostId); renderItems(); }
-  function mfToggle(hostId,e){ if(e)e.stopPropagation(); var pop=document.getElementById('pop_'+hostId); if(!pop)return; var open=pop.classList.contains('open'); document.querySelectorAll('.mfpop.open').forEach(function(p){p.classList.remove('open');}); if(!open)pop.classList.add('open'); }
+  // The list floats over the page at the button (position:fixed), so the table's scroll box cannot crop it when
+  // only a few rows are shown; it opens upwards when there is more room above, and closes on scroll / resize.
+  function mfToggle(hostId,e){ if(e)e.stopPropagation(); var pop=document.getElementById('pop_'+hostId); if(!pop)return; var open=pop.classList.contains('open'); mfCloseAll(); if(open)return;
+    var btn=document.querySelector('#'+hostId+' .mfbtn'), r=btn.getBoundingClientRect(), vw=window.innerWidth, vh=window.innerHeight;
+    pop.style.position='fixed'; pop.style.visibility='hidden'; pop.classList.add('open');
+    var below=vh-r.bottom-12, above=r.top-12, up=below<180&&above>below, room=Math.max(120,Math.min(320,up?above:below));
+    pop.style.maxHeight=room+'px';
+    var w=pop.offsetWidth, h=pop.offsetHeight;
+    pop.style.left=Math.max(8,Math.min(r.left,vw-w-8))+'px';
+    pop.style.top=(up?Math.max(8,r.top-3-h):r.bottom+3)+'px';
+    pop.style.visibility='';
+  }
+  function mfCloseAll(){ document.querySelectorAll('.mfpop.open').forEach(function(p){ p.classList.remove('open'); }); }
+  window.addEventListener('resize',mfCloseAll);
+  window.addEventListener('scroll',function(e){ var t=e.target; if(t&&t.classList&&t.classList.contains('mfpop'))return; mfCloseAll(); },true);
   function mfMatch(hostId,val){ var m=MF[hostId]; if(!m||!m.state.length)return true; var v=(val==null||val==='')?'__none':String(val); return m.state.indexOf(v)>=0; }
   document.addEventListener('click',function(){ document.querySelectorAll('.mfpop.open').forEach(function(p){p.classList.remove('open');}); });
   // Deep link from a PO notification: /?po=<id>. Stash it so it survives login (incl. the SSO

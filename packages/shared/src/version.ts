@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.40.0';
+export const APP_VERSION = '1.40.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.40.1', date: '2026-10-21', changes: [
+    'Items: the column filter lists (Block, Elev, Flat, Floor, Room, Item, Stage, PO, Install status, Team) were cut off by the table when only a few rows were shown \u2014 they now open over the page in full (upwards when there is more room above) and close on scroll.',
+  ] },
   { version: '1.40.0', date: '2026-10-21', changes: [
     'Items \u25b8 job list (left): one more level \u2014 customer (name from the customer card, A\u2013Z, with its code and job count) \u2192 Live / Pending / Job done \u2192 job. Each level folds and stays folded in this browser; finished jobs start folded.',
   ] },
