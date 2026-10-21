@@ -1,5 +1,7 @@
-// Warehouse (role "warehouse"): two tabs — Wydania (what was issued from the warehouse for a Z order)
-// and Czas pracy (the production time screen). An issue: the Z order, the Subiekt item symbol (scan the
+// Warehouse (role "warehouse"): three tabs — Wydania (what was issued from the warehouse for a Z order),
+// Zwroty (what came back from production: the same form, booked as PW instead of RW) and Czas pracy
+// (the production time screen). A return shows how much of the symbol was issued to that Z and warns when
+// more comes back than went out (wh_balance). An issue: the Z order, the Subiekt item symbol (scan the
 // QR code or type it; suggestions and the name / unit / stock come from the Subiekt stock list), the
 // quantity, the location (scan or type), box and a note. The worker's own issues stay listed — and can
 // be changed or deleted — until the office exports them to Excel for the RW in Subiekt; then they
@@ -13,22 +15,23 @@ import TimeScreen from './TimeScreen';
 import { zRef, parseQty, formProblem, scanned, jobChoices, qtyLabel, type WhIssue, type WhItem, type WhForm } from '../lib/whLogic';
 
 export default function WarehouseScreen() {
-  const [tab, setTab] = useState<'issues' | 'time'>('issues');
+  const [tab, setTab] = useState<'issue' | 'return' | 'time'>('issue');
   return (
     <View style={s.fill}>
       <View style={[s.tabs, { marginHorizontal: 12, marginTop: 10 }]}>
-        {([['issues', 'Wydania'], ['time', 'Czas pracy']] as const).map(([k, l]) => (
+        {([['issue', 'Wydania'], ['return', 'Zwroty'], ['time', 'Czas pracy']] as const).map(([k, l]) => (
           <TouchableOpacity key={k} style={[s.tab, tab === k && s.tabOn]} onPress={() => setTab(k)} activeOpacity={0.8}><Text style={[s.tabT, tab === k && s.tabTOn]}>{l}</Text></TouchableOpacity>
         ))}
       </View>
-      {tab === 'issues' ? <Issues /> : <TimeScreen />}
+      {tab === 'time' ? <TimeScreen /> : <Issues key={tab} kind={tab} />}
     </View>
   );
 }
 
 const EMPTY: WhForm = { job: '', symbol: '', qty: '', location: '', box: '', note: '' };
 
-function Issues() {
+function Issues({ kind }: { kind: 'issue' | 'return' }) {
+  const ret = kind === 'return';
   const [mine, setMine] = useState<WhIssue[]>([]);
   const [jobs, setJobs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,21 +41,22 @@ function Issues() {
   const [item, setItem] = useState<WhItem | null>(null);        // the item matching the symbol exactly
   const [hints, setHints] = useState<WhItem[]>([]);              // suggestions while typing the symbol
   const [scan, setScan] = useState<null | 'symbol' | 'location'>(null);
+  const [bal, setBal] = useState<{ issued: number; returned: number; unit: string | null } | null>(null);   // returns: what went out to this Z
   const qtyRef = useRef<TextInput>(null);
   const set = (k: keyof WhForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const load = useCallback(async () => {
     try {
       const [i, j] = await Promise.all([
-        supabase.from('wh_issues').select('id,job_ref,symbol,name,unit,qty,location,box,note,created_at').is('exported_at', null).order('created_at', { ascending: false }),
+        supabase.from('wh_issues').select('id,kind,job_ref,symbol,name,unit,qty,location,box,note,created_at').is('exported_at', null).order('created_at', { ascending: false }),
         supabase.rpc('wh_jobs'),
       ]);
       if (i.error) throw i.error;
-      setMine(((i.data as any[]) ?? []).map((r) => ({ ...r, qty: Number(r.qty) })));
+      setMine(((i.data as any[]) ?? []).filter((r) => (r.kind ?? 'issue') === kind).map((r) => ({ ...r, qty: Number(r.qty) })));
       if (!j.error) setJobs(((j.data as any[]) ?? []).map((r) => r.job_ref));
     } catch { Alert.alert('Brak połączenia', 'Nie udało się wczytać wydań. Sprawdź internet i przeciągnij w dół, aby odświeżyć.'); }
     setLoading(false);
-  }, []);
+  }, [kind]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { const sub = AppState.addEventListener('change', (st) => { if (st === 'active') load(); }); return () => sub.remove(); }, [load]);
 
@@ -70,11 +74,35 @@ function Issues() {
     return () => clearTimeout(t);
   }, [form.symbol]);
 
+  // A return: how much of this symbol the app recorded as issued to (and already returned from) this Z.
+  useEffect(() => {
+    if (!ret) return;
+    const job = zRef(form.job), sym = form.symbol.trim();
+    if (!job || sym.length < 2) { setBal(null); return; }
+    const t = setTimeout(async () => {
+      const { data, error } = await supabase.rpc('wh_balance', { p_job: job, p_symbol: sym });
+      const r = !error && Array.isArray(data) ? data[0] : null;
+      setBal(r ? { issued: Number(r.issued) || 0, returned: Number(r.returned) || 0, unit: r.unit ?? null } : null);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [ret, form.job, form.symbol]);
+  const over = (() => {   // more coming back than went out (the row being edited does not count against itself)
+    if (!ret || !bal) return null;
+    const q = parseQty(form.qty); if (q === null) return null;
+    const self = editing ? mine.find((m) => m.id === editing)?.qty ?? 0 : 0;
+    const left = Math.round((bal.issued - bal.returned + self) * 1000) / 1000;
+    return q > left ? left : null;
+  })();
+
   const save = async () => {
     const problem = formProblem(form); if (problem) { Alert.alert('Brakuje danych', problem); return; }
+    if (over !== null) {
+      const goOn = await new Promise<boolean>((res) => Alert.alert('Więcej niż wydano', `${zRef(form.job)}: wydano ${qtyLabel(bal?.issued ?? 0, bal?.unit ?? item?.unit ?? null)}, już zwrócono ${qtyLabel(bal?.returned ?? 0, bal?.unit ?? item?.unit ?? null)} — a zwracasz ${qtyLabel(parseQty(form.qty) ?? 0, bal?.unit ?? item?.unit ?? null)}. Zapisać mimo to?`, [{ text: 'Popraw', style: 'cancel', onPress: () => res(false) }, { text: 'Zapisz', onPress: () => res(true) }]));
+      if (!goOn) return;
+    }
     if (busy) return; setBusy(true);
     const { error } = await supabase.rpc('wh_save_issue', { p_id: editing, p_job: zRef(form.job), p_symbol: form.symbol.trim(), p_qty: parseQty(form.qty),
-      p_location: form.location.trim(), p_box: form.box.trim(), p_note: form.note.trim() });
+      p_location: form.location.trim(), p_box: form.box.trim(), p_note: form.note.trim(), p_kind: kind });
     setBusy(false);
     if (error) { Alert.alert('Nie udało się', plError(error)); return; }
     // The next issue is usually for the same order and shelf: keep the Z and the location.
@@ -85,7 +113,7 @@ function Issues() {
     setEditing(r.id);
     setForm({ job: r.job_ref, symbol: r.symbol, qty: String(r.qty).replace('.', ','), location: r.location ?? '', box: r.box ?? '', note: r.note ?? '' });
   };
-  const remove = (r: WhIssue) => Alert.alert('Usunąć wydanie?', `${r.job_ref} · ${r.symbol} · ${qtyLabel(r.qty, r.unit)}`, [
+  const remove = (r: WhIssue) => Alert.alert(ret ? 'Usunąć zwrot?' : 'Usunąć wydanie?', `${r.job_ref} · ${r.symbol} · ${qtyLabel(r.qty, r.unit)}`, [
     { text: 'Anuluj', style: 'cancel' },
     { text: 'Usuń', style: 'destructive', onPress: async () => {
       const { error } = await supabase.rpc('wh_delete_issue', { p_id: r.id });
@@ -102,7 +130,7 @@ function Issues() {
     <>
       <ScrollView style={s.fill} contentContainerStyle={{ padding: 12, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
         <View style={s.card}>
-          <Text style={s.title}>{editing ? 'Zmień wydanie' : 'Nowe wydanie'}</Text>
+          <Text style={s.title}>{editing ? (ret ? 'Zmień zwrot' : 'Zmień wydanie') : (ret ? 'Nowy zwrot z produkcji' : 'Nowe wydanie')}</Text>
 
           <Text style={s.label}>ZLECENIE</Text>
           <TextInput style={s.input} value={form.job} onChangeText={(v) => set('job', v)} placeholder="np. Z.437" placeholderTextColor={C.muted} autoCapitalize="characters" autoCorrect={false} onBlur={() => set('job', zRef(form.job))} />
@@ -125,6 +153,8 @@ function Issues() {
             </TouchableOpacity>
           ))}
 
+          {ret && bal && (bal.issued > 0 || bal.returned > 0) && <Text style={s.found}>Wydano na {zRef(form.job)}: {qtyLabel(bal.issued, bal.unit)}{bal.returned ? ` · już zwrócono: ${qtyLabel(bal.returned, bal.unit)}` : ''}</Text>}
+          {ret && bal && bal.issued === 0 && bal.returned === 0 && form.symbol.trim().length >= 2 && <Text style={s.warn}>Aplikacja nie ma wydania tego towaru na {zRef(form.job)}.</Text>}
           <Text style={s.label}>ILOŚĆ{item?.unit ? ` (${item.unit})` : ''}</Text>
           <View style={s.row}>
             <TouchableOpacity style={s.step} onPress={() => step(-1)}><Text style={s.stepT}>−</Text></TouchableOpacity>
@@ -132,7 +162,8 @@ function Issues() {
             <TouchableOpacity style={s.step} onPress={() => step(1)}><Text style={s.stepT}>+</Text></TouchableOpacity>
           </View>
 
-          <Text style={s.label}>LOKALIZACJA</Text>
+          {over !== null && <Text style={s.warn}>Zwracasz więcej, niż wydano na to zlecenie (zostało {qtyLabel(Math.max(0, over), bal?.unit ?? null)}).</Text>}
+          <Text style={s.label}>{ret ? 'LOKALIZACJA (GDZIE ODKŁADASZ)' : 'LOKALIZACJA'}</Text>
           <View style={s.row}>
             <TextInput style={[s.input, { flex: 1 }]} value={form.location} onChangeText={(v) => set('location', v)} placeholder="np. A-01" placeholderTextColor={C.muted} autoCapitalize="characters" autoCorrect={false} />
             <TouchableOpacity style={s.scanBtn} onPress={() => setScan('location')}><Text style={s.scanT}>Skanuj</Text></TouchableOpacity>
@@ -149,12 +180,12 @@ function Issues() {
 
           <View style={[s.row, { marginTop: 14 }]}>
             {editing && <TouchableOpacity style={[s.btn, { backgroundColor: C.soft }]} onPress={() => { setEditing(null); setForm(EMPTY); }}><Text style={[s.btnT, { color: C.ink }]}>Anuluj</Text></TouchableOpacity>}
-            <TouchableOpacity style={[s.btn, busy && { opacity: 0.5 }]} onPress={save} disabled={busy}><Text style={s.btnT}>{busy ? '…' : editing ? 'Zapisz zmiany' : 'Zapisz wydanie'}</Text></TouchableOpacity>
+            <TouchableOpacity style={[s.btn, busy && { opacity: 0.5 }]} onPress={save} disabled={busy}><Text style={s.btnT}>{busy ? '…' : editing ? 'Zapisz zmiany' : ret ? 'Zapisz zwrot' : 'Zapisz wydanie'}</Text></TouchableOpacity>
           </View>
         </View>
 
-        <Text style={s.section}>Moje wydania do eksportu ({mine.length})</Text>
-        {mine.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 8 }]}>Brak — zapisane wydania pojawią się tutaj, dopóki biuro ich nie wyeksportuje.</Text>}
+        <Text style={s.section}>{ret ? 'Moje zwroty do eksportu' : 'Moje wydania do eksportu'} ({mine.length})</Text>
+        {mine.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 8 }]}>{ret ? 'Brak — zapisane zwroty pojawią się tutaj, dopóki biuro ich nie wyeksportuje.' : 'Brak — zapisane wydania pojawią się tutaj, dopóki biuro ich nie wyeksportuje.'}</Text>}
         {mine.map((r) => (
           <View key={r.id} style={[s.entry, editing === r.id && { backgroundColor: C.soft }]}>
             <View style={{ flex: 1 }}>

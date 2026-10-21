@@ -1,4 +1,5 @@
-// Warehouse ▸ Wydania: what the warehouse issued for a Z order — logged on the phone (role Warehouse:
+// Warehouse ▸ Wydania i zwroty: what the warehouse issued for a Z order (kind 'issue' → RW in Subiekt) and
+// what came back from production (kind 'return' → PW). Issues: — logged on the phone (role Warehouse:
 // scan or type the Subiekt symbol and the location; database functions wh_save_issue / wh_delete_issue),
 // reviewed here and exported to Excel for the RW in Subiekt. An exported row is stamped (date, who,
 // export number) and leaves the phone; an admin can undo an export.
@@ -12,27 +13,42 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 export const zRef = (v: unknown) => clean(v).replace(/^[Zz][\s._-]*0*(\d+)/, 'Z.$1');
 export const jobKey = (v: unknown) => zRef(v).replace(/\s/g, '').toUpperCase();
 
+export type Kind = 'issue' | 'return';
 export interface Issue {
-  id: string; user_id: string | null; user_name: string | null; job_ref: string; job_key: string; symbol: string; name: string | null; unit: string | null;
+  id: string; kind: Kind; user_id: string | null; user_name: string | null; job_ref: string; job_key: string; symbol: string; name: string | null; unit: string | null;
   qty: number; location: string | null; box: string | null; note: string | null; created_at: string; updated_at: string;
   exported_at: string | null; export_no: number | null; exported_by: string | null;
 }
 export interface RwLine { symbol: string; name: string | null; unit: string | null; qty: number }
-export interface RwSheet { job_ref: string; lines: RwLine[] }
+export interface RwSheet { kind: Kind; job_ref: string; lines: RwLine[] }
+export interface UsageLine { job_ref: string; symbol: string; name: string | null; unit: string | null; issued: number; returned: number; used: number }
 
-/** The RW view of an export: one sheet per Z order, the same symbol added up (an RW has one line per item). */
-export function rwSheets(rows: Pick<Issue, 'job_ref' | 'job_key' | 'symbol' | 'name' | 'unit' | 'qty'>[]): RwSheet[] {
-  const jobs = new Map<string, { job_ref: string; lines: Map<string, RwLine> }>();
-  for (const r of rows) {
-    const k = jobKey(r.job_ref);
-    const j = jobs.get(k) ?? jobs.set(k, { job_ref: zRef(r.job_ref), lines: new Map() }).get(k)!;
+/** The document view of an export: one sheet per Z order and kind (issues → RW, returns → PW), the same
+ *  symbol added up (a Subiekt document has one line per item). Issues first, then returns; Z orders in number order. */
+export function rwSheets(rows: Pick<Issue, 'job_ref' | 'job_key' | 'symbol' | 'name' | 'unit' | 'qty'>[] & { kind?: Kind }[]): RwSheet[] {
+  const docs = new Map<string, { kind: Kind; job_ref: string; lines: Map<string, RwLine> }>();
+  for (const r of rows as (Pick<Issue, 'job_ref' | 'symbol' | 'name' | 'unit' | 'qty'> & { kind?: Kind })[]) {
+    const kind: Kind = r.kind === 'return' ? 'return' : 'issue', k = kind + '|' + jobKey(r.job_ref);
+    const j = docs.get(k) ?? docs.set(k, { kind, job_ref: zRef(r.job_ref), lines: new Map() }).get(k)!;
     const key = r.symbol.toUpperCase();
     const l = j.lines.get(key);
     if (l) { l.qty = round3(l.qty + Number(r.qty)); if (!l.name && r.name) l.name = r.name; if (!l.unit && r.unit) l.unit = r.unit; }
     else j.lines.set(key, { symbol: r.symbol, name: r.name, unit: r.unit, qty: round3(Number(r.qty)) });
   }
-  return [...jobs.values()].sort((a, b) => a.job_ref.localeCompare(b.job_ref, 'pl', { numeric: true }))
-    .map((j) => ({ job_ref: j.job_ref, lines: [...j.lines.values()].sort((a, b) => a.symbol.localeCompare(b.symbol)) }));
+  return [...docs.values()].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'issue' ? -1 : 1) || a.job_ref.localeCompare(b.job_ref, 'pl', { numeric: true }))
+    .map((j) => ({ kind: j.kind, job_ref: j.job_ref, lines: [...j.lines.values()].sort((a, b) => a.symbol.localeCompare(b.symbol)) }));
+}
+/** Per Z order and symbol: issued, returned and what production actually used (issued − returned). */
+export function usage(rows: (Pick<Issue, 'job_ref' | 'symbol' | 'name' | 'unit' | 'qty'> & { kind?: Kind })[]): UsageLine[] {
+  const m = new Map<string, UsageLine>();
+  for (const r of rows) {
+    const k = jobKey(r.job_ref) + '|' + r.symbol.toUpperCase();
+    const u = m.get(k) ?? m.set(k, { job_ref: zRef(r.job_ref), symbol: r.symbol, name: r.name, unit: r.unit, issued: 0, returned: 0, used: 0 }).get(k)!;
+    if (r.kind === 'return') u.returned = round3(u.returned + Number(r.qty)); else u.issued = round3(u.issued + Number(r.qty));
+    u.used = round3(u.issued - u.returned);
+    if (!u.name && r.name) u.name = r.name; if (!u.unit && r.unit) u.unit = r.unit;
+  }
+  return [...m.values()].sort((a, b) => a.job_ref.localeCompare(b.job_ref, 'pl', { numeric: true }) || a.symbol.localeCompare(b.symbol));
 }
 /** An Excel sheet name from a Z reference: max 31 characters, none of []:*?/\ — unique within the book. */
 export function sheetName(ref: string, used: Set<string>): string {
@@ -57,7 +73,7 @@ export function issueFields(b: any): Result<{ fields: Record<string, any> }> {
 // ---- storage -------------------------------------------------------------------------------------
 const missing = (e: any) => /wh_issues/.test(String(e?.message ?? '')) && /(does not exist|schema cache|not find)/i.test(String(e?.message ?? ''));
 const NEEDS = 'Warehouse issues need migrations 0090 and 0091.';
-const out = (r: any): Issue => ({ ...r, qty: Number(r.qty) });
+const out = (r: any): Issue => ({ ...r, kind: r.kind === 'return' ? 'return' : 'issue', qty: Number(r.qty) });
 export async function listIssues(tenantId: string, status: 'open' | 'exported' | 'all', from: string | null, to: string | null): Promise<Issue[] | null> {
   const rows: Issue[] = [];
   for (let at = 0; ; at += 1000) {
@@ -84,7 +100,7 @@ async function byIds(tenantId: string, ids: string[]): Promise<Issue[]> {
   return rows;
 }
 /** Export the chosen rows that are not exported yet: stamp them, return them and the RW sheets. */
-export async function exportIssues(tenantId: string, by: string, ids: string[]): Promise<Result<{ exportNo: number; rows: Issue[]; sheets: RwSheet[]; skipped: number }>> {
+export async function exportIssues(tenantId: string, by: string, ids: string[]): Promise<Result<{ exportNo: number; rows: Issue[]; sheets: RwSheet[]; usage: UsageLine[]; skipped: number }>> {
   const chosen = await byIds(tenantId, ids);
   const open = chosen.filter((r) => !r.exported_at);
   if (!open.length) return fail(400, chosen.length ? 'These issues are already exported.' : 'Nothing selected.');
@@ -99,15 +115,15 @@ export async function exportIssues(tenantId: string, by: string, ids: string[]):
     done.push(...(data ?? []).map(out));
   }
   done.sort((a, b) => a.job_ref.localeCompare(b.job_ref, 'pl', { numeric: true }) || a.created_at.localeCompare(b.created_at));
-  return { ok: true, exportNo, rows: done, sheets: rwSheets(done), skipped: chosen.length - done.length };
+  return { ok: true, exportNo, rows: done, sheets: rwSheets(done), usage: usage(done), skipped: chosen.length - done.length };
 }
 /** Download again an export that was already made (same rows, nothing changes). */
-export async function exportedAgain(tenantId: string, exportNo: number): Promise<Result<{ rows: Issue[]; sheets: RwSheet[] }>> {
+export async function exportedAgain(tenantId: string, exportNo: number): Promise<Result<{ rows: Issue[]; sheets: RwSheet[]; usage: UsageLine[] }>> {
   const { data, error } = await db().from('wh_issues').select('*').eq('tenant_id', tenantId).eq('export_no', exportNo);
   if (error) throw error;
   const rows = (data ?? []).map(out);
   if (!rows.length) return fail(404, 'Export not found.');
-  return { ok: true, rows, sheets: rwSheets(rows) };
+  return { ok: true, rows, sheets: rwSheets(rows), usage: usage(rows) };
 }
 /** Admin: undo an export — the rows are open again (and back on the phone of whoever logged them). */
 export async function unexportIssues(tenantId: string, ids: string[]): Promise<number> {

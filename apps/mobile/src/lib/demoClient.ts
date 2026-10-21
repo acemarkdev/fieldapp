@@ -153,9 +153,14 @@ export function demoRpc(name: string, a: any): Result {
   if (name === 'wh_jobs') return { data: ['Z.437', 'Z.440', 'Z.445', 'Z.450'].map((job_ref) => ({ job_ref })), error: null };
   if (name === 'wh_save_issue') {
     const it = stock.find((x) => x.symbol === String(a.p_symbol).toUpperCase());
-    const row = { job_ref: a.p_job, symbol: String(a.p_symbol).toUpperCase(), name: it?.name ?? null, unit: it?.unit ?? null, qty: a.p_qty, location: a.p_location || null, box: a.p_box || null, note: a.p_note || null };
+    const row = { kind: a.p_kind === 'return' ? 'return' : 'issue', job_ref: a.p_job, symbol: String(a.p_symbol).toUpperCase(), name: it?.name ?? null, unit: it?.unit ?? null, qty: a.p_qty, location: a.p_location || null, box: a.p_box || null, note: a.p_note || null };
     if (a.p_id) { const e = issues.find((x) => x.id === a.p_id); if (!e) return { data: null, error: { message: 'Issue not found.' } }; Object.assign(e, row); return { data: e.id, error: null }; }
     const id = 'wh-' + Math.random().toString(36).slice(2); issues.unshift({ id, user_id: me, created_at: now, exported_at: null, ...row }); return { data: id, error: null };
+  }
+  if (name === 'wh_balance') {
+    const k = (v: any) => String(v ?? '').toUpperCase().replace(/\s/g, ''), mine = issues.filter((x) => k(x.job_ref) === k(a.p_job) && k(x.symbol) === k(a.p_symbol));
+    const sum = (kind: string) => mine.filter((x) => (x.kind ?? 'issue') === kind).reduce((t, x) => t + Number(x.qty), 0);
+    return { data: [{ issued: sum('issue'), returned: sum('return'), unit: mine[0]?.unit ?? null }], error: null };
   }
   if (name === 'wh_delete_issue') { const i = issues.findIndex((x) => x.id === a.p_id); if (i >= 0) issues.splice(i, 1); return { data: null, error: null }; }
   if (name === 'prod_delete_entry') {
