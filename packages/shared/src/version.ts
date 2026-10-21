@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.40.1';
+export const APP_VERSION = '1.40.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.40.2', date: '2026-10-21', changes: [
+    'Items: Save details now closes the item window once saved (it used to open the item again). If the save fails, the window stays open with what was typed.',
+  ] },
   { version: '1.40.1', date: '2026-10-21', changes: [
     'Items: the column filter lists (Block, Elev, Flat, Floor, Room, Item, Stage, PO, Install status, Team) were cut off by the table when only a few rows were shown \u2014 they now open over the page in full (upwards when there is more room above) and close on scroll.',
   ] },

@@ -10193,7 +10193,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function saveDetail(id){
     if(!(await saveItemSpec(id)))return;
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(collectDetail())})).json();
-    if(d.ok){tShow('Details saved');loadItems();openDetail(id);}else tShow(d.error||'Save failed'); // stays open
+    if(d.ok){tShow('Details saved');closeModal(true);loadItems();}else tShow(d.error||'Save failed'); // saved → the item closes; a failed save stays open, nothing typed is lost
   }
   // Required fields still missing for the currently-open item (from the drawer form + code fields).
   var _detailItem=null;
