@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.39.0';
+export const APP_VERSION = '1.39.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.39.1', date: '2026-10-21', changes: [
+    'Admin \u25b8 Users: a search box (name, email, role, client or team; several words narrow it down), a role filter and a Show inactive tick, with the count of users shown. Filtering keeps any change being typed in a row.',
+  ] },
   { version: '1.39.0', date: '2026-10-21', changes: [
     'Warehouse returns (replaces the Zwroty Power App): what comes back from production to the warehouse, logged on the phone in a new Zwroty tab (Warehouse role) with the same form as the issues \u2014 Z order (required), Subiekt symbol (scan or type), quantity, the location where it goes back, box, note. The phone shows how much of that symbol was issued to the Z order and warns before saving a return larger than what is left.',
     'Office \u25b8 Warehouse issues & returns: a Type column and an issues / returns filter. The Excel export has one sheet per Z order and document \u2014 RW for the issues, PW for the returns \u2014 plus Zu\u017cycie (issued \u2212 returned per Z and symbol) and a sheet with every row. Needs migration 0092; the phone part comes as an update to 0.76.0.',

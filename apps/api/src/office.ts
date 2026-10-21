@@ -4524,7 +4524,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button class="add" onclick="addUser()">Add user</button>
       </div>
       <div class="ferr" id="userErr" style="padding:6px 2px 0"></div>
-      <div class="card2" style="margin-top:14px;overflow-x:auto"><table style="width:100%"><thead><tr>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px">
+        <input id="usrQ" class="tinput" style="min-width:280px" placeholder="Search: name, email, role, client or team" oninput="filterUsers()">
+        <select id="usrRole" class="tinput" onchange="filterUsers()"><option value="">All roles</option></select>
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="usrInactive" onchange="filterUsers()" checked> Show inactive</label>
+        <span class="sub" id="usrCount" style="margin:0 0 0 auto"></span>
+      </div>
+      <div class="card2" style="margin-top:10px;overflow-x:auto"><table style="width:100%"><thead><tr>
         <th>NAME</th><th>EMAIL</th><th>ROLE</th><th>CLIENT</th><th>TEAM</th><th title="Interface language. Default = English. Polish currently covers the Fin&amp;Ops screens.">LANGUAGE</th><th>LOGIN</th><th>STATUS</th><th></th>
       </tr></thead><tbody id="userRows"></tbody></table></div>
       <div class="sub" style="margin-top:8px">A <b>fitter's</b> team decides which items they see in the phone app. Set it here; item→team assignment itself comes from Monday (Sync tab → Pull fitters). A <b>customer</b> only signs in to a read-only portal — set their <b>CLIENT</b> code (e.g. AXS) to control which jobs they can see and download the rate-free install report for.</div>
@@ -7520,6 +7526,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function roleLabel(r){return r==='invoice_manager'?'invoice manager':r;}
     var nr=document.getElementById('nuRole');
     nr.innerHTML=USER_ROLES.map(function(r){return '<option value="'+r+'"'+(r==='surveyor'?' selected':'')+'>'+roleLabel(r)+'</option>';}).join('');
+    var rf=document.getElementById('usrRole'), rv=rf.value; rf.innerHTML='<option value="">All roles</option>'+USER_ROLES.map(function(r){return '<option value="'+r+'">'+roleLabel(r)+'</option>';}).join(''); rf.value=rv;
     tb.innerHTML='';
     data.users.forEach(function(u){
       var self=u.id===myId;
@@ -7543,9 +7550,22 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
                     :'<button class="add" style="padding:5px 11px;font-size:11px" onclick="toggleUserActive(\\''+u.id+'\\',true)">Reactivate</button>');
       }
       var tr=document.createElement('tr');
+      // what the search box matches: name, email, role, client code and team
+      var teamName=(allTeams.filter(function(t){return t.id===u.team_id;})[0]||{}).name||'';
+      tr.setAttribute('data-q',[u.name,u.email,u.role,roleLabel(u.role),u.client_code,teamName].join(' ').toLowerCase());
+      tr.setAttribute('data-role',u.role||''); tr.setAttribute('data-active',u.active?'1':'0');
       tr.innerHTML='<td>'+nameInput+'</td><td>'+emailInput+'</td><td>'+roleSel+'</td><td>'+clientCell+'</td><td>'+teamSel+'</td><td>'+langSel+'</td><td>'+login+'</td><td>'+status+'</td><td style="text-align:right;white-space:nowrap">'+actions+'</td>';
       tb.appendChild(tr);
     });
+    filterUsers();
+  }
+  // Users list: filter the rows in place (no reload, so a half-typed change in a row is kept).
+  function filterUsers(){
+    var q=(document.getElementById('usrQ').value||'').trim().toLowerCase().split(/\\s+/).filter(Boolean), role=document.getElementById('usrRole').value, inact=document.getElementById('usrInactive').checked;
+    var rows=document.querySelectorAll('#userRows tr[data-q]'), shown=0;
+    rows.forEach(function(tr){ var hay=tr.getAttribute('data-q'), ok=(!role||tr.getAttribute('data-role')===role)&&(inact||tr.getAttribute('data-active')==='1')&&q.every(function(w){ return hay.indexOf(w)>=0; });
+      tr.style.display=ok?'':'none'; if(ok)shown++; });
+    var c=document.getElementById('usrCount'); if(c)c.textContent=shown===rows.length?rows.length+' users':shown+' of '+rows.length+' users';
   }
   async function addUser(){
     var name=document.getElementById('nuName').value.trim(), email=document.getElementById('nuEmail').value.trim();
