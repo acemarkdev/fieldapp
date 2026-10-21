@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.39.1';
+export const APP_VERSION = '1.40.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.40.0', date: '2026-10-21', changes: [
+    'Items \u25b8 job list (left): one more level \u2014 customer (name from the customer card, A\u2013Z, with its code and job count) \u2192 Live / Pending / Job done \u2192 job. Each level folds and stays folded in this browser; finished jobs start folded.',
+  ] },
   { version: '1.39.1', date: '2026-10-21', changes: [
     'Admin \u25b8 Users: a search box (name, email, role, client or team; several words narrow it down), a role filter and a Show inactive tick, with the count of users shown. Filtering keeps any change being typed in a row.',
   ] },

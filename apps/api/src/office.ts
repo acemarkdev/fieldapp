@@ -2100,8 +2100,11 @@ const server = createServer(async (req, res) => {
       let jobs = await listJobs(ctx.tenant_id);
       // Scanners only see jobs an admin has released for mapping.
       if (ctx.role === 'scanner') jobs = jobs.filter((j) => (j as any).status === 'pending_mapping');
+      // the customer's name from its card (jobs carry the 3-letter client code) — the job list groups by customer
+      const custName = new Map((await listCustomerCards(ctx.tenant_id).catch(() => [])).map((c) => [String(c.code).toUpperCase(), c.name]));
       send(res, 200, jobs.map((j) => ({
         id: j.id, code: `${j.client_code}.${j.job_code}`, name: j.name, site_code: (j as any).site_code ?? null,
+        client_code: j.client_code, customer: custName.get(String(j.client_code ?? '').toUpperCase()) ?? null,
         status: (j as any).status ?? 'new', mapping_start_date: (j as any).mapping_start_date ?? null,
         programme_end: (j as any).programme_end ?? null,
       })));
@@ -3686,6 +3689,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .jobgrp:hover{color:var(--purple)}
   .jobgrp-ar{width:10px;display:inline-block;font-size:10px}
   .jobgrp-n{margin-left:auto;background:var(--soft);border-radius:999px;padding:1px 8px;font-size:10px;color:var(--muted)}
+  .jobgrp.jobcust{color:var(--ink);font-size:12px;text-transform:none;letter-spacing:0;padding-top:12px;border-top:1px solid var(--line)}
+  .jobcust-code{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+  .jobgrp.jobstat{padding-left:26px;padding-top:6px}
+  .jobstatwrap .job{padding-left:34px}
   .maptotals{position:sticky;top:6px;z-index:5;background:#efeaf8;border:1px solid var(--line);border-radius:9px;padding:8px 13px;font-size:13px;color:var(--ink);margin:10px 0;box-shadow:0 1px 4px rgba(58,43,114,.08)}
   main{flex:1;padding:22px 26px;overflow:auto}
   h2{font-size:19px;color:var(--purple)}h2 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -5377,19 +5384,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     JOB_STATUS={}; JOB_MAPDATE={}; JOBS_BY_ID={};
     jobs.forEach(function(j){ JOBS_BY_ID[j.id]=j; JOB_STATUS[j.id]=j.status||'pending_mapping'; JOB_MAPDATE[j.id]=j.mapping_start_date||''; });
     if(myRole!=='scanner') el.appendChild(mkEl('ALL','▦ All jobs','ALL'));
-    // Group by programme status: Live (end date still to come), Pending (no date), Job done (end passed).
-    var today=new Date().toISOString().slice(0,10);
-    var G={live:[],pending:[],done:[]};
-    jobs.forEach(function(j){ var pe=j.programme_end||''; G[!pe?'pending':(pe<today?'done':'live')].push(j); });
-    [['live','Live'],['pending','Pending'],['done','Job done']].forEach(function(pr){
-      var arr=G[pr[0]]; if(!arr.length)return;
-      var collapsed=localStorage.getItem('ace_jobgrp_'+pr[0])==='1';
-      var hdr=document.createElement('div'); hdr.className='jobgrp';
-      hdr.innerHTML='<span class="jobgrp-ar">'+(collapsed?'▸':'▾')+'</span> '+esc(pr[1])+' <span class="jobgrp-n">'+arr.length+'</span>';
-      var wrap=document.createElement('div'); wrap.className='jobgrpwrap'; if(collapsed)wrap.style.display='none';
-      hdr.onclick=function(){ var show=wrap.style.display==='none'; wrap.style.display=show?'':'none'; hdr.querySelector('.jobgrp-ar').textContent=show?'▾':'▸'; localStorage.setItem('ace_jobgrp_'+pr[0],show?'0':'1'); };
-      arr.forEach(function(j){ wrap.appendChild(mkEl(j.id,(j.site_code||j.code),j.code)); });
-      el.appendChild(hdr); el.appendChild(wrap);
+    // Tree: customer (from the customer card, A–Z) → programme status: Live (end date still to come), Pending (no date),
+    // Job done (end passed) → job. Each level folds; what is folded is remembered in this browser.
+    var today=new Date().toISOString().slice(0,10), C={};
+    jobs.forEach(function(j){ var k=String(j.client_code||'?').toUpperCase(); (C[k]=C[k]||{code:k,name:j.customer||'',jobs:[]}).jobs.push(j); });
+    var fold=function(hdr,wrap,key,deflt){ var stored=null; try{ stored=localStorage.getItem(key); }catch(e){} var collapsed=stored===null?deflt:stored==='1';
+      if(collapsed)wrap.style.display='none'; hdr.querySelector('.jobgrp-ar').textContent=collapsed?'▸':'▾';
+      hdr.onclick=function(){ var show=wrap.style.display==='none'; wrap.style.display=show?'':'none'; hdr.querySelector('.jobgrp-ar').textContent=show?'▾':'▸'; try{ localStorage.setItem(key,show?'0':'1'); }catch(e){} }; };
+    Object.keys(C).sort(function(a,b){ return (C[a].name||a).localeCompare(C[b].name||b,'pl'); }).forEach(function(k){
+      var cu=C[k], ch=document.createElement('div'); ch.className='jobgrp jobcust';
+      ch.innerHTML='<span class="jobgrp-ar"></span> '+esc(cu.name||k)+(cu.name?' <span class="jobcust-code">'+esc(k)+'</span>':'')+' <span class="jobgrp-n">'+cu.jobs.length+'</span>';
+      var cw=document.createElement('div'); cw.className='jobgrpwrap';
+      var G={live:[],pending:[],done:[]};
+      cu.jobs.forEach(function(j){ var pe=j.programme_end||''; G[!pe?'pending':(pe<today?'done':'live')].push(j); });
+      [['live','Live'],['pending','Pending'],['done','Job done']].forEach(function(pr){
+        var arr=G[pr[0]]; if(!arr.length)return;
+        var hdr=document.createElement('div'); hdr.className='jobgrp jobstat';
+        hdr.innerHTML='<span class="jobgrp-ar"></span> '+esc(pr[1])+' <span class="jobgrp-n">'+arr.length+'</span>';
+        var wrap=document.createElement('div'); wrap.className='jobgrpwrap jobstatwrap';
+        fold(hdr,wrap,'ace_jobgrp_'+k+'_'+pr[0],pr[0]==='done');   // finished jobs start folded
+        arr.forEach(function(j){ wrap.appendChild(mkEl(j.id,(j.site_code||j.code),j.code)); });
+        cw.appendChild(hdr); cw.appendChild(wrap);
+      });
+      fold(ch,cw,'ace_jobcust_'+k,false);
+      el.appendChild(ch); el.appendChild(cw);
     });
     // Scanner (or an empty/stale current) lands on the first available job.
     if((myRole==='scanner'||current==='ALL')&&jobs.length&&(current==='ALL'||!JOB_STATUS[current])){ current=jobs[0].id; document.querySelectorAll('.job').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-code')===current)}); }
