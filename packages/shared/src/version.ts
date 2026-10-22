@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.40.2';
+export const APP_VERSION = '1.41.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.41.0', date: '2026-10-22', changes: [
+    'New home page with a tile per ACE Group business \u2014 Framework (UK), Acemark PL (PL) and ACE Scaffolding (UK). Each tile lists its screens; click one to go there. The menu then shows only that business (plus Admin); the home button at the top shows the business you are in and takes you back to the tiles. Users with one business go straight in, as before.',
+    'Admin \u25b8 Users: a Businesses column \u2014 tick which businesses each user sees. With nothing ticked the role decides (Polish roles \u2192 Acemark PL, others \u2192 Framework); Admin always sees all. Needs migration 0093.',
+    'ACE Scaffolding: first page with the development plan; the scaffolding screens arrive there phase by phase.',
+  ] },
   { version: '1.40.2', date: '2026-10-21', changes: [
     'Items: Save details now closes the item window once saved (it used to open the item again). If the save fails, the window stays open with what was typed.',
   ] },

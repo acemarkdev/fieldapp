@@ -434,6 +434,25 @@ export async function getUserLanguage(appUserId: string): Promise<string | null>
     return (data as any)?.language ?? null;
   } catch { return null; }
 }
+// Which businesses each user sees on the home page (null = the role's default). Empty before migration 0093.
+export async function getUserBusinessesMap(tenantId: string): Promise<Record<string, string[] | null>> {
+  try {
+    const { data, error } = await db().from('app_users').select('id,businesses').eq('tenant_id', tenantId);
+    if (error) return {};
+    return Object.fromEntries((data ?? []).map((r: any) => [r.id, Array.isArray(r.businesses) ? r.businesses : null]));
+  } catch { return {}; }
+}
+export async function getUserBusinesses(id: string): Promise<string[] | null> {
+  try {
+    const { data, error } = await db().from('app_users').select('businesses').eq('id', id).maybeSingle();
+    if (error || !data) return null;
+    return Array.isArray((data as any).businesses) ? (data as any).businesses : null;
+  } catch { return null; }
+}
+export async function setUserBusinesses(id: string, tenantId: string, businesses: string[] | null): Promise<void> {
+  const { error } = await db().from('app_users').update({ businesses }).eq('id', id).eq('tenant_id', tenantId);
+  if (error) { if (/businesses/.test(error.message)) throw new Error('Business access needs migration 0093.'); throw error; }
+}
 export async function getUserLanguages(tenantId: string): Promise<Record<string, string | null>> {
   try {
     const { data, error } = await db().from('app_users').select('id,language').eq('tenant_id', tenantId);
