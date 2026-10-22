@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.45.0';
+export const APP_VERSION = '1.46.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.46.0', date: '2026-10-22', changes: [
+    'ACE Scaffolding, phase 3: Hire & invoicing (new tab). Rent after the included weeks is charged per day \u2014 weekly rate \u00d7 days \u00f7 7 \u2014 up to and including the day the hire stops: the dismantle day the team confirms (on the scaffold; it starts as the down date and can be changed).',
+    'Rent run: choose the day to bill up to (end of last week / month, today), weekly- or monthly-billed jobs, tick and create the requests \u2014 one per job, with a line per scaffold and its days. Each job is billed weekly or monthly (set on the job). Alerts: included hire ending within a week; scaffolds on hire, paying rent, unbilled rent to today.',
+    'Requests for invoice to accounts (Xero): draft (lines, retention %, payment terms, customer PO, VAT / CIS note, notes \u2014 changeable) \u2192 sent to accounts (fixed; its days count as billed, never billed twice) \u2192 invoiced (Xero number) \u2192 paid; overdue when unpaid after the payment terms; cancel frees the days again. PDF for accounts. On the job: + Rent request and + Price stage (\u00a3 or %). Retention and payment terms are set on the customer. Needs migration 0099.',
+  ] },
   { version: '1.45.0', date: '2026-10-22', changes: [
     'ACE Scaffolding, phase 2 (office): the job window can be edited \u2014 status, erected by, PO number, site contact, notes, and a Before we go up checklist (RAMS, design / TG20, licence, alarm, hoist, access, neighbours, inspections booked) with done / not needed, date and note.',
     'Scaffolds per job: a job made from a won quote gets one scaffold per quote line; more can be added \u2014 a variation / adaption (confirmed in writing by whom, when; adds to the job price). Each scaffold goes booked \u2192 up \u2192 on hire (handover) \u2192 dismantle requested (who asked, logged with the time) \u2192 dismantling \u2192 down, with its dates and when its rent starts (handover + included weeks). The job status follows its scaffolds.',

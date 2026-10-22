@@ -397,6 +397,8 @@ export function customerFields(b: any, creating: boolean): { ok: true; fields: R
   for (const k of ['email', 'phone', 'address', 'vat_number'] as const) if (k in b) f[k] = txt(b[k]);
   if ('notes' in b) f.notes = txt(b.notes, 4000);
   if ('active' in b) f.active = b.active !== false;
+  if ('retention_pct' in b) { const t = clean(b.retention_pct).replace('%', ''); const n = t ? Number(t) : null; if (n !== null && !(n >= 0 && n <= 50)) return { ok: false, error: 'Retention 0–50%.' }; f.retention_pct = n; }
+  if ('payment_days' in b) { const t = clean(b.payment_days); const n = t ? Math.round(Number(t)) : null; if (n !== null && !(n >= 0 && n <= 365)) return { ok: false, error: 'Payment days 0–365.' }; f.payment_days = n; }
   return { ok: true, fields: f };
 }
 const dupe = (e: any) => /scaf_customers_key|duplicate key/.test(String(e?.message ?? ''));

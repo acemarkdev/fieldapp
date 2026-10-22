@@ -53,6 +53,7 @@ export function scaffoldFields(b: any, creating: boolean): { ok: true; fields: R
   if ('description' in b) f.description = long(b.description, 2000);
   if ('variation' in b) f.variation = !!b.variation;
   if ('confirmed_on' in b) f.confirmed_on = day(b.confirmed_on);
+  if ('hire_stop_on' in b) f.hire_stop_on = day(b.hire_stop_on);   // the dismantle day the team confirms (hire stops)
   for (const k of ['price', 'labour', 'hire_weeks', 'rent_pct', 'rent_weekly'] as const) if (k in b) { const n = num(b[k]); if (Number.isNaN(n)) return { ok: false, error: `${k.replace(/_/g, ' ')} is not a number.` }; f[k] = k === 'price' ? n ?? 0 : n; }
   if (creating && !f.element && !f.description) return { ok: false, error: 'Say what the scaffold is (element or description).' };
   if (f.labour != null && f.price != null && (f.labour as number) > (f.price as number)) return { ok: false, error: 'The labour part is more than the price.' };
@@ -112,6 +113,7 @@ export async function saveJob(tenantId: string, id: string, b: any) {
   for (const k of ['contact_id', 'site_id'] as const) if (k in b) f[k] = b[k] || null;
   if ('checklist' in b) f.checklist = checklistValue(b.checklist);
   if ('stage' in b) f.stage = clean(b.stage) || 'upcoming';
+  if ('billing' in b) f.billing = b.billing === 'weekly' ? 'weekly' : 'monthly';
   const r = await db().from('scaf_jobs').update({ ...f, edited_at: nowIso() }).eq('tenant_id', tenantId).eq('id', id);
   return r.error ? { ok: false as const, error: r.error.message } : { ok: true as const };
 }
@@ -150,11 +152,11 @@ export async function setScaffoldStatus(tenantId: string, jobId: string, b: any)
     const by = txt(b.by, 120); if (!by) return { ok: false as const, error: 'Who asked for the dismantle?' };
     Object.assign(f, { dismantle_requested_on: d, dismantle_requested_by: by, dismantle_request_logged_at: nowIso() });
   }
-  if (status === 'down') f.down_on = d;
+  if (status === 'down') f.down_on = d;   // hire_stop_on is set below where still empty
   const r = await db().from('scaf_scaffolds').update(f).eq('tenant_id', tenantId).eq('job_id', jobId).in('id', list);
   if (r.error) return { ok: false as const, error: r.error.message };
   if (status === 'dismantle_requested') await db().from('scaf_jobs').update({ dismantle_request: d }).eq('id', jobId);
-  if (status === 'down') await db().from('scaf_jobs').update({ down_date: d }).eq('id', jobId);
+  if (status === 'down') { await db().from('scaf_jobs').update({ down_date: d }).eq('id', jobId); await db().from('scaf_scaffolds').update({ hire_stop_on: d }).eq('job_id', jobId).in('id', list).is('hire_stop_on', null); }
   await refreshStage(jobId);
   return { ok: true as const };
 }
@@ -192,7 +194,7 @@ export async function saveVisit(tenantId: string, id: string | null, b: any) {
     const last = addDays(v.fields.day as string, (v.fields.days as number) - 1);
     if (v.fields.kind === 'erect') await db().from('scaf_scaffolds').update({ status: 'erecting', erected_on: last, edited_at: nowIso() }).eq('job_id', jobId).in('id', sc).eq('status', 'booked');
     if (v.fields.kind === 'dismantle') await db().from('scaf_scaffolds').update({ status: 'down', down_on: last, edited_at: nowIso() }).eq('job_id', jobId).in('id', sc).neq('status', 'down');
-    if (v.fields.kind === 'dismantle') await db().from('scaf_jobs').update({ down_date: last }).eq('id', jobId);
+    if (v.fields.kind === 'dismantle') { await db().from('scaf_jobs').update({ down_date: last }).eq('id', jobId); await db().from('scaf_scaffolds').update({ hire_stop_on: last }).eq('job_id', jobId).in('id', sc).is('hire_stop_on', null); }
     await refreshStage(jobId);
   } else if (v.fields.kind === 'dismantle' && v.fields.status === 'planned' && sc.length) {
     await db().from('scaf_scaffolds').update({ status: 'dismantling', edited_at: nowIso() }).eq('job_id', jobId).in('id', sc).eq('status', 'dismantle_requested');
