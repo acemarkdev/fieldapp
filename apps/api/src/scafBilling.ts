@@ -216,3 +216,9 @@ export async function deleteRequest(tenantId: string, id: string) {
   const d = await db().from('scaf_invoice_requests').delete().eq('id', id);
   return d.error ? { ok: false as const, error: d.error.message } : { ok: true as const };
 }
+/** Several charges in one request (e.g. stock not returned, at replacement value). */
+export async function chargeRequest(tenantId: string, jobId: string, userId: string, lines: { description: string; amount: number }[]) {
+  const ls = lines.filter((l) => l.amount > 0).map((l) => ({ description: l.description, amount: round2(l.amount) }));
+  if (!ls.length) return { ok: false as const, error: 'Nothing to charge (no replacement values).' };
+  return newRequest(tenantId, jobId, userId, 'other', ls, [null, null]);
+}

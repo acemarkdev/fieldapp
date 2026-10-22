@@ -6,7 +6,7 @@
 // plans…) depend on database rules tied to the role and stay fixed in the matrix.
 import { can, type Role } from './permissions';
 
-export type AppKey = 'fin.performance' | 'fin.costs' | 'fin.jobs' | 'fin.sales' | 'fin.payroll' | 'fin.stock' | 'wh.issues' | 'scaf.customers' | 'scaf.enquiries' | 'scaf.jobs' | 'scaf.billing';
+export type AppKey = 'fin.performance' | 'fin.costs' | 'fin.jobs' | 'fin.sales' | 'fin.payroll' | 'fin.stock' | 'wh.issues' | 'scaf.customers' | 'scaf.enquiries' | 'scaf.jobs' | 'scaf.billing' | 'scaf.stock';
 export type AppLevel = 'off' | 'view' | 'edit';
 export const APP_LEVELS: AppLevel[] = ['off', 'view', 'edit'];
 export const APPS: { key: AppKey; label: string; group: string; desc: string }[] = [
@@ -21,6 +21,7 @@ export const APPS: { key: AppKey; label: string; group: string; desc: string }[]
   { key: 'scaf.enquiries', label: 'Enquiries', group: 'Scaffolding', desc: 'Scaffolding enquiries and quotes (ACE numbers)' },
   { key: 'scaf.jobs', label: 'Jobs', group: 'Scaffolding', desc: 'Scaffolding jobs (ACESC numbers): erection, hire, dismantle' },
   { key: 'scaf.billing', label: 'Hire & invoicing', group: 'Scaffolding', desc: 'Rent runs and requests for invoice to the accounts team (Xero); edit = create, send, mark invoiced / paid' },
+  { key: 'scaf.stock', label: 'Stock', group: 'Scaffolding', desc: 'Yard, vans and sites: delivery / collection notes, stocktake, losses, availability forecast; edit = record movements, change the catalogue' },
 ];
 /** Apps of the Fin&Ops / warehouse side — the ones that open the /api/finops routes. */
 export const isFinApp = (k: AppKey) => k.startsWith('fin.') || k.startsWith('wh.');

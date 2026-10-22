@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.46.0';
+export const APP_VERSION = '1.47.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.47.0', date: '2026-10-22', changes: [
+    'ACE Scaffolding, phase 5: Stock (new tab) for tube & fitting \u2014 a starting catalogue of 36 common items (tubes 4\u201321 ft, boards 4\u201313 ft, doubles, swivels, putlogs, sleeves, joint pins, BRCs, toe board clips, reveal pins, base plates, sole boards, ladders, ladder beams, brick guards, netting, Monarflex, gin wheel, tags) with weight and replacement value, and the Yard + Van 1\u20135 \u2014 all editable (Catalogue, Yard and vans).',
+    'Every movement is a numbered note (SN-0001) with a PDF to sign: delivery (yard / van \u2192 site), collection (site \u2192 yard / van; \u201cfill with everything on site\u201d; final collection), transfer (yard \u2194 van), goods in, stocktake (enter the count, the difference is recorded). Stock may go negative until counted. The Stock page shows every item per yard, van and on sites, the sites holding stock (pieces, weight, value) and the recent notes.',
+    'Estimated materials per scaffold (scaffold \u25b8 Edit) and a 6-week availability forecast: yard + vans after planned erections and dismantles \u2014 short items in red. Job window: Materials on site with + Delivery / + Collection; after the final collection, what is missing can be written off and charged to the customer at replacement value (a request for invoice). New App access entry: Stock. Needs migration 0100.',
+  ] },
   { version: '1.46.0', date: '2026-10-22', changes: [
     'ACE Scaffolding, phase 3: Hire & invoicing (new tab). Rent after the included weeks is charged per day \u2014 weekly rate \u00d7 days \u00f7 7 \u2014 up to and including the day the hire stops: the dismantle day the team confirms (on the scaffold; it starts as the down date and can be changed).',
     'Rent run: choose the day to bill up to (end of last week / month, today), weekly- or monthly-billed jobs, tick and create the requests \u2014 one per job, with a line per scaffold and its days. Each job is billed weekly or monthly (set on the job). Alerts: included hire ending within a week; scaffolds on hire, paying rent, unbilled rent to today.',

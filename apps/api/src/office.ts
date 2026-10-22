@@ -31,6 +31,8 @@ import * as scaf from './scaffolding';
 import * as scafQ from './scafQuotes';
 import * as scafJ from './scafJobs';
 import * as scafB from './scafBilling';
+import * as scafS from './scafStock';
+import { renderStockNotePdf } from './scafStockPdf';
 import { renderInvoiceRequestPdf } from './scafInvoicePdf';
 import { renderHandoverPdf } from './scafHandoverPdf';
 import { renderQuotePdf } from './scafQuotePdf';
@@ -554,10 +556,10 @@ const server = createServer(async (req, res) => {
         if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' }); res.end(gzipSync(body)); }
         else send(res, 200, v);
       };
-      const scafErr = (e: any) => /scaf_invoice|hire_stop_on|billed_to|retention_pct|payment_days|column .*billing/.test(String(e?.message ?? '')) ? 'This needs migration 0099.' : /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
+      const scafErr = (e: any) => /scaf_stock|scaf_locations|column .*bom/.test(String(e?.message ?? '')) ? 'This needs migration 0100.' : /scaf_invoice|hire_stop_on|billed_to|retention_pct|payment_days|column .*billing/.test(String(e?.message ?? '')) ? 'This needs migration 0099.' : /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
       try {
         if (p === '/api/scaf/summary' && req.method === 'GET') {
-          if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs', 'scaf.billing'], 'view')) return;
+          if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs', 'scaf.billing', 'scaf.stock'], 'view')) return;
           send(res, 200, await scaf.summary(ctx.tenant_id)); return;
         }
         if (p === '/api/scaf/import' && req.method === 'POST') {
@@ -671,6 +673,42 @@ const server = createServer(async (req, res) => {
             res.end(pdf); return;
           }
         }
+        // phase 5: stock (scafStock.ts, scafStockPdf.ts)
+        if (p === '/api/scaf/stock' && req.method === 'GET') { if (!allowApp(['scaf.stock'], 'view')) return; zipped(await scafS.stockOverview(ctx.tenant_id, new Date().toISOString().slice(0, 10))); return; }
+        if (p === '/api/scaf/stock/items' && req.method === 'GET') { if (!allowApp(['scaf.stock', 'scaf.jobs'], 'view')) return; send(res, 200, { items: await scafS.listItems(ctx.tenant_id), locations: await scafS.listLocations(ctx.tenant_id) }); return; }
+        if ((p === '/api/scaf/stock/items' || p === '/api/scaf/stock/locations' || p === '/api/scaf/stock/notes') && req.method === 'POST') {
+          if (!allowApp(['scaf.stock'], 'edit')) return;
+          const b = await readJson(req);
+          const r = p.endsWith('/items') ? await scafS.saveItem(ctx.tenant_id, null, b) : p.endsWith('/locations') ? await scafS.saveLocation(ctx.tenant_id, null, b) : await scafS.createNote(ctx.tenant_id, ctx.id, b);
+          send(res, r.ok ? 200 : 400, r); return;
+        }
+        mj = /^\/api\/scaf\/stock\/(items|locations|notes)\/([0-9a-f-]{36})(\/pdf)?$/.exec(p);
+        if (mj) {
+          const [, kind, rid, pdf] = mj;
+          if (kind === 'notes' && req.method === 'GET') {
+            if (!allowApp(['scaf.stock'], 'view')) return;
+            const n = await scafS.getNote(ctx.tenant_id, rid); if (!n) { send(res, 404, { error: 'Not found.' }); return; }
+            if (!pdf) { send(res, 200, n); return; }
+            const buf = await renderStockNotePdf(n, await scafQ.settings());
+            res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${n.ref}.pdf"`, 'cache-control': 'no-store' });
+            res.end(buf); return;
+          }
+          if (!allowApp(['scaf.stock'], 'edit')) return;
+          if (kind === 'notes' && req.method === 'DELETE') { const r = await scafS.deleteNote(ctx.tenant_id, rid); send(res, r.ok ? 200 : 400, r); return; }
+          if (req.method === 'PUT' && kind !== 'notes') { const b = await readJson(req); const r = kind === 'items' ? await scafS.saveItem(ctx.tenant_id, rid, b) : await scafS.saveLocation(ctx.tenant_id, rid, b); send(res, r.ok ? 200 : 400, r); return; }
+        }
+        mj = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})\/(stock|losses)$/.exec(p);
+        if (mj && mj[2] === 'stock' && req.method === 'GET') { if (!allowApp(['scaf.stock'], 'view')) return; send(res, 200, await scafS.jobStock(ctx.tenant_id, mj[1])); return; }
+        if (mj && mj[2] === 'losses' && req.method === 'POST') {
+          if (!allowApp(['scaf.stock'], 'edit')) return;
+          const b = await readJson(req);
+          if (b.charge && !hasApp(ctx.role, ['scaf.billing'], 'edit', appOverrides)) { send(res, 403, { error: 'Charging the customer needs edit access to Hire & invoicing.' }); return; }
+          const jid = mj[1];
+          const r = await scafS.settleLosses(ctx.tenant_id, ctx.id, jid, b, (lines) => scafB.chargeRequest(ctx.tenant_id, jid, ctx.id, lines));
+          send(res, r.ok ? 200 : 400, r); return;
+        }
+        mj = /^\/api\/scaf\/scaffolds\/([0-9a-f-]{36})\/bom$/.exec(p);
+        if (mj && req.method === 'PUT') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafS.saveBom(ctx.tenant_id, mj[1], (await readJson(req)).bom); send(res, r.ok ? 200 : 400, r); return; }
         mj = /^\/api\/scaf\/handovers\/([0-9a-f-]{36})\/pdf$/.exec(p);
         if (mj && req.method === 'GET') {
           if (!allowApp(['scaf.jobs'], 'view')) return;
@@ -3684,6 +3722,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   table.splt td{border-bottom:1px solid var(--line);border-left:1px solid #f0eef6;vertical-align:top;padding:6px;height:64px}td.spcrew{font-weight:700;font-size:13px;width:140px;border-left:0}td.spcell{cursor:pointer;width:14%}td.spcell:hover{background:#faf9fd}
   .spv{border-left:4px solid;background:#f7f6fb;border-radius:8px;padding:5px 7px;font-size:12px;margin-bottom:5px;cursor:pointer}.spv div{color:var(--muted);font-size:11.5px}.spv.done{opacity:.55}
   #shi_soon a{font-weight:600}
+  .snfgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 14px}.snfcat{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;margin-top:8px}
+  .snfi{display:flex !important;flex-direction:row !important;align-items:center;justify-content:space-between;gap:8px;font-size:13px !important;color:var(--ink) !important;font-weight:400 !important}.snfi small{display:block;color:var(--muted);font-size:11px}.snfi .tinput{width:70px;padding:6px 8px;text-align:right}
+  table.sstt td{padding:5px 8px}
   .scchip{display:inline-block;font-size:11.5px;font-weight:700;border:1px solid;border-radius:999px;padding:2px 9px;white-space:nowrap}
   table.sct tr.scr{cursor:pointer}table.sct tr.scr:hover td{background:#faf9fd}
   .scform{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}.scform label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
@@ -4144,6 +4185,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabScafJobs" class="tab" style="display:none" onclick="showTab('scafjobs')">Jobs</button>
         <button id="tabScafPlan" class="tab" style="display:none" onclick="showTab('scafplan')">Planner</button>
         <button id="tabScafHire" class="tab" style="display:none" onclick="showTab('scafhire')">Hire &amp; invoicing</button>
+        <button id="tabScafStock" class="tab" style="display:none" onclick="showTab('scafstock')">Stock</button>
         <button id="tabScafCust" class="tab" style="display:none" onclick="showTab('scafcust')">Customers</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
@@ -4242,6 +4284,20 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin:22px 0 8px"><h3 style="margin:0">Requests for invoice</h3><select class="tinput" id="shi_rqf" style="margin-left:auto"><option value="open">Open (draft, with accounts, unpaid)</option><option value="draft">Draft</option><option value="sent">Sent to accounts</option><option value="invoiced">Invoiced, unpaid</option><option value="overdue">Overdue</option><option value="paid">Paid</option><option value="cancelled">Cancelled</option><option value="all">All</option></select></div>
       <div class="card2" style="overflow:auto;margin-bottom:30px"><table class="fjl sct"><thead><tr><th>REF</th><th>CUSTOMER</th><th>TYPE</th><th>PERIOD</th><th style="text-align:right">TO INVOICE</th><th>STATUS</th><th>XERO</th><th>DUE</th></tr></thead><tbody id="shi_reqs"></tbody></table></div>
+    </main>
+  </div>
+  <div id="scafStockView" style="display:none">
+    <main style="max-width:1500px">
+      <div class="titlerow"><div><h2>Stock</h2><div class="sub">Yard, vans and sites. Every movement is a numbered note; stock may go negative until it is counted.</div></div></div>
+      <div id="sst_acts" style="display:none;margin:14px 0 4px"><div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="add" data-nk="delivery">+ Delivery</button><button class="add" data-nk="collection">+ Collection</button><button class="pobtn" data-nk="transfer">+ Transfer</button><button class="pobtn" data-nk="purchase">+ Goods in</button><button class="pobtn" data-nk="stocktake">+ Stocktake</button>
+        <span style="flex:1"></span><button class="pobtn" id="sst_cat">Catalogue</button><button class="pobtn" id="sst_loc">Yard and vans</button></div></div>
+      <div class="statgrid" id="sst_stats" style="margin:12px 0 14px"></div>
+      <div class="card2" style="overflow:auto" id="sst_table"></div>
+      <h3 style="margin:22px 0 4px">Availability — next 6 weeks</h3><div class="sub" style="margin:0 0 8px">Yard + vans after the planned erections (−) and dismantles (+, back the week after), from the scaffolds' estimated materials. Red = short.</div>
+      <div class="card2" style="overflow:auto;padding:12px 14px" id="sst_fc"></div>
+      <h3 style="margin:22px 0 8px">Sites holding stock</h3><div class="card2" style="overflow:auto;padding:6px 8px" id="sst_sites"></div>
+      <h3 style="margin:22px 0 8px">Recent notes</h3><div class="card2" style="overflow:auto;padding:6px 8px;margin-bottom:30px" id="sst_notes"></div>
     </main>
   </div>
   <div id="scafCustView" style="display:none">
@@ -5097,7 +5153,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(location.hash==='#costs'&&canCap('expenses.report')){ history.replaceState(null,'',location.pathname); return 'myexp'; }
     var t=sessionStorage.getItem('ace_tab')||(myBiz().length>1?'home':(myRole==='scanner'?'mapping':'dashboard'));
     if(t==='home'&&myBiz().length>1)return 'home';
-    var scafTabs=['scaf','scafenq','scafjobs','scafplan','scafhire','scafcust'];
+    var scafTabs=['scaf','scafenq','scafjobs','scafplan','scafhire','scafstock','scafcust'];
     if(scafTabs.indexOf(t)>=0)return myBiz().some(function(b){ return b.key==='scaffolding'; })?t:'home';
     if(myRole==='scaffolding')return 'scafenq';
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
@@ -7010,9 +7066,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sessionStorage.setItem('ace_tab',name);
     bizFollowTab(name);
     document.getElementById('homeView').style.display=name==='home'?'block':'none';
-    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafplan','scafPlanView','tabScafPlan'],['scafhire','scafHireView','tabScafHire'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
+    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafplan','scafPlanView','tabScafPlan'],['scafhire','scafHireView','tabScafHire'],['scafstock','scafStockView','tabScafStock'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
       document.getElementById(v[1]).style.display=name===v[0]?'block':'none'; var t=document.getElementById(v[2]); if(t)t.classList.toggle('on',name===v[0]); });
-    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafplan')loadScafPlan(); if(name==='scafhire')loadScafHire(); if(name==='scafcust')loadScafCust();
+    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafplan')loadScafPlan(); if(name==='scafhire')loadScafHire(); if(name==='scafstock')loadScafStock(); if(name==='scafcust')loadScafCust();
     if(name==='home')renderHome();
     document.getElementById('dashView').style.display=name==='dashboard'?'block':'none';
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
@@ -7378,8 +7434,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sv_print').onclick=function(){ window.print(); };
   })();
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafPlan','tabScafHire','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafplan:'scaffolding',scafhire:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafPlan','tabScafHire','tabScafStock','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafplan:'scaffolding',scafhire:'scaffolding',scafstock:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -7580,6 +7636,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('spl_next').onclick=function(){ SCP.from=scAdd(SCP.from,7); loadScafPlan(); };
     document.getElementById('spl_today').onclick=function(){ SCP.from=null; loadScafPlan(); };
     document.getElementById('spl_crews').onclick=scCrews;
+    document.querySelectorAll('#sst_acts [data-nk]').forEach(function(b){ b.onclick=function(){ scNoteForm(b.getAttribute('data-nk')); }; });
+    document.getElementById('sst_cat').onclick=scCatalogue; document.getElementById('sst_loc').onclick=scLocations;
     var hset=function(d){ document.getElementById('shi_upto').value=d; loadScafHire(); };
     document.getElementById('shi_week').onclick=function(){ hset(scLastSunday()); }; document.getElementById('shi_month').onclick=function(){ hset(scLastMonthEnd()); }; document.getElementById('shi_today').onclick=function(){ hset(scToday()); };
     document.getElementById('shi_upto').onchange=loadScafHire; document.getElementById('shi_freq').onchange=loadScafHire; document.getElementById('shi_rqf').onchange=renderScafReqs;
@@ -7801,6 +7859,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     // visits
     h+='<div style="display:flex;align-items:center;gap:10px;margin:20px 0 6px"><b>Visits</b>'+(ed?'<button class="pobtn" id="sjb_visit" style="margin-left:auto">+ Plan a visit</button>':'')+'</div>'
       +((j.visits||[]).length?'<table class="fjl"><tbody>'+j.visits.map(function(v){ return '<tr class="scr" data-v="'+v.id+'" style="cursor:pointer"><td style="white-space:nowrap">'+scDay(v.day)+(v.days>1?' +'+(v.days-1)+'d':'')+'</td><td><span class="scchip" style="color:'+SC_VKC[v.kind]+';border-color:'+SC_VKC[v.kind]+'33">'+esc(SC_VK[v.kind]||v.kind)+'</span></td><td>'+esc(v.crew||'—')+'</td><td class="sub">'+esc(v.status)+(v.notes?' · '+esc(v.notes):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">None planned.</div>');
+    if(canApp('scaf.stock')!=='off')h+='<div style="font-weight:700;margin:20px 0 6px">Materials on site</div><div id="sjb_stock"><div class="sub">Loading…</div></div>';
     if(canApp('scaf.billing')!=='off')h+='<div style="font-weight:700;margin:20px 0 6px">Invoicing</div><div id="sjb_bill"><div class="sub">Loading…</div></div>';
     // handovers
     if((j.handovers||[]).length)h+='<div style="font-weight:700;margin:20px 0 6px">Handover certificates</div>'+j.handovers.map(function(x){ return '<div>'+scDay(x.day)+' · '+esc(x.client_name||'')+' · '+(x.scaffold_ids||[]).length+' scaffold(s) · <a href="#" data-hpdf="'+x.id+'">PDF</a></div>'; }).join('');
@@ -7808,6 +7867,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     scModal('ACESC'+j.number,h); scLinks();
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1040px,96vw)';
     if(canApp('scaf.billing')!=='off')scJobBilling(j);
+    if(canApp('scaf.stock')!=='off')scJobStock(j);
     document.querySelectorAll('#modalBody [data-hpdf]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scPdf('/api/scaf/handovers/'+a.getAttribute('data-hpdf')+'/pdf','Handover ACESC'+j.number+'.pdf'); }; });
     document.querySelectorAll('#modalBody tr[data-v]').forEach(function(tr){ tr.onclick=function(){ var v=j.visits.filter(function(x){ return x.id===tr.getAttribute('data-v'); })[0]; scVisitForm(v,{job:j}); }; });
     if(!ed)return;
@@ -7836,6 +7896,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<label style="flex-direction:row;align-items:center;gap:6px;grid-column:1/-1"><input type="checkbox" id="ssf_var"'+(s.variation?' checked':'')+'> Variation / adaption (added after the quote — adds to the job price)</label>'
       +'<label>Confirmed in writing by'+scInput('ssf_cby',s.confirmed_by,'name, email / letter')+'</label><label>On<input type="date" class="tinput" id="ssf_con" value="'+esc(s.confirmed_on||'')+'"></label>'
       +(isNew?'':'<label>Hire stops on (dismantle day the team confirms)<input type="date" class="tinput" id="ssf_stop" value="'+esc(s.hire_stop_on||'')+'"></label><label>Down on<span style="padding:9px 0;font-size:14px;color:var(--ink)">'+(s.down_on?scDay(s.down_on):'—')+'</span></label>')+'</div>'
+      +(isNew?'':'<div style="font-weight:700;margin:16px 0 6px">Estimated materials <span class="sub" style="font-weight:400">— used for the availability forecast</span></div><div id="ssf_bom"><div class="sub">Loading…</div></div>')
       +scDl('scdl_el2',(SCL&&SCL.elements)||[])
       +'<div style="margin-top:12px;display:flex;gap:8px"><button class="add" id="ssf_save">'+(isNew?'Add':'Save')+'</button><button class="pobtn" id="ssf_back">Back to the job</button>'+(!isNew&&s.status==='booked'?'<button class="del" id="ssf_del" style="margin-left:auto">Remove</button>':'')+'</div>');
     if(!SCL)scLookups();
@@ -7843,6 +7904,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('ssf_save').onclick=async function(){
       var b={element:scVal('ssf_el'),tag:scVal('ssf_tag'),description:scVal('ssf_desc'),price:scVal('ssf_price'),labour:scVal('ssf_lab'),hire_weeks:scVal('ssf_hw'),rent_pct:scVal('ssf_rp'),rent_weekly:scVal('ssf_rw'),variation:document.getElementById('ssf_var').checked,confirmed_by:scVal('ssf_cby'),confirmed_on:scVal('ssf_con')}; if(!isNew)b.hire_stop_on=scVal('ssf_stop');
       if(await scSend(isNew?'/api/scaf/jobs/'+j.id+'/scaffolds':'/api/scaf/scaffolds/'+s.id,isNew?'POST':'PUT',b)){ tShow('Saved'); scJobsChanged(); scOpenJob(j.id); } };
+    if(!isNew)scBomEditor(s);
     var del=document.getElementById('ssf_del'); if(del)del.onclick=async function(){ if(!confirm('Remove this scaffold from the job?'))return; if(await scSend('/api/scaf/scaffolds/'+s.id,'DELETE')){ tShow('Removed'); scOpenJob(j.id); } };
   }
   function scHandoverForm(j,ticked,day){
@@ -8018,6 +8080,139 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(!ed)return;
     document.getElementById('sjb_rent').onclick=async function(){ var d=await scSend('/api/scaf/jobs/'+j.id+'/requests','POST',{kind:'rent',upTo:scVal('sjb_rupto')}); if(d)scOpenReq(d.id); };
     document.getElementById('sjb_price').onclick=async function(){ var v=scVal('sjb_pamt').trim(), b={kind:'price',description:scVal('sjb_pdesc')}; if(v.indexOf('%')>=0)b.pct=v; else b.amount=v; var d=await scSend('/api/scaf/jobs/'+j.id+'/requests','POST',b); if(d)scOpenReq(d.id); };
+  }
+  // ---- Scaffolding phase 5: stock — yard, vans, sites; notes; forecast; losses ----
+  var SCS={data:null,items:null};
+  var SC_NK={delivery:'Delivery',collection:'Collection',transfer:'Transfer',purchase:'Goods in',stocktake:'Stocktake',loss:'Write-off'};
+  function scQty(n){ var v=Number(n)||0; return (v<0?'<span style="color:#b42318;font-weight:700">':'')+czNum(v,2)+(v<0?'</span>':''); }
+  async function scStockItems(force){ if(!SCS.items||force){ var d=await scGet('/api/scaf/stock/items'); SCS.items=d.items; SCS.locs=d.locations; } return SCS.items; }
+  async function loadScafStock(){
+    var box=document.getElementById('sst_table'); box.innerHTML='<div class="sub">Loading…</div>';
+    try{ SCS.data=await scGet('/api/scaf/stock'); }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var d=SCS.data, ed=canApp('scaf.stock')==='edit'; SCS.items=d.items; SCS.locs=d.locations;
+    document.getElementById('sst_acts').style.display=ed?'':'none';
+    var locs=d.locations.filter(function(l){ return l.active!==false; }), items=d.items.filter(function(i){ return i.active!==false; });
+    var sumLoc=function(id){ var b=d.byLoc[id]||{}; return Object.keys(b).reduce(function(a,k){ return a+(b[k]||0); },0); };
+    var siteVal=d.sites.reduce(function(a,s){ return a+s.value; },0), shorts=d.forecast.filter(function(f){ return f.short; }).length;
+    document.getElementById('sst_stats').innerHTML=locs.map(function(l){ return svStat(czNum(sumLoc(l.id),0),l.name+(l.reg?' · '+l.reg:'')); }).join('')+svStat(czNum(d.sites.length,0),'Sites holding stock')+svStat(scMoney(Math.round(siteVal)),'Value out on sites')+svStat(shorts?'<span style="color:#b42318">'+shorts+'</span>':'0','Items short in the next 6 weeks');
+    var cat='', h='<table class="fjl sct sstt"><thead><tr><th>CODE</th><th>ITEM</th>'+locs.map(function(l){ return '<th style="text-align:right">'+esc(l.name.toUpperCase())+'</th>'; }).join('')+'<th style="text-align:right">ON SITES</th><th style="text-align:right">TOTAL</th></tr></thead><tbody>';
+    items.forEach(function(i){ if(i.category!==cat){ cat=i.category; h+='<tr><td colspan="'+(locs.length+4)+'" class="groupt" style="padding:10px 6px 4px">'+esc(cat.toUpperCase())+'</td></tr>'; }
+      var tot=0, cells=locs.map(function(l){ var q=(d.byLoc[l.id]||{})[i.id]||0; tot+=q; return '<td class="r">'+(q?scQty(q):'')+'</td>'; }).join(''), site=d.onSites[i.id]||0; tot+=site;
+      h+='<tr><td>'+esc(i.code)+'</td><td>'+esc(i.name)+'</td>'+cells+'<td class="r">'+(site?scQty(site):'')+'</td><td class="r"><b>'+(tot?scQty(tot):'')+'</b></td></tr>'; });
+    box.innerHTML=h+'</tbody></table>';
+    // forecast
+    var im={}; d.items.forEach(function(i){ im[i.id]=i; });
+    document.getElementById('sst_fc').innerHTML=d.forecast.length?'<table class="fjl"><thead><tr><th>ITEM</th><th style="text-align:right">YARD + VANS NOW</th>'+d.weeks.map(function(w){ return '<th style="text-align:right">W/C '+scDay(w).slice(0,5)+'</th>'; }).join('')+'</tr></thead><tbody>'
+      +d.forecast.map(function(f){ var i=im[f.item]||{}; return '<tr><td>'+esc((i.code||'')+' '+(i.name||''))+'</td><td class="r">'+czNum(f.now,0)+'</td>'+f.after.map(function(a,k){ return '<td class="r" title="needed '+f.need[k]+', back '+f.back[k]+'">'+scQty(a)+(f.need[k]?'<div class="sub" style="margin:0">−'+czNum(f.need[k],0)+'</div>':'')+(f.back[k]?'<div class="sub" style="margin:0">+'+czNum(f.back[k],0)+'</div>':'')+'</td>'; }).join('')+'</tr>'; }).join('')+'</tbody></table>'
+      :'<div class="sub" style="margin:0">Nothing planned with estimated materials. Add the materials to the scaffolds (job window ▸ scaffold ▸ Edit) and plan the erect / dismantle visits.</div>';
+    document.getElementById('sst_sites').innerHTML=d.sites.length?'<table class="fjl sct"><tbody>'+d.sites.map(function(s){ return '<tr class="scr" data-j="'+s.id+'"><td><b>ACESC'+s.number+'</b></td><td>'+esc(s.title||'')+'</td><td>'+esc(SC_JOB_STAGE[s.stage]||s.stage||'')+'</td><td class="r">'+czNum(s.pieces,0)+' pcs</td><td class="r">'+czNum(s.weight,0)+' kg</td><td class="r">'+scMoney(Math.round(s.value))+'</td><td>'+(s.negative?'<span style="color:#b42318">more collected than delivered</span>':'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">No stock out on sites.</div>';
+    document.querySelectorAll('#sst_sites tr[data-j]').forEach(function(tr){ tr.onclick=function(){ scOpenJob(tr.getAttribute('data-j')); }; });
+    document.getElementById('sst_notes').innerHTML=d.notes.length?'<table class="fjl sct"><tbody>'+d.notes.slice(0,60).map(function(n){ return '<tr class="scr" data-n="'+n.id+'"><td><b>'+esc(n.ref)+'</b></td><td>'+scDay(n.day)+'</td><td>'+esc(SC_NK[n.kind]||n.kind)+(n.final?' (final)':'')+'</td><td>'+scNotePlaces(n)+'</td><td class="r">'+czNum(n.pieces,0)+' pcs</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">No notes yet.</div>';
+    document.querySelectorAll('#sst_notes tr[data-n]').forEach(function(tr){ tr.onclick=function(){ scOpenNote(tr.getAttribute('data-n')); }; });
+  }
+  function scLocName(id){ var l=(SCS.locs||[]).filter(function(x){ return x.id===id; })[0]; return l?l.name:'—'; }
+  function scNotePlaces(n){ var site=n.job?'ACESC'+n.job.number:'site';
+    return esc(n.kind==='delivery'?scLocName(n.from_loc)+' → '+site:n.kind==='collection'?site+' → '+scLocName(n.to_loc):n.kind==='transfer'?scLocName(n.from_loc)+' → '+scLocName(n.to_loc):n.kind==='loss'?(n.job?site:scLocName(n.from_loc))+' → written off':scLocName(n.to_loc)); }
+  async function scOpenNote(id){
+    scModal('Stock note','<div class="sub">Loading…</div>');
+    try{ var n=await scGet('/api/scaf/stock/notes/'+id); }catch(e){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(e.message)+'</div>'; return; }
+    var kg=n.lines.reduce(function(a,l){ return a+(l.weight||0); },0);
+    scModal(esc(n.ref)+' · '+esc(SC_NK[n.kind]||n.kind),'<div class="sub" style="margin:0 0 8px">'+scDay(n.day)+' · '+scNotePlaces({kind:n.kind,from_loc:n.from_loc,to_loc:n.to_loc,job:n.job})+(n.final?' · final collection':'')+(n.driver?' · driver '+esc(n.driver):'')+(n.signed_by?' · signed '+esc(n.signed_by):'')+(n.notes?' · '+esc(n.notes):'')+'</div>'
+      +'<table class="fjl"><tbody>'+n.lines.map(function(l){ return '<tr><td>'+esc(l.code||'')+'</td><td>'+esc(l.name||'')+'</td><td class="r">'+scQty(l.qty)+' '+esc(l.unit||'')+'</td><td class="r sub">'+(l.weight!=null?czNum(l.weight,0)+' kg':'')+'</td></tr>'; }).join('')+'</tbody></table><div class="sub" style="margin:6px 0 0;text-align:right">'+czNum(kg,0)+' kg</div>'
+      +'<div style="display:flex;gap:8px;margin-top:12px"><button class="pobtn" id="snt_pdf">Download PDF</button>'+(canApp('scaf.stock')==='edit'?'<button class="del" id="snt_del" style="margin-left:auto">Delete note</button>':'')+'</div>');
+    document.getElementById('snt_pdf').onclick=function(){ scPdf('/api/scaf/stock/notes/'+id+'/pdf',n.ref+'.pdf'); };
+    var del=document.getElementById('snt_del'); if(del)del.onclick=async function(){ if(!confirm('Delete '+n.ref+'? Its quantities come off the stock again.'))return; if(await scSend('/api/scaf/stock/notes/'+id,'DELETE')){ tShow('Deleted'); scStockChanged(); closeModal(true); } };
+  }
+  function scStockChanged(){ var v=document.getElementById('scafStockView'); if(v&&v.style.display==='block')loadScafStock(); }
+  // a note: delivery / collection / transfer / goods in / stocktake
+  async function scNoteForm(kind,ctx){
+    ctx=ctx||{}; try{ await scStockItems(); }catch(e){ tShow(e.message); return; }
+    if(!SC.jobs&&!ctx.job){ try{ SC.jobs=(await scGet('/api/scaf/jobs')).jobs; }catch(e){ SC.jobs=[]; } }
+    var locs=SCS.locs.filter(function(l){ return l.active!==false; }), lo=locs.map(function(l){ return [l.id,l.name+(l.reg?' · '+l.reg:'')]; });
+    var vans=locs.filter(function(l){ return l.kind==='van'; }), yard=locs.filter(function(l){ return l.kind==='yard'; })[0];
+    var onSite={}, here={};
+    var jobPick=(kind==='delivery'||kind==='collection')?(ctx.job?'<label style="grid-column:1/-1">Site<span style="padding:6px 0;font-size:14px;color:var(--ink)">ACESC'+ctx.job.number+' · '+esc(ctx.job.title||'')+'</span></label>'
+      :'<label style="grid-column:1/-1">Site (job)<input class="tinput" id="snf_job" list="scdl_sjobs" placeholder="ACESC number or site" autocomplete="off"></label>'+scDl('scdl_sjobs',(SC.jobs||[]).filter(function(j){ return j.stage!=='down'; }).map(function(j){ return 'ACESC'+j.number+' · '+(j.title||''); }))):'';
+    var h='<div class="scform"><label>Day<input type="date" class="tinput" id="snf_day" value="'+scToday()+'"></label><span></span>'+jobPick
+      +((kind==='delivery'||kind==='transfer')?'<label>From<select class="tinput" id="snf_from">'+scOpt(lo,(vans[0]||yard||{}).id)+'</select></label>':'')
+      +((kind==='collection'||kind==='transfer'||kind==='purchase'||kind==='stocktake')?'<label>'+(kind==='stocktake'?'Counted at':'To')+'<select class="tinput" id="snf_to">'+scOpt(lo,kind==='collection'?(vans[0]||yard||{}).id:(yard||{}).id)+'</select></label>':'')
+      +(kind!=='stocktake'&&kind!=='purchase'?'<label>Driver'+scInput('snf_driver','')+'</label><label>Vehicle'+scInput('snf_vehicle','')+'</label>':'')
+      +'<label>'+(kind==='delivery'?'Received on site by':kind==='collection'?'Checked in by':'Checked by')+scInput('snf_signed','')+'</label>'
+      +(kind==='collection'?'<label style="flex-direction:row;align-items:center;gap:6px;margin-top:20px"><input type="checkbox" id="snf_final"> Final collection (the site should now be empty)</label>':'<span></span>')
+      +'<label style="grid-column:1/-1">Notes'+scInput('snf_notes','')+'</label></div>'
+      +'<div style="display:flex;align-items:center;gap:10px;margin:14px 0 6px"><b>'+(kind==='stocktake'?'Counted':'Items')+'</b><span class="sub" style="margin:0" id="snf_hint">'+(kind==='stocktake'?'enter what you counted; the difference to the book stock is recorded':'')+'</span>'+(kind==='collection'?'<button class="pobtn" id="snf_fill" style="margin-left:auto">Fill with everything on site</button>':'')+'</div>'
+      +'<div class="snfgrid" id="snf_items"></div>'
+      +'<div style="margin-top:12px;display:flex;gap:8px"><button class="add" id="snf_save">Save '+esc(SC_NK[kind].toLowerCase())+' note</button>'+(ctx.job?'<button class="pobtn" id="snf_back">Back to the job</button>':'')+'</div>';
+    scModal(SC_NK[kind]+' note',h);
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(980px,96vw)';
+    var job=ctx.job||null;
+    var draw=function(){ var cat='', g=''; SCS.items.filter(function(i){ return i.active!==false; }).forEach(function(i){ if(i.category!==cat){ cat=i.category; g+='<div class="snfcat">'+esc(cat)+'</div>'; }
+        var info=kind==='collection'&&onSite[i.id]?'on site '+czNum(onSite[i.id],0):kind==='stocktake'&&here[i.id]!=null?'book '+czNum(here[i.id],0):'';
+        g+='<label class="snfi"><span>'+esc(i.name)+'<small>'+esc(i.code)+(info?' · '+info:'')+'</small></span><input class="tinput" data-item="'+i.id+'" inputmode="decimal"></label>'; });
+      document.getElementById('snf_items').innerHTML=g; };
+    var loadSite=async function(){ onSite={}; if(job&&kind==='collection'){ try{ var s=await scGet('/api/scaf/jobs/'+job.id+'/stock'); s.onSite.forEach(function(x){ onSite[x.item_id]=x.qty; }); }catch(e){} } draw(); };
+    var loadHere=function(){ here={}; if(kind==='stocktake'){ var id=scVal('snf_to'); if(!SCS.data){ return draw(); } var b=SCS.data.byLoc[id]||{}; SCS.items.forEach(function(i){ here[i.id]=b[i.id]||0; }); } draw(); };
+    if(kind==='stocktake'){ if(!SCS.data){ try{ SCS.data=await scGet('/api/scaf/stock'); }catch(e){} } loadHere(); document.getElementById('snf_to').onchange=loadHere; } else await loadSite();
+    var ji=document.getElementById('snf_job'); if(ji)ji.onchange=async function(){ var m=/ACESC([0-9]+)/i.exec(ji.value), n=m?Number(m[1]):null; job=(SC.jobs||[]).filter(function(x){ return x.number===n; })[0]||null; await loadSite(); };
+    var fill=document.getElementById('snf_fill'); if(fill)fill.onclick=function(){ document.querySelectorAll('#snf_items input').forEach(function(i){ var q=onSite[i.getAttribute('data-item')]; i.value=q>0?q:''; }); var f=document.getElementById('snf_final'); if(f)f.checked=true; };
+    var back=document.getElementById('snf_back'); if(back)back.onclick=function(){ scOpenJob(job.id); };
+    document.getElementById('snf_save').onclick=async function(){
+      if((kind==='delivery'||kind==='collection')&&!job){ tShow('Choose the site (job)'); return; }
+      var lines=[]; document.querySelectorAll('#snf_items input').forEach(function(i){ var v=i.value.trim(); if(v==='')return; var q=Number(v.replace(',','.')); if(!isFinite(q))return; var it=i.getAttribute('data-item'); if(kind==='stocktake')q=Math.round((q-(here[it]||0))*100)/100; if(q)lines.push({item_id:it,qty:q}); });
+      if(!lines.length){ tShow(kind==='stocktake'?'No difference to the book stock':'Enter the quantities'); return; }
+      var b={kind:kind,day:scVal('snf_day'),job_id:job?job.id:null,from_loc:scVal('snf_from')||null,to_loc:scVal('snf_to')||null,driver:scVal('snf_driver'),vehicle:scVal('snf_vehicle'),signed_by:scVal('snf_signed'),notes:scVal('snf_notes'),final:!!(document.getElementById('snf_final')||{}).checked,lines:lines};
+      var d=await scSend('/api/scaf/stock/notes','POST',b); if(!d)return;
+      tShow('SN-'+String(d.number).padStart(4,'0')+' saved'); scStockChanged();
+      if(kind==='delivery'||kind==='collection')scPdf('/api/scaf/stock/notes/'+d.id+'/pdf','SN-'+String(d.number).padStart(4,'0')+'.pdf');
+      if(ctx.job)scOpenJob(job.id); else closeModal(true); };
+  }
+  // materials on a site — in the job window
+  async function scJobStock(j){
+    var box=document.getElementById('sjb_stock'); if(!box)return; var ed=canApp('scaf.stock')==='edit';
+    try{ var s=await scGet('/api/scaf/jobs/'+j.id+'/stock'); }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var miss=s.onSite.filter(function(x){ return x.qty>0; }), val=miss.reduce(function(a,x){ return a+(x.value||0); },0);
+    box.innerHTML=(s.onSite.length?'<table class="fjl"><tbody>'+s.onSite.map(function(x){ return '<tr><td>'+esc(x.code||'')+'</td><td>'+esc(x.name||'')+'</td><td class="r">'+scQty(x.qty)+' '+esc(x.unit||'')+'</td><td class="r sub">'+(x.value!=null?scMoney(x.value):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">Nothing on site.</div>')
+      +(s.notes.length?'<div class="sub" style="margin:6px 0 0">'+s.notes.map(function(n){ return '<a href="#" data-sn="'+n.id+'">'+esc(n.ref)+'</a> '+esc(SC_NK[n.kind]||n.kind)+' '+scDay(n.day); }).join(' · ')+'</div>':'')
+      +(s.finalCollected&&miss.length?'<div class="scacts" style="background:#fff1f0"><b style="color:#b42318">Missing after the final collection: '+miss.length+' item(s), '+scMoney(Math.round(val*100)/100)+' at replacement value</b>'+(ed?'<button class="pobtn" id="sjb_wo">Write off</button>'+(canApp('scaf.billing')==='edit'?'<button class="add" id="sjb_woc">Write off and charge the customer</button>':''):'')+'</div>':'')
+      +(ed?'<div class="scacts"><button class="pobtn" id="sjb_del">+ Delivery note</button><button class="pobtn" id="sjb_col">+ Collection note</button></div>':'');
+    box.querySelectorAll('[data-sn]').forEach(function(a){ a.onclick=function(e){ e.preventDefault(); scOpenNote(a.getAttribute('data-sn')); }; });
+    if(!ed)return;
+    document.getElementById('sjb_del').onclick=function(){ scNoteForm('delivery',{job:j}); };
+    document.getElementById('sjb_col').onclick=function(){ scNoteForm('collection',{job:j}); };
+    var settle=async function(charge){ if(!confirm(charge?'Write the missing items off and raise a request for invoice to the customer at replacement value?':'Write the missing items off (no charge)?'))return;
+      var d=await scSend('/api/scaf/jobs/'+j.id+'/losses','POST',{charge:charge}); if(d){ tShow('Written off'); scStockChanged(); if(d.request)scOpenReq(d.request); else scOpenJob(j.id); } };
+    var a=document.getElementById('sjb_wo'); if(a)a.onclick=function(){ settle(false); };
+    var c=document.getElementById('sjb_woc'); if(c)c.onclick=function(){ settle(true); };
+  }
+  // estimated materials of a scaffold — in the scaffold form
+  async function scBomEditor(s){
+    var box=document.getElementById('ssf_bom'); if(!box)return;
+    try{ await scStockItems(); }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var bom=s.bom||{}, cat='', g='';
+    SCS.items.filter(function(i){ return i.active!==false||bom[i.id]; }).forEach(function(i){ if(i.category!==cat){ cat=i.category; g+='<div class="snfcat">'+esc(cat)+'</div>'; } g+='<label class="snfi"><span>'+esc(i.name)+'<small>'+esc(i.code)+'</small></span><input class="tinput" data-item="'+i.id+'" value="'+(bom[i.id]||'')+'" inputmode="decimal"></label>'; });
+    box.innerHTML='<div class="snfgrid">'+g+'</div><div style="margin-top:8px"><button class="pobtn" id="ssf_bomsave">Save materials</button> <span class="sub" style="margin:0" id="ssf_bomkg"></span></div>';
+    var kg=function(){ var t=0; box.querySelectorAll('input[data-item]').forEach(function(i){ var it=SCS.items.filter(function(x){ return x.id===i.getAttribute('data-item'); })[0]; t+=(Number(i.value)||0)*((it&&it.weight_kg)||0); }); document.getElementById('ssf_bomkg').textContent=t?'≈ '+czNum(t,0)+' kg':''; };
+    box.querySelectorAll('input').forEach(function(i){ i.oninput=kg; }); kg();
+    document.getElementById('ssf_bomsave').onclick=async function(){ var b={}; box.querySelectorAll('input[data-item]').forEach(function(i){ var q=Number(i.value); if(q>0)b[i.getAttribute('data-item')]=q; });
+      if(await scSend('/api/scaf/scaffolds/'+s.id+'/bom','PUT',{bom:b})){ tShow('Materials saved'); s.bom=b; } };
+  }
+  // catalogue and yard / vans
+  async function scCatalogue(){
+    try{ await scStockItems(true); }catch(e){ tShow(e.message); return; }
+    var row=function(i){ i=i||{active:true,unit:'pcs',category:'Fittings'}; return '<tr data-i="'+(i.id||'')+'"><td>'+scInput('',i.code,'Code','70px')+'</td><td>'+scInput('',i.name,'Name')+'</td><td>'+scInput('',i.category,'Category','110px')+'</td><td>'+scInput('',i.unit,'Unit','56px')+'</td><td>'+scInput('',i.weight_kg,'kg','64px')+'</td><td>'+scInput('',i.value,'£ value','76px')+'</td><td>'+scInput('',i.position,'#','46px')+'</td><td><input type="checkbox"'+(i.active!==false?' checked':'')+' title="active"></td><td><button class="pobtn">'+(i.id?'Save':'Add')+'</button></td></tr>'; };
+    scModal('Stock catalogue','<div class="sub" style="margin:0 0 10px">Weight per piece (kg) gives the weight of a load; the value is the replacement price a loss is charged at. # orders the list.</div><div style="overflow:auto;max-height:65vh"><table class="fjl scqt"><thead><tr><th>CODE</th><th>NAME</th><th>CATEGORY</th><th>UNIT</th><th>KG</th><th>VALUE £</th><th>#</th><th>ON</th><th></th></tr></thead><tbody>'+SCS.items.map(row).join('')+row(null)+'</tbody></table></div>');
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1000px,96vw)';
+    document.querySelectorAll('#modalBody tr[data-i]').forEach(function(tr){ tr.querySelector('button').onclick=async function(){ var id=tr.getAttribute('data-i'), i=tr.querySelectorAll('input');
+      var b={code:i[0].value,name:i[1].value,category:i[2].value,unit:i[3].value,weight_kg:i[4].value,value:i[5].value,position:i[6].value,active:i[7].checked};
+      if(await scSend(id?'/api/scaf/stock/items/'+id:'/api/scaf/stock/items',id?'PUT':'POST',b)){ tShow('Saved'); SCS.items=null; scStockChanged(); scCatalogue(); } }; });
+  }
+  async function scLocations(){
+    try{ await scStockItems(true); }catch(e){ tShow(e.message); return; }
+    var row=function(l){ l=l||{kind:'van',active:true}; return '<tr data-l="'+(l.id||'')+'"><td><select class="tinput">'+scOpt([['yard','Yard'],['van','Van']],l.kind)+'</select></td><td>'+scInput('',l.name,'Name')+'</td><td>'+scInput('',l.reg,'Registration','120px')+'</td><td>'+scInput('',l.position,'#','46px')+'</td><td><input type="checkbox"'+(l.active!==false?' checked':'')+' title="active"></td><td><button class="pobtn">'+(l.id?'Save':'Add')+'</button></td></tr>'; };
+    scModal('Yard and vans','<table class="fjl scqt"><thead><tr><th>KIND</th><th>NAME</th><th>REG</th><th>#</th><th>ON</th><th></th></tr></thead><tbody>'+SCS.locs.map(row).join('')+row(null)+'</tbody></table>');
+    document.querySelectorAll('#modalBody tr[data-l]').forEach(function(tr){ tr.querySelector('button').onclick=async function(){ var id=tr.getAttribute('data-l'), s=tr.querySelector('select'), i=tr.querySelectorAll('input');
+      var b={kind:s.value,name:i[0].value,reg:i[1].value,position:i[2].value,active:i[3].checked};
+      if(await scSend(id?'/api/scaf/stock/locations/'+id:'/api/scaf/stock/locations',id?'PUT':'POST',b)){ tShow('Saved'); scStockChanged(); scLocations(); } }; });
   }
   // ---- ACE Group businesses (home page tiles). Which ones a user sees comes from /api/me (Admin ▸ Users). ----
   function bizAll(){ return (typeof ROLE_MATRIX==='object'&&ROLE_MATRIX&&ROLE_MATRIX.businesses)||[]; }
@@ -8205,7 +8400,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabCortizo',canCap('stock.view'));
     show('tabWh',canApp('wh.issues')!=='off');
     var hasScaf=myBiz().some(function(b){ return b.key==='scaffolding'; });
-    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafPlan',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafHire',hasScaf&&canApp('scaf.billing')!=='off'); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
+    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafPlan',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafHire',hasScaf&&canApp('scaf.billing')!=='off'); show('tabScafStock',hasScaf&&canApp('scaf.stock')!=='off'); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
     show('tabLabels',canCap('labels.print'));
     show('tabConfirm',canCap('confirmations.manage'));
     show('tabFinCosts',canApp('fin.costs')!=='off');
