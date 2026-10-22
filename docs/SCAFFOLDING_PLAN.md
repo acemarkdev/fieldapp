@@ -54,10 +54,10 @@ Movement / Delivery & collection note** · Invoice / Payment application.
 
 | # | Phase | Main deliverables | Office / phone | Size* |
 |---|---|---|---|---|
-| **0** | **Foundations** | Business set-up (separate data, numbering ACE#### / ACESC####), roles (scaff office, estimator, sales, supervisor, scaffolder, subcontract crew, accounts), customers / contacts / sites, monday import of enquiries + projects (read-only history). | Office | 2–3 wk |
+| **0** | **Foundations** | **Home page with business tiles** (Framework, Acemark PL, Scaffolding) and per-business menus; scaffolding as its own business (numbering ACE#### / ACESC####, App access per role), roles (scaff office, estimator, sales, supervisor, scaffolder, subcontract crew, accounts), customers / contacts / sites, **one-off monday import** of enquiries + projects. | Office | 2–3 wk |
 | **1** | **CRM: leads, enquiries, quotes** | Enquiry pipeline with today's statuses and loss reasons; follow-up / chase-up reminders; survey on the phone (photos, measurements, notes); **quote builder with elements** (type, description, price, est. cost up / down, initial hire weeks, weekly rate or %, labour vs hire split); quote PDF; won → job. | Office + phone (survey) | 3–4 wk |
 | **2** | **Jobs & contracts** | Job from the won quote, elements → scaffolds; job checklist (RAMS, alarm, licence, hoist, design / TG20 ref); **erect / dismantle planner** (calendar, own crews and subcontractors, visit sheets); **digital handover** (signed, photos, PDF → starts hire); **variations / adaptions**; **dismantle request** (who, when — timestamped); job board (still up, ready for dismantle, down). | Office + phone | 3–4 wk |
-| **3** | **Hire & invoicing engine** (the core) | Per scaffold: rent due date = handover + included weeks; **weekly / monthly rent run** proposing invoice lines for every scaffold past its included period up to its off-hire date; **staged invoicing** for commercial elements (20 / 50 / 100% or custom); payment applications with **retention**; CIS & VAT-DRC handling via labour / hire lines; paid / not paid, credit control; "rent due this week / overdue" dashboard; invoices exported to the accounting system. | Office | 4–5 wk |
+| **3** | **Hire & invoicing engine** (the core) | Per scaffold: rent due date = handover + included weeks; **weekly / monthly rent run** proposing invoice lines for every scaffold past its included period up to its off-hire date; **staged invoicing** for commercial elements (20 / 50 / 100% or custom); payment applications with **retention**; CIS & VAT-DRC handling via labour / hire lines; paid / not paid, credit control; "rent due this week / overdue" dashboard; **PDF request for invoice for Xero** (Xero integration later); **weekly crew pay + PO spec** from completed erects / adaptions / dismantles. | Office | 4–5 wk |
 | **4** | **Phone field app** (alongside 2–3) | Crew day list (erect, adapt, inspect, dismantle, deliver, collect); **handover with client signature**; **7-day inspection register** with weather / alteration inspections, defects + photos, Scafftag-style PDF, overdue alerts; dismantle done; CISRS card register; time on job (reuses production time). | Phone | 3–4 wk |
 | **5** | **Stock** | Catalogue (tubes by length, boards, fittings, base plates, ladders, system components); locations: **yard(s), sites, vehicles**; **delivery / collection notes** on the phone (scan or count, signature); **estimated BOM per scaffold** from the quote (template by type / m² / lifts) → **availability forecast by week**: in yard − booked for upcoming erections + coming back from booked dismantles; reconciliation at dismantle, losses / damage charged to the customer; stocktake. | Office + phone | 5–6 wk |
 | **6** | **Reporting & cut-over** | Job profit (est. vs actual: costs up / down, subcontractors, hire income); pipeline conversion & sources; utilisation & rent income; overdue rent and debtors; monday switched to read-only. | Office | 2 wk |
@@ -74,13 +74,21 @@ Movement / Delivery & collection note** · Invoice / Payment application.
 5. Default staged-invoice schedule for commercial jobs and for domestic (deposit / balance?).
 6. Retention, payment terms, CIS and VAT-DRC treatment per customer type — confirmed with the accountant.
 
-## 6. Decisions needed from you (before phase 0)
+## 6. Decisions (agreed 2026-10-22)
 
-- **Separate business in the same app** (own customers, jobs, users; one login can work in both) — or a fully separate tenant?
-- **Accounting system** for ACE Scaffolding invoices (Xero / QuickBooks / Sage / Subiekt?) — the invoice export / sync depends on it.
-- **Subcontract crews** (JMS, DW, LPD…): do they use the phone app (handover, dismantle, delivery notes), and how are they paid (per job / per m²)?
-- **Stock:** tube & fitting, a system scaffold (Layher / Haki / Cuplok…), or both; how many yards and vehicles.
-- **monday:** import history only, or keep monday in parallel during the switch-over?
+- **Set-up:** a separate business in the same app, users shared across businesses — like Fin&Ops and Production today
+  (same tables pattern, access per role through Admin ▸ Roles ▸ App access). The office app gets a **home page with
+  business tiles — Framework (window & door installation), Acemark PL (production, Fin&Ops) and Scaffolding**; each
+  tile opens that business's menus. The empty first page becomes this home page.
+- **Accounting: Xero.** Phase 3 starts with a **PDF "request for invoice"** per billing run / stage (all lines, labour
+  vs hire, CIS / VAT notes) for the accounts team to raise in Xero; a direct Xero integration comes later.
+- **Crews (own and subcontract) are paid weekly**, like the fitting teams: the app adds up what each crew completed
+  in the week (erected, adapted, dismantled — at agreed rates per job / m² / element) and produces the **spec for the
+  PO** (same idea as the fitter payment report).
+- **Stock:** type of scaffold (tube & fitting / system) and number of yards and vehicles still to be confirmed —
+  phase 5 starts with that.
+- **monday:** a one-off import to get going; after that the **office app database is the single source of truth**
+  (monday switched off for scaffolding).
 
 ## 7. Risks
 
