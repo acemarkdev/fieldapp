@@ -561,7 +561,8 @@ const server = createServer(async (req, res) => {
           if (b.dry) {
             const n = (k: string) => plan.enquiries.filter((e) => e.stage === k).length;
             send(res, 200, { dry: true, customers: plan.customers.length, contacts: plan.contacts.length, sites: plan.sites.length, enquiries: plan.enquiries.length, jobs: plan.jobs.length,
-              won: n('won'), open: plan.enquiries.filter((e) => !['won', 'declined', 'lost', 'on_hold', 'other'].includes(e.stage)).length,
+              won: n('won'), open: plan.enquiries.filter((e) => scaf.OPEN_STAGES.includes(e.stage)).length, noAnswer: n('no_answer'),
+              toNumber: plan.enquiries.filter((e) => e.number === null).length + plan.jobs.filter((j) => j.number === null).length,
               jobsNoEnquiry: plan.jobs.filter((j) => j.enquiry === null).length, enquiriesNoCustomer: plan.enquiries.filter((e) => !e.customer).length, skipped: plan.skipped });
             return;
           }
@@ -7250,14 +7251,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     setActiveGroup(sessionStorage.getItem('ace_tab')||'dashboard');}
   // ---- ACE Scaffolding: Overview (counts + monday import), Enquiries, Jobs, Customers (scaffolding.ts) ----
   var SC={enq:null,jobs:null,cust:null,shown:{e:150,j:150,c:150}};
-  var SC_ENQ_STAGE={new:'New',waiting_access:'Waiting for access',awaiting_details:'Awaiting details / meeting',survey:'Survey required',quote_required:'Quote required',quote_draft:'Quote in draft',quote_sent:'Quote sent',pending:'Seen, pending',hot:'Hot',won:'Won',declined:'Declined',lost:'Lost / not required',on_hold:'On hold',other:'Other'};
+  var SC_ENQ_STAGE={new:'New',waiting_access:'Waiting for access',awaiting_details:'Awaiting details / meeting',survey:'Survey required',quote_required:'Quote required',quote_draft:'Quote in draft',quote_sent:'Quote sent',pending:'Seen, pending',hot:'Hot',won:'Won',declined:'Declined',lost:'Lost / not required',no_answer:'No answer (old quote)',on_hold:'On hold',other:'Other'};
   var SC_ENQ_OPEN=['new','waiting_access','awaiting_details','survey','quote_required','quote_draft','quote_sent','pending','hot'];
   var SC_JOB_STAGE={booking:'Booking',upcoming:'Upcoming',to_be_rented:'To be rented',ongoing:'Ongoing',still_up:'Still up',being_rented:'Being rented',ready_for_dismantle:'Ready for dismantle',part_dismantled:'Part dismantled',down:'Down',commercial:'Commercial',na:'N/A'};
   var SC_JOB_ACTIVE=['upcoming','to_be_rented','ongoing','still_up','being_rented','ready_for_dismantle','part_dismantled','commercial'];
   var SC_KIND={commercial:'Commercial',trade:'Trade',domestic:'Domestic',ace:'ACE company'};
   function scMoney(n){ if(n==null||n==='')return ''; var v=Number(n), d=Math.round(v*100)%100?2:0; return '£'+v.toLocaleString('en-GB',{minimumFractionDigits:d,maximumFractionDigits:d}); }
   function scDay(d){ if(!d)return ''; var p=String(d).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:d; }
-  function scChip(stage,label,won){ var c=won?'#067647':(stage==='declined'||stage==='lost'||stage==='down'?'#9a97ad':(stage==='hot'||stage==='ready_for_dismantle'?'#b42318':'#3c2a7a')); return '<span class="scchip" style="color:'+c+';border-color:'+c+'33">'+esc(label)+'</span>'; }
+  function scChip(stage,label,won){ var c=won?'#067647':(stage==='declined'||stage==='lost'||stage==='no_answer'||stage==='down'?'#9a97ad':(stage==='hot'||stage==='ready_for_dismantle'?'#b42318':'#3c2a7a')); return '<span class="scchip" style="color:'+c+';border-color:'+c+'33">'+esc(label)+'</span>'; }
   async function scGet(url){ var r=await api(url); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); return d; }
   function scErrRow(tb,cols,e){ tb.innerHTML='<tr><td colspan="'+cols+'" class="sub" style="padding:16px">'+esc(e&&e.message||'Could not load.')+'</td></tr>'; }
 
@@ -7276,8 +7277,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{ var r=await api('/api/scaf/import',{method:'POST',body:JSON.stringify({dry:!!dry})}); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
       var sk=(d.skipped||[]);
       if(dry){ msg.textContent='This is what would be imported:'; run.style.display='';
-        res.innerHTML='<div class="statgrid" style="margin:0">'+svStat(czNum(d.enquiries,0),'Enquiries')+svStat(czNum(d.open,0),'Open enquiries')+svStat(czNum(d.won,0),'Won')+svStat(czNum(d.jobs,0),'Jobs')+svStat(czNum(d.customers,0),'Customers')+svStat(czNum(d.contacts,0),'Contacts')+svStat(czNum(d.sites,0),'Sites')+'</div>'
-          +'<div class="sub" style="margin:8px 0 0">'+esc(czNum(d.jobsNoEnquiry,0)+' jobs without a linked enquiry (older ones), '+czNum(d.enquiriesNoCustomer,0)+' enquiries without a customer.')+'</div>';
+        res.innerHTML='<div class="statgrid" style="margin:0">'+svStat(czNum(d.enquiries,0),'Enquiries')+svStat(czNum(d.open,0),'Open enquiries')+svStat(czNum(d.won,0),'Won')+svStat(czNum(d.noAnswer,0),'No answer (quote over 6 months old)')+svStat(czNum(d.jobs,0),'Jobs')+svStat(czNum(d.customers,0),'Customers')+svStat(czNum(d.contacts,0),'Contacts')+svStat(czNum(d.sites,0),'Sites')+'</div>'
+          +'<div class="sub" style="margin:8px 0 0">'+esc(czNum(d.jobsNoEnquiry,0)+' jobs without a linked enquiry (older ones), '+czNum(d.enquiriesNoCustomer,0)+' enquiries without a customer'+(d.toNumber?', '+d.toNumber+' items with no ACE / ACESC number on monday get the next free number':'')+'. Enquiries with a job are counted as won; quotes left at “sent” for over 6 months as no answer.')+'</div>';
       } else { msg.textContent='Imported.'; run.style.display='none';
         res.innerHTML='<div class="sub" style="margin:0">'+esc(czNum(d.enquiries,0)+' enquiries, '+czNum(d.jobs,0)+' jobs, '+czNum(d.customers,0)+' customers, '+czNum(d.contacts,0)+' contacts, '+czNum(d.sites,0)+' sites'+(d.kept?' · '+d.kept+' rows changed in the app were kept as they are':''))+'</div>';
         SC.enq=SC.jobs=SC.cust=null; loadScafOverview(); }
@@ -7308,7 +7309,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var tb=document.getElementById('se_rows'); if(!SC.enq)return;
     var all=scEnqFiltered(), list=all.slice(0,SC.shown.e);
     document.getElementById('se_count').textContent=all.length+' of '+SC.enq.length;
-    var sum=function(f){ return all.reduce(function(a,e){ return a+(Number(e[f])||0); },0); }, won=all.filter(function(e){ return e.stage==='won'; }), decided=all.filter(function(e){ return e.stage==='won'||e.stage==='declined'||e.stage==='lost'; });
+    var sum=function(f){ return all.reduce(function(a,e){ return a+(Number(e[f])||0); },0); }, won=all.filter(function(e){ return e.stage==='won'; }), decided=all.filter(function(e){ return e.stage==='won'||e.stage==='declined'||e.stage==='lost'||e.stage==='no_answer'; });
     document.getElementById('se_stats').innerHTML=svStat(czNum(all.length,0),'Enquiries')+svStat(scMoney(Math.round(sum('price'))),'Quoted value')+svStat(czNum(won.length,0),'Won')+svStat(decided.length?Math.round(won.length*100/decided.length)+'%':'—','Won of decided')+svStat(scMoney(Math.round(won.reduce(function(a,e){ return a+(Number(e.price)||0); },0))),'Won value');
     tb.innerHTML=list.length?list.map(function(e){
       var prof=e.price!=null&&(e.est_cost_up!=null||e.est_cost_down!=null)?e.price-(e.est_cost_up||0)-(e.est_cost_down||0):null;

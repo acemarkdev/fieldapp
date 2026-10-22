@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.43.0';
+export const APP_VERSION = '1.43.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.43.1', date: '2026-10-22', changes: [
+    'Scaffolding import: an enquiry with a job comes in as Won; a quote left at \u201c4. Quote sent\u201d / \u201c5. Quote seen\u201d more than 6 months after the enquiry as \u201cNo answer (old quote)\u201d \u2014 no longer counted as open (Hot, New, Survey\u2026 stay as set).',
+    'Scaffolding import: job number typos (ACECS1498, ACES1592) are read; jobs and enquiries with no ACESC / ACE number on monday get the next free number once; test items and bookings without a number are left out.',
+  ] },
   { version: '1.43.0', date: '2026-10-22', changes: [
     'ACE Scaffolding, phase 0: the Scaffolding menu now has Enquiries (ACE numbers: status, price, estimated profit, won rate; open / all / per status, per year, search), Jobs (ACESC numbers: erected by, status, up date, hire weeks and rent %, dismantle request) and Customers (with their contacts and sites \u2014 add and change them).',
     'Overview: counts, the next ACE / ACESC numbers and the one-off import from monday (admin): Check shows what would come in from Estimated Enquiries, Project Sheet and the linked My Contacts; Import brings it in. It can be run again until monday is switched off \u2014 anything changed in the app is kept.',

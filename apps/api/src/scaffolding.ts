@@ -38,14 +38,16 @@ export function day(v: unknown): string | null { const m = /^(\d{4}-\d{2}-\d{2})
 export function span(v: unknown): [string | null, string | null] { const m = /(\d{4}-\d{2}-\d{2})(?:\s*-\s*(\d{4}-\d{2}-\d{2}))?/.exec(clean(v)); return m ? [m[1], m[2] ?? m[1]] : [null, null]; }
 /** ACE4018 → 4018 (never ACESC…). */
 export function enquiryNumber(name: unknown): number | null { const m = /^\s*ACE\s*-?\s*0*(\d{1,6})(?!\d)/i.exec(String(name ?? '')); return m ? Number(m[1]) : null; }
-/** ACESC2552 → 2552, from the Project Code column or the name. */
-export function jobNumber(...texts: unknown[]): number | null { for (const t of texts) { const m = /ACESC\s*-?\s*0*(\d{1,6})(?!\d)/i.exec(String(t ?? '')); if (m) return Number(m[1]); } return null; }
+/** ACESC2552 → 2552, from the Project Code column or the name (also the typos ACECS1498, ACES1592). */
+export function jobNumber(...texts: unknown[]): number | null { for (const t of texts) { const m = /AC(?:ESC|ECS|ES)\s*-?\s*0*(\d{1,6})(?!\d)/i.exec(String(t ?? '')); if (m) return Number(m[1]); } return null; }
+/** Test and empty items on the boards ("TEST 1234", "New item", "Empty"). */
+export const isJunk = (name: unknown) => /^\s*(test\b|new item\s*$|empty\s*$)/i.test(String(name ?? ''));
 /** The enquiry an item's name mentions ("ACESC2554 - ACE4018- 4-8 Tilbury Way… - - Booking for …" → 4018). */
 export function mentionedEnquiry(name: unknown): number | null { const m = /(?:^|[^A-Z])ACE\s*-?\s*0*(\d{1,6})(?!\d)/i.exec(String(name ?? '').replace(/ACESC\s*-?\s*\d+/gi, ' ')); return m ? Number(m[1]) : null; }
 export const isBooking = (name: unknown) => /booking for/i.test(String(name ?? ''));
 /** The title of an item without its numbers: "ACESC2554 - ACE4018- 4-8 Tilbury Way, Brighton - - Booking for ...." → "4-8 Tilbury Way, Brighton". */
 export function titleOf(name: unknown): string {
-  return clean(name).replace(/^ACESC\s*-?\s*\d+\s*[-–:]*\s*/i, '').replace(/^ACE\s*-?\s*\d+\s*[-–:]*\s*/i, '').replace(/\s*-\s*-\s*Booking for.*$/i, '').replace(/\s*[-–]\s*$/, '').trim();
+  return clean(name).replace(/^New item\s*[-–:]\s*/i, '').replace(/^AC(?:ESC|ECS|ES)\s*-?\s*\d+\s*[-–:]*\s*/i, '').replace(/^ACE\s*-?\s*\d+\s*[-–:]*\s*/i, '').replace(/\s*-\s*-\s*Booking for.*$/i, '').replace(/\s*[-–]\s*$/, '').trim();
 }
 const POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
 export function postcode(v: unknown): string | null { const m = POSTCODE.exec(clean(v)); return m ? (m[1] + ' ' + m[2]).toUpperCase() : null; }
@@ -80,7 +82,11 @@ export function customerKind(name: unknown, clientType: unknown, sector: unknown
 }
 
 // ---- stages ------------------------------------------------------------------------------------
-export const ENQUIRY_STAGES = ['new', 'waiting_access', 'awaiting_details', 'survey', 'quote_required', 'quote_draft', 'quote_sent', 'pending', 'hot', 'won', 'declined', 'lost', 'on_hold', 'other'] as const;
+export const ENQUIRY_STAGES = ['new', 'waiting_access', 'awaiting_details', 'survey', 'quote_required', 'quote_draft', 'quote_sent', 'pending', 'hot', 'won', 'declined', 'lost', 'no_answer', 'on_hold', 'other'] as const;
+export const OPEN_STAGES: EnquiryStage[] = ['new', 'waiting_access', 'awaiting_details', 'survey', 'quote_required', 'quote_draft', 'quote_sent', 'pending', 'hot'];
+/** A quote still at "sent" / "seen, pending" this many days after the enquiry came in is imported as "no answer"
+ *  (on monday most old quotes were left at "4. Quote sent to client"). */
+export const STALE_DAYS = 183;
 export type EnquiryStage = typeof ENQUIRY_STAGES[number];
 /** The monday "Status of Enquiry" label (or, when empty, the group) → our stage. */
 export function enquiryStage(label: unknown, group: unknown): EnquiryStage {
@@ -110,13 +116,13 @@ export interface PCustomer { key: string; name: string; kind: CustomerKind; emai
 export interface PContact { import_key: string; customer: string; name: string; role: string | null; email: string | null; phone: string | null; monday_id: number | null }
 export interface PSite { key: string; address: string; postcode: string | null; customer: string | null }
 export interface PEnquiry {
-  monday_id: number; number: number; title: string | null; customer: string | null; contact: string | null; site: string | null;
+  monday_id: number; number: number | null; title: string | null; customer: string | null; contact: string | null; site: string | null;
   stage: EnquiryStage; status_label: string | null; follow_up: string | null; source: string | null; sector: string | null; client_type: string | null;
   received: string | null; deadline: string | null; quote_sent: string | null; price: number | null; est_cost_up: number | null; est_cost_down: number | null;
   size_m2: number | null; estimator: string | null; surveyor: string | null; salesperson: string | null; monday_group: string | null;
 }
 export interface PJob {
-  monday_id: number; number: number; title: string | null; enquiry: number | null; customer: string | null; site: string | null;
+  monday_id: number; number: number | null; title: string | null; enquiry: number | null; customer: string | null; site: string | null;
   stage: JobStage; status_label: string | null; erector: string | null; po_number: string | null; handover: string | null; rams: string | null; invoiced: string | null;
   up_start: string | null; up_end: string | null; hire_weeks: number | null; rent_pct: number | null; rent_start: string | null; rent_end: string | null;
   dismantle_request: string | null; dismantle_start: string | null; down_date: string | null;
@@ -127,7 +133,8 @@ export interface Plan { customers: PCustomer[]; contacts: PContact[]; sites: PSi
 /** The enquiry's links to "My Contacts" (three columns were used over time; the first filled one wins). */
 export const contactLinks = (it: LinkedItem) => [...(it.links[ENQ.link1] ?? []), ...(it.links[ENQ.link2] ?? []), ...(it.links[ENQ.link3] ?? [])];
 
-export function buildPlan(enqItems: LinkedItem[], jobItems: LinkedItem[], contactItems: LinkedItem[]): Plan {
+/** `today` (YYYY-MM-DD) decides which open enquiries are old. Items without a number get one when written (writePlan). */
+export function buildPlan(enqItems: LinkedItem[], jobItems: LinkedItem[], contactItems: LinkedItem[], today = new Date().toISOString().slice(0, 10)): Plan {
   const customers = new Map<string, PCustomer>(), contacts = new Map<string, PContact>(), sites = new Map<string, PSite>();
   const skipped: Plan['skipped'] = [];
   const addCustomer = (name: string, kind: CustomerKind, extra: Partial<PCustomer> = {}): string | null => {
@@ -166,8 +173,8 @@ export function buildPlan(enqItems: LinkedItem[], jobItems: LinkedItem[], contac
   const enquiries: PEnquiry[] = [];
   const enqByMonday = new Map<string, PEnquiry>(), enqByNumber = new Map<number, PEnquiry>();
   for (const e of enqItems) {
-    const n = enquiryNumber(e.name);
-    if (n === null) { skipped.push({ board: 'enquiries', name: e.name, why: 'no ACE number at the start of the name' }); continue; }
+    if (isJunk(e.name)) { skipped.push({ board: 'enquiries', name: e.name, why: 'test or empty item' }); continue; }
+    const n = enquiryNumber(e.name);   // null: numbered when written
     const col = (c: string) => e.cols[c];
     let customer: string | null = null, contact: string | null = null;
     const link = contactLinks(e).map((id) => fromContact.get(id)).find(Boolean);
@@ -193,15 +200,16 @@ export function buildPlan(enqItems: LinkedItem[], jobItems: LinkedItem[], contac
       price: num(col(ENQ.price)), est_cost_up: num(col(ENQ.costUp)), est_cost_down: num(col(ENQ.costDown)), size_m2: num(col(ENQ.m2)),
       estimator: orNull(col(ENQ.estimator)), surveyor: orNull(col(ENQ.surveyor)), salesperson: orNull(col(ENQ.sales)), monday_group: e.group,
     };
-    enquiries.push(p); enqByMonday.set(e.id, p); if (!enqByNumber.has(n)) enqByNumber.set(n, p);
+    enquiries.push(p); enqByMonday.set(e.id, p); if (n !== null && !enqByNumber.has(n)) enqByNumber.set(n, p);
   }
 
   // jobs
   const jobs: PJob[] = [];
   for (const j of jobItems) {
     const col = (c: string) => j.cols[c];
+    if (isJunk(j.name)) { skipped.push({ board: 'jobs', name: j.name, why: 'test or empty item' }); continue; }
     const n = jobNumber(col(JOB.code), j.name);
-    if (n === null) { skipped.push({ board: 'jobs', name: j.name, why: 'no ACESC number' }); continue; }
+    if (n === null && isBooking(j.name)) { skipped.push({ board: 'jobs', name: j.name, why: 'booking without an ACESC number' }); continue; }
     const enq = (j.links[JOB.enquiry] ?? []).map((id) => enqByMonday.get(id)).find(Boolean) ?? (mentionedEnquiry(j.name) !== null ? enqByNumber.get(mentionedEnquiry(j.name)!) : undefined);
     let customer = enq?.customer ?? null;
     if (!customer && clean(col(JOB.client))) {
@@ -223,7 +231,13 @@ export function buildPlan(enqItems: LinkedItem[], jobItems: LinkedItem[], contac
       actual_cost_up: num(col(JOB.costUp)), actual_cost_down: num(col(JOB.costDown)), monday_group: j.group,
     });
   }
-  // a site belongs to the customer of its first enquiry / job
+  // an enquiry with a job is won; one still open long after it came in had no answer
+  const withJob = new Set(jobs.map((j) => j.enquiry).filter((x) => x !== null));
+  const cutoff = new Date(Date.parse(today + 'T00:00:00Z') - STALE_DAYS * 864e5).toISOString().slice(0, 10);
+  for (const e of enquiries) {
+    if (withJob.has(e.monday_id) && e.stage !== 'won') e.stage = 'won';
+    else if ((e.stage === 'quote_sent' || e.stage === 'pending') && e.received && e.received < cutoff) e.stage = 'no_answer';   // Hot, New, Survey… stay as set
+  }
   return { customers: [...customers.values()], contacts: [...contacts.values()], sites: [...sites.values()], enquiries, jobs, skipped };
 }
 
@@ -276,6 +290,14 @@ export async function writePlan(tenantId: string, plan: Plan): Promise<ImportRes
   await upsert('scaf_sites', keep(plan.sites, eS, (s) => s.key).map((s) => ({ tenant_id: tenantId, address: s.address, address_key: s.key, postcode: s.postcode, customer_id: s.customer ? custId.get(s.customer) ?? null : null, imported_at: now })), 'tenant_id,address_key');
   const siteId = new Map((await all<any>('scaf_sites', 'id,address_key', tenantId)).map((r) => [r.address_key, r.id]));
 
+  // items with no number on monday get the next free one, once (a re-import finds them by monday id)
+  const number = async (table: string, rows: { monday_id: number; number: number | null }[]) => {
+    const have = new Map((await all<any>(table, 'monday_id,number', tenantId, (q) => q.not('monday_id', 'is', null))).map((r) => [String(r.monday_id), r.number]));
+    let next = Math.max(0, ...rows.map((r) => r.number ?? 0), ...[...have.values()].map(Number)) + 1;
+    for (const r of rows) if (r.number === null) r.number = have.get(String(r.monday_id)) ?? next++;
+  };
+  await number('scaf_enquiries', plan.enquiries);
+  await number('scaf_jobs', plan.jobs);
   const eE = await edited('scaf_enquiries', 'monday_id');
   await upsert('scaf_enquiries', keep(plan.enquiries, eE, (e) => String(e.monday_id)).map(({ customer, contact, site, ...e }) => ({
     tenant_id: tenantId, ...e, customer_id: customer ? custId.get(customer) ?? null : null, contact_id: contact ? contId.get(contact) ?? null : null,
