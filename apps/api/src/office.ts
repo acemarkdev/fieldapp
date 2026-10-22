@@ -558,7 +558,7 @@ const server = createServer(async (req, res) => {
         if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' }); res.end(gzipSync(body)); }
         else send(res, 200, v);
       };
-      const scafErr = (e: any) => /scaf_inspections|members/.test(String(e?.message ?? '')) ? 'This needs migrations 0101 and 0102.' : /scaf_stock|scaf_locations|column .*bom/.test(String(e?.message ?? '')) ? 'This needs migration 0100.' : /scaf_invoice|hire_stop_on|billed_to|retention_pct|payment_days|column .*billing/.test(String(e?.message ?? '')) ? 'This needs migration 0099.' : /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
+      const scafErr = (e: any) => /scaf_job_costs/.test(String(e?.message ?? '')) ? 'This needs migration 0103.' : /scaf_inspections|members/.test(String(e?.message ?? '')) ? 'This needs migrations 0101 and 0102.' : /scaf_stock|scaf_locations|column .*bom/.test(String(e?.message ?? '')) ? 'This needs migration 0100.' : /scaf_invoice|hire_stop_on|billed_to|retention_pct|payment_days|column .*billing/.test(String(e?.message ?? '')) ? 'This needs migration 0099.' : /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
       try {
         // phase 4: the phone app for crews (scafCrew.ts) — scaffolders, the scaffolding office, admin, or anyone with Jobs edit
         if (p.startsWith('/api/scaf/crew/')) {
@@ -590,6 +590,11 @@ const server = createServer(async (req, res) => {
         if (p === '/api/scaf/crew-users' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; send(res, 200, { users: await scafC.crewUsers(ctx.tenant_id) }); return; }
         let mx = /^\/api\/scaf\/crews\/([0-9a-f-]{36})\/members$/.exec(p);
         if (mx && req.method === 'PUT') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafC.setCrewMembers(ctx.tenant_id, mx[1], (await readJson(req)).members); send(res, r.ok ? 200 : 400, r); return; }
+        mx = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})\/costs$/.exec(p);
+        if (mx && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; send(res, 200, await scafJ.listCosts(ctx.tenant_id, mx[1])); return; }
+        if (mx && req.method === 'POST') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafJ.saveCost(ctx.tenant_id, ctx.id, mx[1], null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        mx = /^\/api\/scaf\/costs\/([0-9a-f-]{36})$/.exec(p);
+        if (mx && (req.method === 'PUT' || req.method === 'DELETE')) { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = req.method === 'DELETE' ? await scafJ.deleteCost(ctx.tenant_id, mx[1]) : await scafJ.saveCost(ctx.tenant_id, ctx.id, null, mx[1], await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
         mx = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})\/inspections$/.exec(p);
         if (mx && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; send(res, 200, { inspections: await scafC.listInspections(ctx.tenant_id, mx[1]) }); return; }
         mx = /^\/api\/scaf\/inspections\/([0-9a-f-]{36})\/photos$/.exec(p);
@@ -5288,12 +5293,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     showApp();
   }
   function logout(){rtoken='';texp=0;sessionStorage.removeItem('ace_rt');sessionStorage.removeItem('ace_exp');token='';myRole='';myClientCode='';myTeam='';setLang('');sessionStorage.removeItem('ace_token');sessionStorage.removeItem('ace_role');sessionStorage.removeItem('ace_client');sessionStorage.removeItem('ace_team');document.getElementById('appView').style.display='none';document.getElementById('loginView').style.display='grid';}
+  // pages that show without the jobs / items list being loaded first
+  function scNoItems(t){ return t==='home'||String(t||'').indexOf('scaf')===0; }
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
     if(myRole==='scaffolding'||myRole==='scaffolder'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());return;}
+    // the home page and the Scaffolding pages do not need the jobs and items: show them at once, load the rest behind
+    var t0=restoreTab(); if(scNoItems(t0)){ showTab(t0); }
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
-    await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
+    await loadJobs();await loadItems();if(!scNoItems(t0))showTab(restoreTab());openPendingPo();
   }
   async function loadCustomer(){
     ['dashboard','items','teams','sync','plans','cal','budget','invoices','signoff','custadmin','costcentres','poreq','suppliers','labels','confirm','finCosts','finPerf','finJobs','finSales','finPay','tests','users','roles'].forEach(function(n){var v=document.getElementById(n+'View');if(v)v.style.display='none';});
@@ -7932,6 +7941,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     // visits
     h+='<div style="display:flex;align-items:center;gap:10px;margin:20px 0 6px"><b>Visits</b>'+(ed?'<button class="pobtn" id="sjb_visit" style="margin-left:auto">+ Plan a visit</button>':'')+'</div>'
       +((j.visits||[]).length?'<table class="fjl"><tbody>'+j.visits.map(function(v){ return '<tr class="scr" data-v="'+v.id+'" style="cursor:pointer"><td style="white-space:nowrap">'+scDay(v.day)+(v.days>1?' +'+(v.days-1)+'d':'')+'</td><td><span class="scchip" style="color:'+SC_VKC[v.kind]+';border-color:'+SC_VKC[v.kind]+'33">'+esc(SC_VK[v.kind]||v.kind)+'</span></td><td>'+esc(v.crew||'—')+'</td><td class="sub">'+esc(v.status)+(v.notes?' · '+esc(v.notes):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">None planned.</div>');
+    h+='<div style="font-weight:700;margin:20px 0 6px">Actual costs <span class="sub" style="font-weight:400">— crews, subcontractors, transport, materials, licences; used for the job profit</span></div><div id="sjb_costs"><div class="sub">Loading…</div></div>';
     h+='<div style="font-weight:700;margin:20px 0 6px">Inspections <span class="sub" style="font-weight:400">— 7-day register, recorded on the phone</span></div><div id="sjb_insp"><div class="sub">Loading…</div></div>';
     if(canApp('scaf.stock')!=='off')h+='<div style="font-weight:700;margin:20px 0 6px">Materials on site</div><div id="sjb_stock"><div class="sub">Loading…</div></div>';
     if(canApp('scaf.billing')!=='off')h+='<div style="font-weight:700;margin:20px 0 6px">Invoicing</div><div id="sjb_bill"><div class="sub">Loading…</div></div>';
@@ -7942,7 +7952,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1040px,96vw)';
     if(canApp('scaf.billing')!=='off')scJobBilling(j);
     if(canApp('scaf.stock')!=='off')scJobStock(j);
-    scJobInspections(j);
+    scJobInspections(j); scJobCosts(j);
     document.querySelectorAll('#modalBody [data-hpdf]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scPdf('/api/scaf/handovers/'+a.getAttribute('data-hpdf')+'/pdf','Handover ACESC'+j.number+'.pdf'); }; });
     document.querySelectorAll('#modalBody tr[data-v]').forEach(function(tr){ tr.onclick=function(){ var v=j.visits.filter(function(x){ return x.id===tr.getAttribute('data-v'); })[0]; scVisitForm(v,{job:j}); }; });
     if(!ed)return;
@@ -8063,6 +8073,32 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     grid.querySelectorAll('.spv').forEach(function(el){ el.onclick=function(ev){ ev.stopPropagation(); var v=SCP.data.visits.filter(function(x){ return x.id===el.getAttribute('data-v'); })[0];
       scGet('/api/scaf/jobs/'+v.job_id).then(function(jj){ scVisitForm(v,{job:jj,crews:SCP.data.crews}); }); }; });
     if(canApp('scaf.jobs')==='edit')grid.querySelectorAll('.spcell').forEach(function(td){ td.onclick=function(){ scVisitForm(null,{day:td.getAttribute('data-day'),crew_id:td.getAttribute('data-crew'),crews:SCP.data.crews,jobs:SCP.data.jobs}); }; });
+  }
+  async function scJobCosts(j){
+    var box=document.getElementById('sjb_costs'); if(!box)return; var ed=canApp('scaf.jobs')==='edit';
+    try{ var c=await scGet('/api/scaf/jobs/'+j.id+'/costs'); }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var T=c.totals, cat={}; c.categories.forEach(function(x){ cat[x[0]]=x[1]; });
+    var PH={up:'Erection',down:'Dismantle',other:'Other'};
+    var est=c.estimate&&(c.estimate.up!=null||c.estimate.down!=null)?(c.estimate.up||0)+(c.estimate.down||0):null;
+    var profit=c.price!=null&&T.any?c.price-T.total:null;
+    var h='<div class="statgrid" style="margin:0 0 8px">'+svStat(scMoney(T.up),'Erection')+svStat(scMoney(T.down),'Dismantle')+svStat(scMoney(T.other),'Other')+svStat('<b>'+scMoney(T.total)+'</b>','Actual cost'+(est!=null?' (est. '+scMoney(est)+')':''))
+      +(profit!=null?svStat('<span style="color:'+(profit<0?'#b42318':'#067647')+'">'+scMoney(Math.round(profit*100)/100)+'</span>','Price − actual cost'):'')+'</div>';
+    var crews=((j.crews||[]).map(function(x){ return x.name; }));
+    var row=function(l){ l=l||{phase:'up',category:'crew',day:scToday()}; var dis=ed?'':' disabled';
+      return '<tr data-cost="'+(l.id||'')+'"><td><input type="date" class="tinput" data-f="day" value="'+esc(l.day||'')+'"'+dis+'></td><td><select class="tinput" data-f="phase"'+dis+'>'+scOpt([['up','Erection'],['down','Dismantle'],['other','Other']],l.phase)+'</select></td>'
+        +'<td><select class="tinput" data-f="category"'+dis+'>'+scOpt(c.categories,l.category)+'</select></td><td><input class="tinput" data-f="supplier" list="scdl_crw" value="'+esc(l.supplier||'')+'" placeholder="Crew / supplier" style="width:150px"'+dis+'></td>'
+        +'<td><input class="tinput" data-f="description" value="'+esc(l.description||'')+'" placeholder="Description" style="width:200px"'+dis+'></td><td><input class="tinput" data-f="amount" value="'+(l.amount==null?'':l.amount)+'" placeholder="£" style="width:90px;text-align:right"'+dis+'></td>'
+        +(ed?'<td style="white-space:nowrap"><button class="pobtn" data-act="save">'+(l.id?'Save':'Add')+'</button>'+(l.id?' <button class="del" data-act="del">×</button>':'')+'</td>':'')+'</tr>'; };
+    h+=scDl('scdl_crw',crews)+'<div style="overflow:auto"><table class="fjl scqt"><thead><tr><th>DAY</th><th>FOR</th><th>WHAT</th><th>CREW / SUPPLIER</th><th>DESCRIPTION</th><th>£</th>'+(ed?'<th></th>':'')+'</tr></thead><tbody>'
+      +(c.monday.up!=null||c.monday.down!=null?'<tr><td colspan="'+(ed?7:6)+'" class="sub">From monday: erection '+scMoney(c.monday.up||0)+' · dismantle '+scMoney(c.monday.down||0)+'</td></tr>':'')
+      +c.lines.map(row).join('')+(ed?row(null):'')+'</tbody></table></div>';
+    box.innerHTML=h;
+    if(!ed)return;
+    box.querySelectorAll('tr[data-cost]').forEach(function(tr){ tr.querySelectorAll('button').forEach(function(b){ b.onclick=async function(){
+      var id=tr.getAttribute('data-cost');
+      if(b.getAttribute('data-act')==='del'){ if(!confirm('Delete this cost?'))return; if(await scSend('/api/scaf/costs/'+id,'DELETE')){ tShow('Deleted'); scJobCosts(j); } return; }
+      var o={}; tr.querySelectorAll('[data-f]').forEach(function(i){ o[i.getAttribute('data-f')]=i.value; });
+      if(await scSend(id?'/api/scaf/costs/'+id:'/api/scaf/jobs/'+j.id+'/costs',id?'PUT':'POST',o)){ tShow('Saved'); scJobCosts(j); } }; }); });
   }
   async function scJobInspections(j){
     var box=document.getElementById('sjb_insp'); if(!box)return;
@@ -11639,7 +11675,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token'); keepSession({refresh_token:hp.get('refresh_token'),expires_at:hp.get('expires_at')});
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='scaffolding'||myRole==='scaffolder'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
+  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='scaffolding'||myRole==='scaffolder'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());}else{var t0=restoreTab(); if(scNoItems(t0))showTab(t0); loadJobs().then(loadItems).then(function(){if(!scNoItems(t0))showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----

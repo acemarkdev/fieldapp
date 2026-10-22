@@ -228,3 +228,40 @@ export async function handoverPdfData(tenantId: string, id: string) {
   const job = await getJobFull(tenantId, (h as any).job_id);
   return { handover: h as any, job };
 }
+
+// ---- actual costs (scaf_job_costs, migration 0103) ----------------------------------------------------
+export const COST_CATEGORIES: [string, string][] = [['crew', 'Crew (own)'], ['subcontractor', 'Subcontractor'], ['transport', 'Transport'], ['materials', 'Materials / hire-in'], ['licence', 'Licence / permits'], ['other', 'Other']];
+export function costFields(b: any): { ok: true; fields: Record<string, unknown> } | { ok: false; error: string } {
+  const d = day(b?.day); if (!d) return { ok: false, error: 'Choose the day.' };
+  const amount = num(b.amount); if (amount === null || Number.isNaN(amount) || amount === 0) return { ok: false, error: 'Give the amount (£).' };
+  const phase = ['up', 'down', 'other'].includes(b.phase) ? b.phase : 'up';
+  const category = COST_CATEGORIES.some(([k]) => k === b.category) ? b.category : 'other';
+  return { ok: true, fields: { day: d, phase, category, supplier: txt(b.supplier, 120), description: txt(b.description, 300), amount } };
+}
+/** The totals of a job's costs: the lines per phase, plus what monday had as actual cost up / down. */
+export function costTotals(lines: { phase: string; amount: number }[], mondayUp: number | null, mondayDown: number | null) {
+  const s = (p: string) => Math.round(lines.filter((l) => l.phase === p).reduce((a, l) => a + Number(l.amount), 0) * 100) / 100;
+  const up = Math.round((s('up') + (mondayUp ?? 0)) * 100) / 100, down = Math.round((s('down') + (mondayDown ?? 0)) * 100) / 100, other = s('other');
+  return { up, down, other, total: Math.round((up + down + other) * 100) / 100, any: lines.length > 0 || mondayUp !== null || mondayDown !== null };
+}
+export async function listCosts(tenantId: string, jobId: string) {
+  const { data, error } = await db().from('scaf_job_costs').select('id,day,phase,category,supplier,description,amount').eq('tenant_id', tenantId).eq('job_id', jobId).order('day').order('created_at');
+  if (error) throw error;
+  const { data: j } = await db().from('scaf_jobs').select('actual_cost_up,actual_cost_down,price,enquiry_id').eq('id', jobId).maybeSingle();
+  const jj: any = j ?? {};
+  const lines = (data ?? []).map((l: any) => ({ ...l, amount: Number(l.amount) }));
+  const mUp = jj.actual_cost_up === null || jj.actual_cost_up === undefined ? null : Number(jj.actual_cost_up), mDown = jj.actual_cost_down === null || jj.actual_cost_down === undefined ? null : Number(jj.actual_cost_down);
+  let est: any = null;
+  if (jj.enquiry_id) { const { data: e } = await db().from('scaf_enquiries').select('est_cost_up,est_cost_down').eq('id', jj.enquiry_id).maybeSingle(); if (e) est = { up: (e as any).est_cost_up === null ? null : Number((e as any).est_cost_up), down: (e as any).est_cost_down === null ? null : Number((e as any).est_cost_down) }; }
+  return { lines, monday: { up: mUp, down: mDown }, totals: costTotals(lines, mUp, mDown), estimate: est, price: jj.price === null || jj.price === undefined ? null : Number(jj.price), categories: COST_CATEGORIES };
+}
+export async function saveCost(tenantId: string, userId: string, jobId: string | null, id: string | null, b: any) {
+  const v = costFields(b); if (!v.ok) return v;
+  const r = id ? await db().from('scaf_job_costs').update(v.fields).eq('tenant_id', tenantId).eq('id', id)
+    : await db().from('scaf_job_costs').insert({ tenant_id: tenantId, job_id: jobId, created_by: userId, ...v.fields });
+  return r.error ? { ok: false as const, error: r.error.message } : { ok: true as const };
+}
+export async function deleteCost(tenantId: string, id: string) {
+  const r = await db().from('scaf_job_costs').delete().eq('tenant_id', tenantId).eq('id', id);
+  return r.error ? { ok: false as const, error: r.error.message } : { ok: true as const };
+}

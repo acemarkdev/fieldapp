@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.49.0';
+export const APP_VERSION = '1.50.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.50.0', date: '2026-10-22', changes: [
+    'After signing in, the home page (business tiles) shows at once \u2014 it no longer waits for all the Framework jobs and items to load (they load behind it). The same for the Scaffolding pages.',
+    'ACE Scaffolding: Actual costs on the job window \u2014 lines with day, erection / dismantle / other, what (own crew, subcontractor, transport, materials / hire-in, licence / permits, other), crew or supplier, description and \u00a3; totals for erection, dismantle, other and the actual cost against the estimate, and price \u2212 actual cost. On imported jobs the monday actual costs stay as the starting point. Reports \u25b8 Job profit uses them. Needs migration 0103.',
+  ] },
   { version: '1.49.0', date: '2026-10-22', changes: [
     'ACE Scaffolding, phase 6: Reports (new tab) for any period (this year, last 12 months, last year or dates): the pipeline \u2014 enquiries and quoted value per month, won of decided, average quote, days from enquiry to quote, by source and by estimator / sales person; job profit \u2014 price + hire and extras invoiced on top against the estimated and actual costs, per job with a CSV; income \u2014 requests sent to accounts per month (price stages, hire, other); debtors \u2014 unpaid per customer by days late (not due, 1\u201330, 31\u201360, 61\u201390, over 90); and now \u2014 jobs up, scaffolds on hire, unbilled rent, stock value out on sites.',
     'Overview: switch monday off (admin) \u2014 a checklist (last import, check, tell the team, make the monday boards read-only), then the import stops for good and the office app is the only record; it can be switched back on. No migration.',

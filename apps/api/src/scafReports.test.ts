@@ -21,5 +21,7 @@ const inc = incomeReport([R({}), R({ kind: 'price', due: 2500, invoiced_on: '202
 ok('income per month and kind (not drafts)', inc.total.total === 2680 && inc.months[0].rent === 100 && inc.months[0].other === 50 && inc.months[1].price === 2500 && inc.months[1].rent === 30, inc);
 const deb = debtorsReport([R({ invoiced_on: '2026-10-01', due: 100 }), R({ invoiced_on: '2026-08-01', due: 200 }), R({ invoiced_on: '2026-05-01', due: 300, customer: 'SBC' }), R({ status: 'paid', due: 999 })], '2026-10-22');
 ok('debtors aged by days past due', deb.total.total === 600 && deb.total.notDue === 100 && deb.total.d60 === 200 && deb.total.d30 === 0 && deb.total.over90 === 300 && deb.rows[0].customer === 'Cardo' && deb.rows.find((r) => r.customer === 'SBC')!.oldest === 144, deb);
+const jl = jobProfit([J({ id: 'j9', actual_cost_up: null, actual_cost_down: null })], new Map(), '2026-01-01', '2026-12-31', new Map([['j9', 900]]));
+ok('cost lines entered on the job count as actual cost', jl.rows[0].actualCost === 900 && jl.rows[0].actualProfit === 4100);
 if (fail) { console.error(fail + ' report check(s) failed'); process.exit(1); }
 console.log('scafReports: all checks passed');

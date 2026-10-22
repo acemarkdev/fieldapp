@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/scafJobs.test.ts
-import { jobStageFrom, hireEnds, checklistValue, scaffoldFields, visitFields, addDays } from './scafJobs';
+import { jobStageFrom, hireEnds, checklistValue, scaffoldFields, visitFields, addDays, costFields, costTotals } from './scafJobs';
 import { renderHandoverPdf } from './scafHandoverPdf';
 
 let fail = 0;
@@ -14,6 +14,8 @@ ok('scaffold input', (scaffoldFields({ element: 'Fan', price: '£1,200', rent_pc
   && !scaffoldFields({ element: 'Adaption', variation: true, price: '300' }, true).ok && scaffoldFields({ element: 'Adaption', variation: true, confirmed_by: 'Tom by email', price: '300' }, true).ok && !scaffoldFields({ element: 'X', price: 'abc' }, true).ok);
 ok('visit input', (visitFields({ kind: 'erect', day: '2026-10-26', days: '2', crew_id: '' }) as any).fields.days === 2 && !visitFields({ kind: 'party', day: '2026-10-26' }).ok && !visitFields({ kind: 'erect', day: '' }).ok && !visitFields({ kind: 'erect', day: '2026-10-26', days: 0 }).ok);
 ok('days', addDays('2026-10-31', 1) === '2026-11-01');
+ok('cost input', (costFields({ day: '2026-10-22', phase: 'down', category: 'subcontractor', amount: '£1,250.50' }) as any).fields.amount === 1250.5 && !costFields({ day: '2026-10-22', amount: '' }).ok && !costFields({ amount: '10' }).ok && (costFields({ day: '2026-10-22', amount: '5', phase: 'x', category: 'y' }) as any).fields.phase === 'up');
+ok('cost totals with what monday had', JSON.stringify(costTotals([{ phase: 'up', amount: 300 }, { phase: 'down', amount: 200 }, { phase: 'other', amount: 50 }], 1000, null)) === JSON.stringify({ up: 1300, down: 200, other: 50, total: 1550, any: true }) && costTotals([], null, null).any === false);
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const pdf = await renderHandoverPdf({ company: { name: 'ACE Scaffolding Ltd', address: '1 Yard Road', company_no: '0123' },

@@ -46,11 +46,12 @@ export function pipelineReport(enqs: Enq[], from: string, to: string) {
 }
 export interface Job { id: string; number: number; title: string | null; customer: string | null; stage: string; erector: string | null; price: number | null; actual_cost_up: number | null; actual_cost_down: number | null; up_start: string | null; created_at: string | null; enquiry: { price: number | null; est_cost_up: number | null; est_cost_down: number | null } | null }
 /** Per job: revenue = the price + invoiced on top (rent, extras, losses; price stages are part of the price). */
-export function jobProfit(jobs: Job[], invoicedExtra: Map<string, number>, from: string, to: string) {
+export function jobProfit(jobs: Job[], invoicedExtra: Map<string, number>, from: string, to: string, costLines: Map<string, number> = new Map()) {
   const rows = jobs.filter((j) => inRange(j.up_start ?? (j.created_at ? j.created_at.slice(0, 10) : null), from, to)).map((j) => {
     const price = j.price ?? 0, extra = invoicedExtra.get(j.id) ?? 0, revenue = round2(price + extra);
     const estCost = j.enquiry && (j.enquiry.est_cost_up !== null || j.enquiry.est_cost_down !== null) ? round2((j.enquiry.est_cost_up ?? 0) + (j.enquiry.est_cost_down ?? 0)) : null;
-    const actualCost = j.actual_cost_up !== null || j.actual_cost_down !== null ? round2((j.actual_cost_up ?? 0) + (j.actual_cost_down ?? 0)) : null;
+    const lines = costLines.get(j.id);   // actual costs entered on the job, on top of what monday had
+    const actualCost = j.actual_cost_up !== null || j.actual_cost_down !== null || lines !== undefined ? round2((j.actual_cost_up ?? 0) + (j.actual_cost_down ?? 0) + (lines ?? 0)) : null;
     const estProfit = estCost !== null ? round2(price - estCost) : null, actualProfit = actualCost !== null ? round2(revenue - actualCost) : null;
     return { id: j.id, number: j.number, title: j.title, customer: j.customer, stage: j.stage, erector: j.erector, price, extra: round2(extra), revenue, estCost, actualCost, estProfit, actualProfit, margin: actualProfit !== null && revenue > 0 ? Math.round((actualProfit / revenue) * 1000) / 10 : null };
   }).sort((a, b) => b.number - a.number);
@@ -112,7 +113,9 @@ export async function reports(tenantId: string, from: string, to: string, withMo
   } catch { /* 0099 not run */ }
   const extra = new Map<string, number>();
   for (const r of reqs) if (r.kind !== 'price' && ['sent', 'invoiced', 'paid'].includes(r.status)) extra.set(r.job_id, (extra.get(r.job_id) ?? 0) + r.due);
-  out.jobs = jobProfit(jobs.map((j) => { const e: any = j.enquiry_id ? em.get(j.enquiry_id) : null; return { ...j, customer: cm.get(j.customer_id) ?? null, price: num(j.price), actual_cost_up: num(j.actual_cost_up), actual_cost_down: num(j.actual_cost_down), enquiry: e ? { price: num(e.price), est_cost_up: num(e.est_cost_up), est_cost_down: num(e.est_cost_down) } : null }; }), withMoney ? extra : new Map(), from, to);
+  const costLines = new Map<string, number>();
+  try { for (const c of await all<any>(() => db().from('scaf_job_costs').select('job_id,amount').eq('tenant_id', tenantId).order('id'))) costLines.set(c.job_id, (costLines.get(c.job_id) ?? 0) + Number(c.amount)); } catch { /* 0103 not run */ }
+  out.jobs = jobProfit(jobs.map((j) => { const e: any = j.enquiry_id ? em.get(j.enquiry_id) : null; return { ...j, customer: cm.get(j.customer_id) ?? null, price: num(j.price), actual_cost_up: num(j.actual_cost_up), actual_cost_down: num(j.actual_cost_down), enquiry: e ? { price: num(e.price), est_cost_up: num(e.est_cost_up), est_cost_down: num(e.est_cost_down) } : null }; }), withMoney ? extra : new Map(), from, to, costLines);
   if (withMoney) { out.income = incomeReport(reqs, from, to); out.debtors = debtorsReport(reqs, today); }
   out.now = { jobsUp: jobs.filter((j) => ['still_up', 'being_rented', 'ready_for_dismantle', 'part_dismantled', 'ongoing', 'commercial'].includes(j.stage)).length };
   try { const { count } = await db().from('scaf_scaffolds').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).in('status', ['on_hire', 'dismantle_requested', 'dismantling']); out.now.onHire = count ?? 0; } catch { /* before 0098 */ }
