@@ -13,6 +13,11 @@
 // empty, the symbol carries the reference). Nothing else is guessed: a Cortizo-supplied product, or
 // one whose custom field is filled or whose symbol starts with COR-, that matches no reference is
 // listed as unmatched.
+// References that are in no imported catalogue (the standard Casement profiles 3820 / 3830 / 3850 — the
+// catalogue lists only their HI versions 3821 / 3831 / 3851 —, MP, pivot, sliding profiles, hardware) are
+// taken from Subiekt itself: the leading number of such a symbol becomes a reference of its own, described
+// with the Subiekt name ("from Subiekt"). What is still left — other brands bought through Cortizo, paint —
+// can be hidden from the list with a "Not Cortizo" pattern (cortizo_ignore, migration 0094).
 import { db } from './supabase';
 
 export const SKETCH_BUCKET = 'cortizo';
@@ -39,7 +44,10 @@ export function refKeys(refs: string[]): RefKeys {
 }
 /** A reference written as in Subiekt: as it is, or — a bare number — with "COR-" in front. */
 function lookup(t: string, keys: RefKeys): string | null {
-  return keys.exact.get(t) ?? (/^\d{3,6}$/.test(t) ? keys.exact.get('COR-' + t) ?? null : null);
+  const hit = keys.exact.get(t) ?? (/^\d{3,6}$/.test(t) ? keys.exact.get('COR-' + t) ?? null : null);
+  if (hit) return hit;
+  const bare = /^COR[- ]?(\d{3,6})$/.exec(t);                 // "COR-15919" for the bare PVC reference 15919
+  return bare ? keys.exact.get(bare[1]) ?? null : null;
 }
 /** Which reference a Subiekt symbol belongs to, or null:
  *  1. the symbol is the reference (case aside; a bare number may be COR-<number>);
@@ -66,28 +74,84 @@ export function matchCustomField(cref: string | null, keys: RefKeys): string | n
   const first = tight(cref).split(' ')[0];
   return first ? lookup(first, keys) ?? matchSymbol(first, keys) : null;
 }
-export interface StockMatch { byRef: Map<string, StockRow[]>; unmatched: StockRow[] }
-export function matchStock(refs: string[], stock: StockRow[]): StockMatch {
+/** A reference read from a Subiekt symbol (or the custom field) that no catalogue has: its leading 4–6 digit
+ *  number, "COR-<n>" for 4–5 digits (aluminium profiles), the bare number for 6 digits (hardware, as the
+ *  catalogues write accessories). "3830 RAL 7016 CM 4000 mm" → COR-3830, "COR-8619 Brązowy anoda" → COR-8619,
+ *  "330304" → 330304, "301025 - 9007" → 301025. */
+export function ownRef(...texts: (string | null | undefined)[]): string | null {
+  for (const t of texts) {
+    const m = /^(?:COR[- ]?)?(\d{4,6})(?=$|[-_/., ])/.exec(tight(t));
+    if (m) return m[1].length === 6 ? m[1] : 'COR-' + m[1];
+  }
+  return null;
+}
+/** "Not Cortizo" patterns: a whole symbol ("A.7016 CM") or a beginning with * ("GN*"). */
+export function ignored(symbol: string, patterns: string[]): boolean {
+  const t = tight(symbol);
+  return patterns.some((p) => { const q = tight(p); return q.endsWith('*') ? q.length > 1 && t.startsWith(q.slice(0, -1)) : t === q; });
+}
+export interface StockMatch { byRef: Map<string, StockRow[]>; own: Map<string, StockRow[]>; unmatched: StockRow[]; ignored: number }
+export function matchStock(refs: string[], stock: StockRow[], ignore: string[] = []): StockMatch {
   const keys = refKeys(refs);
-  const byRef = new Map<string, StockRow[]>(), unmatched: StockRow[] = [];
+  const byRef = new Map<string, StockRow[]>(), own = new Map<string, StockRow[]>(), unmatched: StockRow[] = [];
+  const add = (m: Map<string, StockRow[]>, k: string, s: StockRow) => (m.get(k) ?? m.set(k, []).get(k)!).push(s);
+  let hidden = 0;
   for (const s of stock) {
     const ref = matchCustomField(s.cref, keys) ?? matchSymbol(s.symbol, keys);
-    if (ref) (byRef.get(ref) ?? byRef.set(ref, []).get(ref)!).push(s);
-    else if (s.cortizo || clean(s.cref) || looksCortizo(s.symbol)) unmatched.push(s);
+    if (ref) { add(byRef, ref, s); continue; }
+    if (!(s.cortizo || clean(s.cref) || looksCortizo(s.symbol))) continue;
+    if (ignored(s.symbol, ignore)) { hidden++; continue; }
+    const o = ownRef(s.symbol, tight(s.cref).split(' ')[0]);
+    if (o) add(own, o, s); else unmatched.push(s);
   }
-  return { byRef, unmatched };
+  return { byRef, own, unmatched, ignored: hidden };
+}
+
+/** The colour written in a Subiekt symbol, after the reference and before the bar length, tidied:
+ *  "RAL 7016TD/9010 CM" → "RAL 7016 TD / 9010 CM", "RAL 7044 M" → "RAL 7044 M", "Brązowy anoda" as written;
+ *  null when the symbol has none. */
+export function colourOf(symbol: string): string | null {
+  let rest = clean(symbol).replace(/^COR[- ]?/i, '').replace(/^\S+/, '');
+  rest = rest.replace(/\s*\d{3,5}\s*mm\b.*$/i, '').replace(/^[\s\-_/.,]+|[\s\-_/.,]+$/g, '');
+  if (!rest) return null;
+  const parts = rest.replace(/^RAL\s*/i, '').split(/\s*\/\s*/);
+  const tidy = parts.map((x) => { const m = /^(?:RAL\s*)?(\d{4})\s*([A-Z]{1,2})?$/i.exec(x.trim()); return m ? m[1] + (m[2] ? ' ' + m[2].toUpperCase() : '') : null; });
+  return tidy.every(Boolean) ? 'RAL ' + tidy.join(' / ') : rest;
+}
+/** A Subiekt name without colour, bar length and bracket notes: "Poprzeczka 60mm RAL7016 CM (6,5m)" → "Poprzeczka 60mm". */
+export function plainName(name: string | null): string {
+  return clean(name).replace(/\[[^\]]*\]/g, ' ').replace(/\([^)]*\d[^)]*\)/g, ' ').replace(/\bRAL\s*\d{4}\s*(?:CM|TD|TC|M|B)?\b/gi, ' ')
+    .replace(/\s\d+(?:[.,]\d+)?\s*m$/i, ' ').replace(/\s+/g, ' ').replace(/[\s.,(-]+$/, '').trim();
+}
+/** The most common plain name of a reference's Subiekt rows (the longest on a tie). */
+export function ownDesc(rows: StockRow[]): string {
+  const n = new Map<string, number>();
+  for (const r of rows) { const x = plainName(r.name); if (x) n.set(x, (n.get(x) ?? 0) + 1); }
+  return [...n.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0]?.[0] ?? '';
 }
 
 /** The bar length a Subiekt symbol or name carries ("15919 RAL 7016 CM 4000 mm" → 4000), or null.
  *  Profiles are counted in pieces; this turns pieces into metres. */
 export function barLengthMm(...texts: (string | null | undefined)[]): number | null {
   for (const t of texts) {
-    const m = /(?:^|[^0-9.,])(\d{3,5})\s*mm\b/i.exec(clean(t));
+    const m = /(?:^|[^0-9.,])(\d{3,5})\s*mm\b/i.exec(clean(t).replace(/\(/g, ' '));
     if (m) { const n = Number(m[1]); if (n >= 300 && n <= 12000) return n; }
   }
   return null;
 }
-const isPieces = (unit: string | null) => !unit || /^(szt|pcs|pc|st)\.?$/i.test(unit.trim());
+const isPieces = (unit: string | null) => !unit || /^(szt|pcs|pc|st)\.?$/i.test(unit.trim()) || /^sztang/i.test(unit.trim());
+const isMetres = (unit: string | null) => !!unit && /^(m|mb|mtr)\.?$/i.test(unit.trim());
+/** The bar length of one piece: the symbol first ("3830 RAL 7021 CM 4000 mm"), then the unit
+ *  ("sztanga(6500mm)" — a full bar), then the name. Null for units that are not pieces. */
+export function pieceMm(r: { symbol: string; name: string | null; unit: string | null }): number | null {
+  if (!isPieces(r.unit)) return null;
+  return barLengthMm(r.symbol) ?? barLengthMm(r.unit) ?? barLengthMm(r.name);
+}
+/** Metres of a stock row: pieces × bar length, or the quantity itself when Subiekt counts in metres. */
+export function rowMetres(r: StockRow): number | null {
+  if (isMetres(r.unit)) return r.qty;
+  const mm = pieceMm(r); return mm ? (r.qty * mm) / 1000 : null;
+}
 
 // ---- the agent's stock snapshot ----------------------------------------------------------------
 export function stockFromAgent(r: any): StockRow | null {
@@ -137,7 +201,27 @@ export async function receiveStock(tenantId: string, body: any): Promise<{ ok: t
 // ---- what the page shows -----------------------------------------------------------------------
 export interface CatalogueView {
   items: any[]; systems: string[]; unmatched: StockRow[]; warehouses: string[];
-  stockSyncedAt: string | null; importedAt: string | null;
+  stockSyncedAt: string | null; importedAt: string | null; own: number; ignore: string[]; ignored: number;
+}
+export async function ignoreList(tenantId: string): Promise<string[]> {
+  const { data, error } = await db().from('cortizo_ignore').select('pattern').eq('tenant_id', tenantId).order('pattern');
+  if (error) return [];                                     // migration 0094 not run yet
+  return (data ?? []).map((r: any) => r.pattern);
+}
+export function ignorePattern(v: unknown): string | null {
+  const p = clean(v).toUpperCase().slice(0, 80);
+  return p && p !== '*' && !/^\*/.test(p) && (p.match(/\*/g) ?? []).length <= (p.endsWith('*') ? 1 : 0) ? p : null;
+}
+export async function addIgnore(tenantId: string, userId: string, v: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pattern = ignorePattern(v);
+  if (!pattern) return { ok: false, error: 'Give a symbol, or its beginning followed by * (e.g. GN*).' };
+  const { error } = await db().from('cortizo_ignore').upsert({ tenant_id: tenantId, pattern, created_by: userId }, { onConflict: 'tenant_id,pattern' });
+  if (error) return { ok: false, error: /cortizo_ignore/.test(error.message) ? 'This needs migration 0094.' : error.message };
+  return { ok: true };
+}
+export async function removeIgnore(tenantId: string, v: unknown): Promise<void> {
+  const { error } = await db().from('cortizo_ignore').delete().eq('tenant_id', tenantId).eq('pattern', clean(v).toUpperCase());
+  if (error) throw error;
 }
 export async function catalogueView(tenantId: string): Promise<CatalogueView> {
   const [items, stock] = await Promise.all([
@@ -145,24 +229,42 @@ export async function catalogueView(tenantId: string): Promise<CatalogueView> {
     all<any>('subiekt_stock', 'product_id,warehouse,symbol,name,unit,qty,reserved,cref,cortizo,synced_at', tenantId, 'product_id'),
   ]);
   const rows: StockRow[] = stock.map((s) => ({ ...s, product_id: Number(s.product_id), qty: Number(s.qty) || 0, reserved: s.reserved === null ? null : Number(s.reserved) }));
-  const m = matchStock(items.map((i) => i.ref), rows);
+  const ignore = await ignoreList(tenantId);
+  const m = matchStock(items.map((i) => i.ref), rows, ignore);
   const systems = [...new Set(items.flatMap((i) => i.systems ?? []))].sort();
   const sysIx = new Map(systems.map((s, i) => [s, i]));
-  const out = items.map((i) => {
+  const stockOf = (st: StockRow[]) => {
+    const mt = st.map(rowMetres);
+    return {
+      stock: st.map((r, k) => [r.symbol, r.name, r.warehouse, r.qty, r.unit, r.reserved, pieceMm(r), colourOf(r.symbol), mt[k] === null ? null : Math.round(mt[k]! * 100) / 100]),
+      m: mt.some((x) => x !== null) ? Math.round(mt.reduce((a: number, x) => a + (x ?? 0), 0) * 100) / 100 : null,
+      qty: st.length ? Math.round(st.reduce((a, r) => a + r.qty, 0) * 1000) / 1000 : null,
+    };
+  };
+  const byRef = new Map(items.map((i) => [i.ref, i]));
+  const out: any[] = items.map((i) => {
     const st = m.byRef.get(i.ref) ?? [];
-    const mm = st.map((r) => (isPieces(r.unit) ? barLengthMm(r.symbol, r.name) : null));
-    const metres = mm.some((x) => x) ? Math.round(st.reduce((a, r, k) => a + (mm[k] ? (r.qty * mm[k]!) / 1000 : 0), 0) * 100) / 100 : null;
     return {
       ref: i.ref, kind: i.kind, en: i.desc_en, es: i.desc_es, w: i.weight_g_m === null ? null : Number(i.weight_g_m), s: i.surface_dm2_m === null ? null : Number(i.surface_dm2_m),
       col: i.colour_en || i.colour_es || null, typ: i.type_en || i.type_es || null, sk: i.sketch || null,
       sys: (i.systems ?? []).map((s: string) => sysIx.get(s)),
-      stock: st.map((r, k) => [r.symbol, r.name, r.warehouse, r.qty, r.unit, r.reserved, mm[k]]),
-      m: metres,
-      qty: st.length ? Math.round(st.reduce((a, r) => a + r.qty, 0) * 1000) / 1000 : null,
+      ...stockOf(st),
     };
   });
+  // references only Subiekt knows; a 4–5 digit profile shows the drawing and systems of its HI version (n + 1)
+  for (const [ref, st] of m.own) {
+    const n = /^COR-(\d{4,5})$/.exec(ref), hi = n ? byRef.get('COR-' + (Number(n[1]) + 1)) : undefined;
+    const sib = hi && /\bHI\b/.test(String(hi.desc_en ?? '') + ' ' + String(hi.desc_es ?? '')) ? hi : undefined;
+    const profile = !!n || st.some((r) => pieceMm(r) !== null && /sztang|mm/i.test(r.symbol + ' ' + (r.unit ?? '')));
+    out.push({
+      ref, kind: profile ? 'profile' : 'accessory', en: ownDesc(st) || null, es: null, w: null, s: null, col: null, typ: null,
+      sk: sib?.sketch || null, sys: (sib?.systems ?? []).map((s: string) => sysIx.get(s)), own: true, sib: sib ? sib.ref : null,
+      ...stockOf(st),
+    });
+  }
+  out.sort((a, b) => a.ref.localeCompare(b.ref, 'en', { numeric: true }));
   return {
-    items: out, systems, unmatched: m.unmatched, warehouses: [...new Set(rows.map((r) => r.warehouse))].sort(),
+    items: out, systems, unmatched: m.unmatched, own: m.own.size, ignore, ignored: m.ignored, warehouses: [...new Set(rows.map((r) => r.warehouse))].sort(),
     stockSyncedAt: stock.reduce((a: string | null, s: any) => (!a || s.synced_at > a ? s.synced_at : a), null),
     importedAt: items.reduce((a: string | null, s: any) => (!a || s.imported_at > a ? s.imported_at : a), null),
   };

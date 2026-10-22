@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.41.0';
+export const APP_VERSION = '1.42.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.42.0', date: '2026-10-22', changes: [
+    'Production \u25b8 Cortizo profiles: stock per colour \u2014 each reference shows its Subiekt stock split by colour (RAL + finish, two-colour profiles such as RAL 7016 TD / 9010 CM, named colours such as Br\u0105zowy anoda), with pieces and metres; a colour filter; the colour in the detail window and in the CSV.',
+    'References that are in no imported catalogue (standard Casement 3820 / 3830 / 3850 \u2014 the catalogue has only their HI versions \u2014, MP, pivot, sliding profiles and Cortizo hardware) are now taken from Subiekt: the number becomes the reference, described with the Subiekt name and marked \u201cfrom Subiekt\u201d. A standard profile shows the drawing and systems of its HI version. Filter: Only from Subiekt.',
+    'COR-15919, COR-10417, COR-770199 now match the catalogue references written without COR-. Full bars (unit sztanga(6500mm)) count as 6.5 m, and the length in the symbol wins over the name; stock kept in metres counts too.',
+    'Subiekt symbols with no reference: a Not Cortizo button (admin, production manager) hides other brands and materials \u2014 one symbol or all starting with the same letters (GN*, FAZE*). Hidden patterns are listed and can be shown again. Needs migration 0094.',
+  ] },
   { version: '1.41.0', date: '2026-10-22', changes: [
     'New home page with a tile per ACE Group business \u2014 Framework (UK), Acemark PL (PL) and ACE Scaffolding (UK). Each tile lists its screens; click one to go there. The menu then shows only that business (plus Admin); the home button at the top shows the business you are in and takes you back to the tiles. Users with one business go straight in, as before.',
     'Admin \u25b8 Users: a Businesses column \u2014 tick which businesses each user sees. With nothing ticked the role decides (Polish roles \u2192 Acemark PL, others \u2192 Framework); Admin always sees all. Needs migration 0093.',
