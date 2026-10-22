@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.42.0';
+export const APP_VERSION = '1.43.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.43.0', date: '2026-10-22', changes: [
+    'ACE Scaffolding, phase 0: the Scaffolding menu now has Enquiries (ACE numbers: status, price, estimated profit, won rate; open / all / per status, per year, search), Jobs (ACESC numbers: erected by, status, up date, hire weeks and rent %, dismantle request) and Customers (with their contacts and sites \u2014 add and change them).',
+    'Overview: counts, the next ACE / ACESC numbers and the one-off import from monday (admin): Check shows what would come in from Estimated Enquiries, Project Sheet and the linked My Contacts; Import brings it in. It can be run again until monday is switched off \u2014 anything changed in the app is kept.',
+    'New role Scaffolding office: sees only ACE Scaffolding. Admin \u25b8 Roles \u25b8 App access has the Scaffolding apps (Customers & sites, Enquiries, Jobs) to give other roles view or edit. Needs migrations 0095 and 0096.',
+  ] },
   { version: '1.42.0', date: '2026-10-22', changes: [
     'Production \u25b8 Cortizo profiles: stock per colour \u2014 each reference shows its Subiekt stock split by colour (RAL + finish, two-colour profiles such as RAL 7016 TD / 9010 CM, named colours such as Br\u0105zowy anoda), with pieces and metres; a colour filter; the colour in the detail window and in the CSV.',
     'References that are in no imported catalogue (standard Casement 3820 / 3830 / 3850 \u2014 the catalogue has only their HI versions \u2014, MP, pivot, sliding profiles and Cortizo hardware) are now taken from Subiekt: the number becomes the reference, described with the Subiekt name and marked \u201cfrom Subiekt\u201d. A standard profile shows the drawing and systems of its HI version. Filter: Only from Subiekt.',

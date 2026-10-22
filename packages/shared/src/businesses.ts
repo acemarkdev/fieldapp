@@ -10,9 +10,11 @@ export const BUSINESSES: Business[] = [
 ];
 export const BUSINESS_KEYS = BUSINESSES.map((b) => b.key);
 const PL_ROLES = ['acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse'];
-/** Without a setting on the user: admin → all; the Polish roles → Acemark PL; everyone else → Framework. */
+/** Without a setting on the user: admin → all; the Polish roles → Acemark PL; Scaffolding office → ACE Scaffolding;
+ *  everyone else → Framework. */
 export function defaultBusinesses(role: string | null | undefined): BusinessKey[] {
   if (role === 'admin') return [...BUSINESS_KEYS];
+  if (role === 'scaffolding') return ['scaffolding'];
   return PL_ROLES.includes(String(role)) ? ['acemark_pl'] : ['framework'];
 }
 /** The businesses a user sees: admin always all; otherwise the stored list (known keys only), else the default. */

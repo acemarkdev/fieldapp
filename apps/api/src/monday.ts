@@ -11,6 +11,13 @@ export interface MondayColumn {
   settings: any;
 }
 
+export interface LinkedItem { id: string; name: string; group: string | null; created_at: string | null; cols: Record<string, string | null>; links: Record<string, string[]> }
+function linkedItem(i: any): LinkedItem {
+  const cols: Record<string, string | null> = {}, links: Record<string, string[]> = {};
+  for (const cv of i.column_values ?? []) { cols[cv.id] = cv.text ?? null; if (Array.isArray(cv.linked_item_ids)) links[cv.id] = cv.linked_item_ids.map(String); }
+  return { id: String(i.id), name: String(i.name ?? ''), group: i.group?.title ?? null, created_at: i.created_at ?? null, cols, links };
+}
+
 export class Monday {
   private token: string;
   constructor(token = process.env.MONDAY_API_TOKEN ?? '') {
@@ -143,6 +150,37 @@ export class Monday {
       onProgress?.(out.length);
       cursor = pageData?.cursor ?? null;
       if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
+  /** Every item with the text of the given columns and, for connect-boards columns, the linked item ids
+   *  (the text of such a column is only the names). Used by the one-off ACE Scaffolding import. */
+  async listItemsLinked(boardId: string, columnIds: string[], onProgress?: (n: number) => void): Promise<LinkedItem[]> {
+    const out: LinkedItem[] = [];
+    const fields = `cursor items { id name created_at group { title } column_values(ids: $col) { id text ... on BoardRelationValue { linked_item_ids } } }`;
+    let cursor: string | null = null;
+    for (let page = 0; page < 200; page++) {
+      const d: any = cursor
+        ? await this.gqlRetry(`query ($c: String!, $col: [String!]) { next_items_page(cursor: $c, limit: 500) { ${fields} } }`, { c: cursor, col: columnIds })
+        : await this.gqlRetry(`query ($b: [ID!], $col: [String!]) { boards(ids: $b) { items_page(limit: 500) { ${fields} } } }`, { b: [boardId], col: columnIds });
+      const pageData: any = cursor ? d.next_items_page : d.boards?.[0]?.items_page;
+      const items = pageData?.items ?? [];
+      for (const i of items) out.push(linkedItem(i));
+      onProgress?.(out.length);
+      cursor = pageData?.cursor ?? null;
+      if (!cursor || items.length === 0) break;
+    }
+    return out;
+  }
+
+  /** Items by id (any board), 100 per request, with the text of the given columns. */
+  async getItemsLinked(ids: string[], columnIds: string[]): Promise<LinkedItem[]> {
+    const out: LinkedItem[] = [];
+    const uniq = [...new Set(ids)];
+    for (let i = 0; i < uniq.length; i += 100) {
+      const d: any = await this.gqlRetry(`query ($ids: [ID!], $col: [String!]) { items(ids: $ids, limit: 100) { id name created_at group { title } column_values(ids: $col) { id text ... on BoardRelationValue { linked_item_ids } } } }`, { ids: uniq.slice(i, i + 100), col: columnIds });
+      for (const it of d.items ?? []) out.push(linkedItem(it));
     }
     return out;
   }

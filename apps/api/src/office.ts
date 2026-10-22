@@ -19,7 +19,7 @@ import { listPricingRules, getPricingRule, createPricingRule, updatePricingRule,
   latestTestResults, insertTestResult, allTestResults, listTestVersions, listDemoLeads, listCustomers,
   listTenants, getTenant, setTenantRate, countItemsCreated } from './store';
 import { priceJob, classifyCategory, type PriceItem } from '@ace/shared';
-import { APPS, appLevel, appLevels, hasApp, isEditableRole, type AppKey, BUSINESSES, userBusinesses, businessesField } from '@ace/shared';
+import { APPS, appLevel, appLevels, hasApp, isEditableRole, isFinApp, type AppKey, BUSINESSES, userBusinesses, businessesField } from '@ace/shared';
 import { getAppOverrides, saveAppOverride } from './appAccessStore';
 import { listIssues as listWhIssues, exportIssues as exportWhIssues, exportedAgain as whExportedAgain, unexportIssues as unexportWhIssues, deleteIssues as deleteWhIssues, updateIssue as updateWhIssue, WAREHOUSE_NEEDS } from './warehouse';
 import { manualsFor, manualPage, manualImage } from './manuals';
@@ -27,6 +27,7 @@ import { listBudgets, getBudget, saveBudget, decide as decideBudget, budgetCalc,
 import { previewMondayJobs, applyMondayJobs } from './mondayJobs';
 import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as addProdTask, setTaskActive, setTasksActive, listEditLog, listEntries as listTimeEntries, saveEntry as saveTimeEntry, deleteEntry as deleteTimeEntry, listRates as listWorkerRates, setRate as setWorkerRate, hoursBetween, rateRows, rateBook, rateFor, removeRateRow, recordDefaultRate, todayPL } from './prodTime';
 import { agentTenant, receiveSnapshot, listDocs, docsToCheck, lastSync, hasAgentKey, newAgentKey, setNotJob } from './subiekt';
+import * as scaf from './scaffolding';
 import { receiveStock, catalogueView, sketchUrls, itemSources, addIgnore, removeIgnore } from './cortizo';
 import { gzipSync } from 'node:zlib';
 import { receiveLots, stockView, historyFor } from './stockValue';
@@ -536,7 +537,62 @@ const server = createServer(async (req, res) => {
       send(res, 403, { error: need === 'edit' && hasApp(ctx.role, apps, 'view', appOverrides) ? 'You can view this page but not change it — ask an admin for edit access.' : `Your role (${ctx.role}) is not allowed to do that.` });
       return false;
     };
-    const finGranted = APPS.some((a) => appLevel(ctx.role, a.key, appOverrides) !== 'off');
+    const finGranted = APPS.some((a) => isFinApp(a.key) && appLevel(ctx.role, a.key, appOverrides) !== 'off');
+
+    // ---- ACE Scaffolding (scaffolding.ts): customers & sites, enquiries, jobs, the one-off monday import ----
+    // Needs the Scaffolding business on the user (Admin ▸ Users) and the app in the role's App access (Admin ▸ Roles).
+    if (p.startsWith('/api/scaf/')) {
+      if (!userBusinesses(ctx.role, await getUserBusinesses(ctx.id)).includes('scaffolding')) { send(res, 403, { error: 'Your user does not have ACE Scaffolding (Admin ▸ Users ▸ Businesses).' }); return; }
+      const zipped = (v: unknown) => {
+        const body = Buffer.from(JSON.stringify(v));
+        if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' }); res.end(gzipSync(body)); }
+        else send(res, 200, v);
+      };
+      const scafErr = (e: any) => /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
+      try {
+        if (p === '/api/scaf/summary' && req.method === 'GET') {
+          if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs'], 'view')) return;
+          send(res, 200, await scaf.summary(ctx.tenant_id)); return;
+        }
+        if (p === '/api/scaf/import' && req.method === 'POST') {
+          if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin runs the monday import.' }); return; }
+          const b = await readJson(req);
+          const plan = await scaf.readMonday();
+          if (b.dry) {
+            const n = (k: string) => plan.enquiries.filter((e) => e.stage === k).length;
+            send(res, 200, { dry: true, customers: plan.customers.length, contacts: plan.contacts.length, sites: plan.sites.length, enquiries: plan.enquiries.length, jobs: plan.jobs.length,
+              won: n('won'), open: plan.enquiries.filter((e) => !['won', 'declined', 'lost', 'on_hold', 'other'].includes(e.stage)).length,
+              jobsNoEnquiry: plan.jobs.filter((j) => j.enquiry === null).length, enquiriesNoCustomer: plan.enquiries.filter((e) => !e.customer).length, skipped: plan.skipped });
+            return;
+          }
+          send(res, 200, { ok: true, ...(await scaf.writePlan(ctx.tenant_id, plan)) }); return;
+        }
+        if (p === '/api/scaf/enquiries' && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; zipped({ enquiries: await scaf.listEnquiries(ctx.tenant_id) }); return; }
+        let m = /^\/api\/scaf\/enquiries\/([0-9a-f-]{36})$/.exec(p);
+        if (m && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; const e = await scaf.getEnquiry(ctx.tenant_id, m[1]); if (!e) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, e); return; }
+        if (p === '/api/scaf/jobs' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; zipped({ jobs: await scaf.listJobs(ctx.tenant_id) }); return; }
+        m = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})$/.exec(p);
+        if (m && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; const j = await scaf.getJob(ctx.tenant_id, m[1]); if (!j) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, j); return; }
+        if (p === '/api/scaf/customers' && req.method === 'GET') { if (!allowApp(['scaf.customers'], 'view')) return; zipped({ customers: await scaf.listCustomers(ctx.tenant_id) }); return; }
+        if (p === '/api/scaf/customers' && req.method === 'POST') { if (!allowApp(['scaf.customers'], 'edit')) return; const r = await scaf.saveCustomer(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        m = /^\/api\/scaf\/customers\/([0-9a-f-]{36})$/.exec(p);
+        if (m && req.method === 'GET') { if (!allowApp(['scaf.customers'], 'view')) return; const c = await scaf.getCustomer(ctx.tenant_id, m[1]); if (!c) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, c); return; }
+        if (m && req.method === 'PUT') { if (!allowApp(['scaf.customers'], 'edit')) return; const r = await scaf.saveCustomer(ctx.tenant_id, m[1], await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        if (p === '/api/scaf/contacts' && req.method === 'POST') { if (!allowApp(['scaf.customers'], 'edit')) return; const r = await scaf.saveContact(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        if (p === '/api/scaf/sites' && req.method === 'POST') { if (!allowApp(['scaf.customers'], 'edit')) return; const r = await scaf.saveSite(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        m = /^\/api\/scaf\/(contacts|sites)\/([0-9a-f-]{36})$/.exec(p);
+        if (m && (req.method === 'PUT' || req.method === 'DELETE')) {
+          if (!allowApp(['scaf.customers'], 'edit')) return;
+          if (req.method === 'DELETE') { await scaf.removeRow(ctx.tenant_id, m[1] === 'contacts' ? 'scaf_contacts' : 'scaf_sites', m[2]); send(res, 200, { ok: true }); return; }
+          const b = await readJson(req);
+          const r = m[1] === 'contacts' ? await scaf.saveContact(ctx.tenant_id, m[2], b) : await scaf.saveSite(ctx.tenant_id, m[2], b);
+          send(res, r.ok ? 200 : 400, r); return;
+        }
+      } catch (e: any) { send(res, 500, { error: scafErr(e) }); return; }
+      send(res, 404, { error: 'Not found.' }); return;
+    }
+    // The Scaffolding office role uses only the Scaffolding pages.
+    if (ctx.role === 'scaffolding' && p !== '/api/me') { send(res, 403, { error: 'Not allowed.' }); return; }
 
     if (p === '/api/me') { send(res, 200, { businesses: userBusinesses(ctx.role, await getUserBusinesses(ctx.id)), apps: appLevels(ctx.role, appOverrides), id: ctx.id, name: ctx.name, role: ctx.role, client_code: ctx.client_code ?? null, team_id: (ctx as any).team_id ?? null, language: await getUserLanguage(ctx.id) }); return; }
 
@@ -3511,6 +3567,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .verchip:hover{background:rgba(255,255,255,.24);color:#fff}
   .loginver{text-align:center;color:#a9a4c4;font-size:11px;margin-top:14px}
   .nav{display:flex;gap:4px;margin-left:26px}
+  .scchip{display:inline-block;font-size:11.5px;font-weight:700;border:1px solid;border-radius:999px;padding:2px 9px;white-space:nowrap}
+  table.sct tr.scr{cursor:pointer}table.sct tr.scr:hover td{background:#faf9fd}
+  .scform{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}.scform label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
   .czown{display:inline-block;font-size:10.5px;font-weight:700;color:#b45309;background:#fff1e0;border-radius:999px;padding:1px 7px;margin-top:2px}
   .homebtn{display:flex;align-items:center;gap:7px;margin-left:14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);color:#fff;font-weight:700;font-size:13px;padding:6px 12px;border-radius:9px;cursor:pointer;white-space:nowrap}
   .homebtn:hover{background:rgba(255,255,255,.2)}
@@ -3964,6 +4023,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div></div>
       <div class="grp" id="grp_scaffolding"><button class="grpbtn" onclick="toggleGrp('scaffolding')">Scaffolding \u25be</button><div class="grpmenu" id="menu_scaffolding">
         <button id="tabScaf" class="tab" style="display:none" onclick="showTab('scaf')">Overview</button>
+        <button id="tabScafEnq" class="tab" style="display:none" onclick="showTab('scafenq')">Enquiries</button>
+        <button id="tabScafJobs" class="tab" style="display:none" onclick="showTab('scafjobs')">Jobs</button>
+        <button id="tabScafCust" class="tab" style="display:none" onclick="showTab('scafcust')">Customers</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
         <button id="tabTeams" class="tab" onclick="showTab('teams')">Teams &amp; rates</button>
@@ -3989,7 +4051,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="scafView" style="display:none">
     <main style="max-width:820px">
       <h2>ACE Scaffolding</h2>
-      <div class="sub">This business is being built into the office app. The first parts to arrive are customers and sites, the enquiry pipeline and quotes, then jobs, hire billing, the phone app for crews and stock.</div>
+      <div class="sub">This business is being built into the office app, phase by phase. Now: customers, contacts and sites, and the enquiries and jobs brought over from monday. Next: the enquiry pipeline and quotes, then jobs, hire billing, the phone app for crews and stock.</div>
+      <div class="statgrid" id="sv0_stats" style="margin:16px 0 0"></div>
+      <div class="card2" id="sv0_import" style="display:none;margin-top:16px;padding:16px 18px">
+        <div class="groupt" style="padding:0 0 6px">IMPORT FROM MONDAY (ONE-OFF)</div>
+        <div class="sub" style="margin:0 0 10px">Reads the ACE Scaffolding boards — Estimated Enquiries, Project Sheet and the customers they link to in My Contacts — into the office app. Run <b>Check</b> first to see what would come in. It can be run again until monday is switched off: new items are added and imported ones refreshed, but anything changed here is kept.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="pobtn" id="sv0_check">Check monday</button><button class="add" id="sv0_run" style="display:none">Import</button><span class="sub" id="sv0_msg" style="margin:0"></span></div>
+        <div id="sv0_res" style="margin-top:10px"></div>
+      </div>
       <div class="card2" style="margin-top:16px;padding:16px 18px">
         <div class="groupt" style="padding:0 0 8px">PLAN</div>
         <ol class="scafplan">
@@ -4002,6 +4071,47 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
           <li><b>Reporting</b> — job profit, rent income, overdue rent; monday switched off</li>
         </ol>
       </div>
+    </main>
+  </div>
+  <div id="scafEnqView" style="display:none">
+    <main style="max-width:1400px">
+      <div class="titlerow"><div><h2>Enquiries</h2><div class="sub" id="se_sub">ACE Scaffolding enquiries and estimates (ACE numbers).</div></div></div>
+      <div class="chips" style="gap:8px;margin:14px 0 8px">
+        <input id="se_q" class="tinput" style="min-width:240px" placeholder="Search number, site, customer">
+        <select id="se_stage" class="tinput"></select>
+        <select id="se_year" class="tinput"></select>
+        <span class="sub" style="margin:0 0 0 auto" id="se_count"></span>
+      </div>
+      <div class="statgrid" id="se_stats" style="margin:6px 0 14px"></div>
+      <div class="card2" style="overflow:auto"><table class="fjl sct"><thead><tr><th>NUMBER</th><th>RECEIVED</th><th>SITE / TITLE</th><th>CUSTOMER</th><th>STATUS</th><th style="text-align:right">PRICE</th><th style="text-align:right">EST. PROFIT</th><th>ESTIMATOR / SALES</th></tr></thead><tbody id="se_rows"></tbody></table></div>
+      <div style="text-align:center;margin:12px 0 30px"><button class="pobtn" id="se_more" style="display:none">Show more</button></div>
+    </main>
+  </div>
+  <div id="scafJobsView" style="display:none">
+    <main style="max-width:1400px">
+      <div class="titlerow"><div><h2>Jobs</h2><div class="sub">ACE Scaffolding jobs (ACESC numbers): erection, hire and dismantle.</div></div></div>
+      <div class="chips" style="gap:8px;margin:14px 0 8px">
+        <input id="sj_q" class="tinput" style="min-width:240px" placeholder="Search number, site, customer">
+        <select id="sj_stage" class="tinput"></select>
+        <select id="sj_erector" class="tinput"></select>
+        <span class="sub" style="margin:0 0 0 auto" id="sj_count"></span>
+      </div>
+      <div class="card2" style="overflow:auto"><table class="fjl sct"><thead><tr><th>NUMBER</th><th>ENQUIRY</th><th>SITE / TITLE</th><th>CUSTOMER</th><th>ERECTED BY</th><th>STATUS</th><th>UP</th><th style="text-align:right">HIRE</th><th>DISMANTLE REQ.</th><th style="text-align:right">PRICE</th></tr></thead><tbody id="sj_rows"></tbody></table></div>
+      <div style="text-align:center;margin:12px 0 30px"><button class="pobtn" id="sj_more" style="display:none">Show more</button></div>
+    </main>
+  </div>
+  <div id="scafCustView" style="display:none">
+    <main style="max-width:1300px">
+      <div class="titlerow"><div><h2>Customers</h2><div class="sub">ACE Scaffolding customers with their contacts and sites.</div></div>
+        <div style="display:flex;gap:8px;align-self:center"><button class="pobtn" id="sc_new" style="display:none">+ New customer</button></div></div>
+      <div class="chips" style="gap:8px;margin:14px 0 8px">
+        <input id="sc_q" class="tinput" style="min-width:240px" placeholder="Search name, email, phone">
+        <select id="sc_kind" class="tinput"><option value="">All kinds</option><option value="commercial">Commercial</option><option value="trade">Trade</option><option value="domestic">Domestic</option><option value="ace">ACE company</option></select>
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="sc_withenq" checked> Only with enquiries or jobs</label>
+        <span class="sub" style="margin:0 0 0 auto" id="sc_count"></span>
+      </div>
+      <div class="card2" style="overflow:auto"><table class="fjl sct"><thead><tr><th>CUSTOMER</th><th>KIND</th><th>PHONE / EMAIL</th><th style="text-align:right">CONTACTS</th><th style="text-align:right">SITES</th><th style="text-align:right">ENQUIRIES (WON)</th><th style="text-align:right">JOBS</th><th>LAST ENQUIRY</th></tr></thead><tbody id="sc_rows"></tbody></table></div>
+      <div style="text-align:center;margin:12px 0 30px"><button class="pobtn" id="sc_more" style="display:none">Show more</button></div>
     </main>
   </div>
   <div id="dashView" style="display:none">
@@ -4843,7 +4953,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(location.hash==='#costs'&&canCap('expenses.report')){ history.replaceState(null,'',location.pathname); return 'myexp'; }
     var t=sessionStorage.getItem('ace_tab')||(myBiz().length>1?'home':(myRole==='scanner'?'mapping':'dashboard'));
     if(t==='home'&&myBiz().length>1)return 'home';
-    if(t==='scaf')return myBiz().some(function(b){ return b.key==='scaffolding'; })?'scaf':'home';
+    var scafTabs=['scaf','scafenq','scafjobs','scafcust'];
+    if(scafTabs.indexOf(t)>=0)return myBiz().some(function(b){ return b.key==='scaffolding'; })?t:'home';
+    if(myRole==='scaffolding')return 'scafenq';
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
     if(myRole==='acemark_finance'&&t!=='finwh'&&t!=='finstock') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales'||t==='finpay'||t==='finorders'||t==='fincomm'||t==='finman')?t:'finperf';
     if(myRole==='sales_rep') return (t==='finorders'||t==='fincomm'||t==='finman')?t:'finorders';
@@ -4912,7 +5024,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
-    if(myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());return;}
+    if(myRole==='scaffolding'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
@@ -6754,8 +6866,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sessionStorage.setItem('ace_tab',name);
     bizFollowTab(name);
     document.getElementById('homeView').style.display=name==='home'?'block':'none';
-    document.getElementById('scafView').style.display=name==='scaf'?'block':'none';
-    var _tsc=document.getElementById('tabScaf'); if(_tsc)_tsc.classList.toggle('on',name==='scaf');
+    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
+      document.getElementById(v[1]).style.display=name===v[0]?'block':'none'; var t=document.getElementById(v[2]); if(t)t.classList.toggle('on',name===v[0]); });
+    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafcust')loadScafCust();
     if(name==='home')renderHome();
     document.getElementById('dashView').style.display=name==='dashboard'?'block':'none';
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
@@ -7121,8 +7234,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sv_print').onclick=function(){ window.print(); };
   })();
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={home:'',scaf:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -7135,6 +7248,216 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       b.style.display=(grpVisible(gid)&&inBiz)?'':'none';});
     var hb=document.getElementById('homeBtn'); if(hb){ var many=myBiz().length>1; hb.style.display=many?'':'none'; document.getElementById('bizName').textContent=home||!cur?TR('All businesses'):cur.name; }
     setActiveGroup(sessionStorage.getItem('ace_tab')||'dashboard');}
+  // ---- ACE Scaffolding: Overview (counts + monday import), Enquiries, Jobs, Customers (scaffolding.ts) ----
+  var SC={enq:null,jobs:null,cust:null,shown:{e:150,j:150,c:150}};
+  var SC_ENQ_STAGE={new:'New',waiting_access:'Waiting for access',awaiting_details:'Awaiting details / meeting',survey:'Survey required',quote_required:'Quote required',quote_draft:'Quote in draft',quote_sent:'Quote sent',pending:'Seen, pending',hot:'Hot',won:'Won',declined:'Declined',lost:'Lost / not required',on_hold:'On hold',other:'Other'};
+  var SC_ENQ_OPEN=['new','waiting_access','awaiting_details','survey','quote_required','quote_draft','quote_sent','pending','hot'];
+  var SC_JOB_STAGE={booking:'Booking',upcoming:'Upcoming',to_be_rented:'To be rented',ongoing:'Ongoing',still_up:'Still up',being_rented:'Being rented',ready_for_dismantle:'Ready for dismantle',part_dismantled:'Part dismantled',down:'Down',commercial:'Commercial',na:'N/A'};
+  var SC_JOB_ACTIVE=['upcoming','to_be_rented','ongoing','still_up','being_rented','ready_for_dismantle','part_dismantled','commercial'];
+  var SC_KIND={commercial:'Commercial',trade:'Trade',domestic:'Domestic',ace:'ACE company'};
+  function scMoney(n){ if(n==null||n==='')return ''; var v=Number(n), d=Math.round(v*100)%100?2:0; return '£'+v.toLocaleString('en-GB',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+  function scDay(d){ if(!d)return ''; var p=String(d).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:d; }
+  function scChip(stage,label,won){ var c=won?'#067647':(stage==='declined'||stage==='lost'||stage==='down'?'#9a97ad':(stage==='hot'||stage==='ready_for_dismantle'?'#b42318':'#3c2a7a')); return '<span class="scchip" style="color:'+c+';border-color:'+c+'33">'+esc(label)+'</span>'; }
+  async function scGet(url){ var r=await api(url); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); return d; }
+  function scErrRow(tb,cols,e){ tb.innerHTML='<tr><td colspan="'+cols+'" class="sub" style="padding:16px">'+esc(e&&e.message||'Could not load.')+'</td></tr>'; }
+
+  // Overview
+  async function loadScafOverview(){
+    var box=document.getElementById('sv0_stats'); if(!box)return;
+    document.getElementById('sv0_import').style.display=myRole==='admin'?'':'none';
+    try{ var s=await scGet('/api/scaf/summary');
+      box.innerHTML=svStat(czNum(s.enquiries,0),'Enquiries')+svStat(czNum(s.jobs,0),'Jobs')+svStat(czNum(s.customers,0),'Customers')+svStat(czNum(s.sites,0),'Sites')
+        +svStat(esc(s.nextEnquiry)+' · '+esc(s.nextJob),'Next numbers')+svStat(s.importedAt?esc(czWhen(s.importedAt)):'—','Last monday import');
+    }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; }
+  }
+  async function scImport(dry){
+    var msg=document.getElementById('sv0_msg'), res=document.getElementById('sv0_res'), run=document.getElementById('sv0_run');
+    msg.textContent=dry?'Reading monday… (about a minute)':'Importing… (about two minutes)'; document.getElementById('sv0_check').disabled=true; run.disabled=true;
+    try{ var r=await api('/api/scaf/import',{method:'POST',body:JSON.stringify({dry:!!dry})}); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+      var sk=(d.skipped||[]);
+      if(dry){ msg.textContent='This is what would be imported:'; run.style.display='';
+        res.innerHTML='<div class="statgrid" style="margin:0">'+svStat(czNum(d.enquiries,0),'Enquiries')+svStat(czNum(d.open,0),'Open enquiries')+svStat(czNum(d.won,0),'Won')+svStat(czNum(d.jobs,0),'Jobs')+svStat(czNum(d.customers,0),'Customers')+svStat(czNum(d.contacts,0),'Contacts')+svStat(czNum(d.sites,0),'Sites')+'</div>'
+          +'<div class="sub" style="margin:8px 0 0">'+esc(czNum(d.jobsNoEnquiry,0)+' jobs without a linked enquiry (older ones), '+czNum(d.enquiriesNoCustomer,0)+' enquiries without a customer.')+'</div>';
+      } else { msg.textContent='Imported.'; run.style.display='none';
+        res.innerHTML='<div class="sub" style="margin:0">'+esc(czNum(d.enquiries,0)+' enquiries, '+czNum(d.jobs,0)+' jobs, '+czNum(d.customers,0)+' customers, '+czNum(d.contacts,0)+' contacts, '+czNum(d.sites,0)+' sites'+(d.kept?' · '+d.kept+' rows changed in the app were kept as they are':''))+'</div>';
+        SC.enq=SC.jobs=SC.cust=null; loadScafOverview(); }
+      if(sk.length)res.innerHTML+='<details style="margin-top:8px"><summary class="sub" style="cursor:pointer">'+esc(sk.length+' monday items left out')+'</summary><table class="fjl"><tbody>'+sk.map(function(x){ return '<tr><td>'+esc(x.board)+'</td><td>'+esc(x.name)+'</td><td class="sub">'+esc(x.why)+'</td></tr>'; }).join('')+'</tbody></table></details>';
+    }catch(e){ msg.textContent=e.message; }
+    document.getElementById('sv0_check').disabled=false; run.disabled=false;
+  }
+
+  // Enquiries
+  async function loadScafEnq(){
+    var tb=document.getElementById('se_rows');
+    if(!SC.enq){ tb.innerHTML='<tr><td colspan="8" class="sub" style="padding:16px">Loading…</td></tr>'; try{ SC.enq=(await scGet('/api/scaf/enquiries')).enquiries; }catch(e){ scErrRow(tb,8,e); return; } }
+    var st=document.getElementById('se_stage'), ks=st.value||'open';
+    st.innerHTML='<option value="open">Open enquiries</option><option value="all">All enquiries</option>'+Object.keys(SC_ENQ_STAGE).map(function(k){ return '<option value="'+k+'">'+esc(SC_ENQ_STAGE[k])+'</option>'; }).join(''); st.value=ks;
+    var yr=document.getElementById('se_year'), ky=yr.value, years={}; SC.enq.forEach(function(e){ if(e.received)years[e.received.slice(0,4)]=1; });
+    yr.innerHTML='<option value="">All years</option>'+Object.keys(years).sort().reverse().map(function(y){ return '<option>'+y+'</option>'; }).join(''); yr.value=ky;
+    SC.shown.e=150; renderScafEnq();
+  }
+  function scEnqFiltered(){
+    var q=document.getElementById('se_q').value.trim().toLowerCase().split(' ').filter(Boolean), st=document.getElementById('se_stage').value||'open', y=document.getElementById('se_year').value;
+    return (SC.enq||[]).filter(function(e){
+      if(st==='open'&&SC_ENQ_OPEN.indexOf(e.stage)<0)return false; if(st!=='open'&&st!=='all'&&e.stage!==st)return false;
+      if(y&&String(e.received||'').slice(0,4)!==y)return false;
+      if(q.length){ var hay=('ace'+e.number+' '+(e.title||'')+' '+(e.customer||'')+' '+(e.estimator||'')+' '+(e.salesperson||'')+' '+(e.source||'')).toLowerCase(); if(!q.every(function(w){ return hay.indexOf(w)>=0; }))return false; }
+      return true; });
+  }
+  function renderScafEnq(){
+    var tb=document.getElementById('se_rows'); if(!SC.enq)return;
+    var all=scEnqFiltered(), list=all.slice(0,SC.shown.e);
+    document.getElementById('se_count').textContent=all.length+' of '+SC.enq.length;
+    var sum=function(f){ return all.reduce(function(a,e){ return a+(Number(e[f])||0); },0); }, won=all.filter(function(e){ return e.stage==='won'; }), decided=all.filter(function(e){ return e.stage==='won'||e.stage==='declined'||e.stage==='lost'; });
+    document.getElementById('se_stats').innerHTML=svStat(czNum(all.length,0),'Enquiries')+svStat(scMoney(Math.round(sum('price'))),'Quoted value')+svStat(czNum(won.length,0),'Won')+svStat(decided.length?Math.round(won.length*100/decided.length)+'%':'—','Won of decided')+svStat(scMoney(Math.round(won.reduce(function(a,e){ return a+(Number(e.price)||0); },0))),'Won value');
+    tb.innerHTML=list.length?list.map(function(e){
+      var prof=e.price!=null&&(e.est_cost_up!=null||e.est_cost_down!=null)?e.price-(e.est_cost_up||0)-(e.est_cost_down||0):null;
+      return '<tr class="scr" data-id="'+e.id+'"><td style="white-space:nowrap"><b>ACE'+e.number+'</b></td><td style="white-space:nowrap">'+scDay(e.received)+'</td><td>'+esc(e.title||'')+'</td><td>'+esc(e.customer||'')+'</td><td>'+scChip(e.stage,SC_ENQ_STAGE[e.stage]||e.stage,e.stage==='won')+(e.follow_up&&e.follow_up!=='N/A'?'<div class="sub" style="margin:2px 0 0">'+esc(e.follow_up)+'</div>':'')+'</td><td class="r">'+scMoney(e.price)+'</td><td class="r">'+(prof==null?'':scMoney(Math.round(prof)))+'</td><td>'+esc([e.estimator,e.salesperson].filter(Boolean).join(' / '))+'</td></tr>';
+    }).join(''):'<tr><td colspan="8" class="sub" style="padding:16px">'+(SC.enq.length?'Nothing matches.':'No enquiries yet — run the monday import on Overview.')+'</td></tr>';
+    tb.querySelectorAll('tr.scr').forEach(function(tr){ tr.onclick=function(){ scOpenEnq(tr.getAttribute('data-id')); }; });
+    var more=document.getElementById('se_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
+  }
+  function scRows(pairs){ return '<table class="fjl" style="margin-top:6px"><tbody>'+pairs.filter(function(p){ return p[1]!=null&&p[1]!==''; }).map(function(p){ return '<tr><td style="width:180px;color:var(--muted)">'+esc(p[0])+'</td><td>'+p[1]+'</td></tr>'; }).join('')+'</tbody></table>'; }
+  async function scOpenEnq(id){
+    openModal('Enquiry','<div class="sub">Loading…</div>');
+    try{ var e=await scGet('/api/scaf/enquiries/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    var prof=e.price!=null?Number(e.price)-(Number(e.est_cost_up)||0)-(Number(e.est_cost_down)||0):null;
+    var h='<div style="font-size:15px;font-weight:700">'+esc(e.title||'')+'</div>'+scRows([
+      ['Status',scChip(e.stage,SC_ENQ_STAGE[e.stage]||e.stage,e.stage==='won')+(e.status_label?' <span class="sub">monday: '+esc(e.status_label)+'</span>':'')],['Follow up',esc(e.follow_up||'')],
+      ['Customer',e.customer?'<a href="#" data-sccust="'+e.customer.id+'">'+esc(e.customer.name)+'</a>':''],['Contact',e.contact?esc([e.contact.name,e.contact.phone,e.contact.email].filter(Boolean).join(' · ')):''],
+      ['Site',e.site?esc(e.site.address):''],['Source',esc(e.source||'')],['Domestic / commercial',esc(e.sector||'')],['Private / trade',esc(e.client_type||'')],
+      ['Received',scDay(e.received)],['Deadline',scDay(e.deadline)],['Quote sent',scDay(e.quote_sent)],
+      ['Price',scMoney(e.price)],['Est. cost up',scMoney(e.est_cost_up)],['Est. cost down',scMoney(e.est_cost_down)],['Est. profit',prof==null?'':scMoney(Math.round(prof))+(e.price>0?' ('+Math.round(prof*100/e.price)+'%)':'')],['Size',e.size_m2!=null?czNum(e.size_m2,1)+' m²':''],
+      ['Estimator',esc(e.estimator||'')],['Surveyor',esc(e.surveyor||'')],['Sales',esc(e.salesperson||'')]]);
+    if(e.jobs&&e.jobs.length)h+='<div style="font-weight:700;margin:14px 0 4px">Jobs</div>'+e.jobs.map(function(j){ return '<div><a href="#" data-scjob="'+j.id+'">ACESC'+j.number+'</a> '+esc(j.title||'')+' · '+esc(SC_JOB_STAGE[j.stage]||j.stage)+'</div>'; }).join('');
+    if(e.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday'+(e.edited_at?'':' (not changed here)')+' · <a href="https://ace189144.monday.com/boards/1630857450/pulses/'+e.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
+    openModal('ACE'+e.number,h); scLinks();
+  }
+  function scLinks(){ var b=document.getElementById('modalBody');
+    b.querySelectorAll('[data-sccust]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenCust(a.getAttribute('data-sccust')); }; });
+    b.querySelectorAll('[data-scjob]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenJob(a.getAttribute('data-scjob')); }; });
+    b.querySelectorAll('[data-scenq]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenEnq(a.getAttribute('data-scenq')); }; }); }
+
+  // Jobs
+  async function loadScafJobs(){
+    var tb=document.getElementById('sj_rows');
+    if(!SC.jobs){ tb.innerHTML='<tr><td colspan="10" class="sub" style="padding:16px">Loading…</td></tr>'; try{ SC.jobs=(await scGet('/api/scaf/jobs')).jobs; }catch(e){ scErrRow(tb,10,e); return; } }
+    var st=document.getElementById('sj_stage'), ks=st.value||'active';
+    st.innerHTML='<option value="active">Active jobs</option><option value="all">All jobs</option>'+Object.keys(SC_JOB_STAGE).map(function(k){ return '<option value="'+k+'">'+esc(SC_JOB_STAGE[k])+'</option>'; }).join(''); st.value=ks;
+    var er=document.getElementById('sj_erector'), ke=er.value, ers={}; SC.jobs.forEach(function(j){ if(j.erector)ers[j.erector]=(ers[j.erector]||0)+1; });
+    er.innerHTML='<option value="">Any erector</option>'+Object.keys(ers).sort().map(function(x){ return '<option value="'+esc(x)+'">'+esc(x)+' ('+ers[x]+')</option>'; }).join(''); er.value=ke;
+    SC.shown.j=150; renderScafJobs();
+  }
+  function renderScafJobs(){
+    var tb=document.getElementById('sj_rows'); if(!SC.jobs)return;
+    var q=document.getElementById('sj_q').value.trim().toLowerCase().split(' ').filter(Boolean), st=document.getElementById('sj_stage').value||'active', er=document.getElementById('sj_erector').value;
+    var all=SC.jobs.filter(function(j){
+      if(st==='active'&&SC_JOB_ACTIVE.indexOf(j.stage)<0)return false; if(st!=='active'&&st!=='all'&&j.stage!==st)return false;
+      if(er&&j.erector!==er)return false;
+      if(q.length){ var hay=('acesc'+j.number+' ace'+(j.enquiry||'')+' '+(j.title||'')+' '+(j.customer||'')+' '+(j.erector||'')).toLowerCase(); if(!q.every(function(w){ return hay.indexOf(w)>=0; }))return false; }
+      return true; }), list=all.slice(0,SC.shown.j);
+    document.getElementById('sj_count').textContent=all.length+' of '+SC.jobs.length;
+    tb.innerHTML=list.length?list.map(function(j){
+      return '<tr class="scr" data-id="'+j.id+'"><td style="white-space:nowrap"><b>ACESC'+j.number+'</b></td><td style="white-space:nowrap">'+(j.enquiry?'ACE'+j.enquiry:'')+'</td><td>'+esc(j.title||'')+'</td><td>'+esc(j.customer||'')+'</td><td>'+esc(j.erector||'')+'</td><td>'+scChip(j.stage,SC_JOB_STAGE[j.stage]||j.stage,false)+'</td><td style="white-space:nowrap">'+scDay(j.up_start)+'</td><td class="r" style="white-space:nowrap">'+(j.hire_weeks!=null?czNum(j.hire_weeks,0)+' wk':'')+(j.rent_pct!=null?'<div class="sub" style="margin:0">then '+czNum(j.rent_pct,1)+'%/wk</div>':'')+'</td><td style="white-space:nowrap">'+scDay(j.dismantle_request)+'</td><td class="r">'+scMoney(j.price)+'</td></tr>';
+    }).join(''):'<tr><td colspan="10" class="sub" style="padding:16px">'+(SC.jobs.length?'Nothing matches.':'No jobs yet — run the monday import on Overview.')+'</td></tr>';
+    tb.querySelectorAll('tr.scr').forEach(function(tr){ tr.onclick=function(){ scOpenJob(tr.getAttribute('data-id')); }; });
+    var more=document.getElementById('sj_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
+  }
+  async function scOpenJob(id){
+    openModal('Job','<div class="sub">Loading…</div>');
+    try{ var j=await scGet('/api/scaf/jobs/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    var weekly=j.price!=null&&j.rent_pct!=null?Number(j.price)*Number(j.rent_pct)/100:null;
+    var h='<div style="font-size:15px;font-weight:700">'+esc(j.title||'')+'</div>'+scRows([
+      ['Status',scChip(j.stage,SC_JOB_STAGE[j.stage]||j.stage,false)+(j.status_label?' <span class="sub">monday: '+esc(j.status_label)+'</span>':'')],
+      ['Enquiry',j.enquiry?'<a href="#" data-scenq="'+j.enquiry.id+'">ACE'+j.enquiry.number+'</a> '+esc(j.enquiry.title||''):''],
+      ['Customer',j.customer?'<a href="#" data-sccust="'+j.customer.id+'">'+esc(j.customer.name)+'</a>':''],['Site',j.site?esc(j.site.address):''],
+      ['Erected by',esc(j.erector||'')],['PO / order',esc(j.po_number||'')],['RAMS',esc(j.rams||'')],['Handover certificate',esc(j.handover||'')],
+      ['Up',[scDay(j.up_start),j.up_end&&j.up_end!==j.up_start?scDay(j.up_end):''].filter(Boolean).join(' – ')],
+      ['Hire included',j.hire_weeks!=null?czNum(j.hire_weeks,0)+' weeks':''],['Rent after it',j.rent_pct!=null?czNum(j.rent_pct,1)+'% of the price per week'+(weekly!=null?' = '+scMoney(Math.round(weekly*100)/100)+'/week':''):''],
+      ['Rent from – to',[scDay(j.rent_start),scDay(j.rent_end)].filter(Boolean).join(' – ')],['Dismantle requested',scDay(j.dismantle_request)],['Dismantle start',scDay(j.dismantle_start)],['Down',scDay(j.down_date)],
+      ['Price',scMoney(j.price)],['Actual cost up',scMoney(j.actual_cost_up)],['Actual cost down',scMoney(j.actual_cost_down)],['Invoiced',esc(j.invoiced||'')],['Payment',scMoney(j.payment)]]);
+    if(j.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday · <a href="https://ace189144.monday.com/boards/1594702968/pulses/'+j.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
+    openModal('ACESC'+j.number,h); scLinks();
+  }
+
+  // Customers
+  async function loadScafCust(){
+    var tb=document.getElementById('sc_rows');
+    document.getElementById('sc_new').style.display=canApp('scaf.customers')==='edit'?'':'none';
+    if(!SC.cust){ tb.innerHTML='<tr><td colspan="8" class="sub" style="padding:16px">Loading…</td></tr>'; try{ SC.cust=(await scGet('/api/scaf/customers')).customers; }catch(e){ scErrRow(tb,8,e); return; } }
+    SC.shown.c=150; renderScafCust();
+  }
+  function renderScafCust(){
+    var tb=document.getElementById('sc_rows'); if(!SC.cust)return;
+    var q=document.getElementById('sc_q').value.trim().toLowerCase().split(' ').filter(Boolean), k=document.getElementById('sc_kind').value, w=document.getElementById('sc_withenq').checked;
+    var all=SC.cust.filter(function(c){
+      if(k&&c.kind!==k)return false; if(w&&!c.enquiries&&!c.jobs)return false;
+      if(q.length){ var hay=(c.name+' '+(c.email||'')+' '+(c.phone||'')).toLowerCase(); if(!q.every(function(x){ return hay.indexOf(x)>=0; }))return false; }
+      return true; }), list=all.slice(0,SC.shown.c);
+    document.getElementById('sc_count').textContent=all.length+' of '+SC.cust.length;
+    tb.innerHTML=list.length?list.map(function(c){
+      return '<tr class="scr" data-id="'+c.id+'"><td><b>'+esc(c.name)+'</b>'+(c.active===false?' <span class="sub">(inactive)</span>':'')+'</td><td>'+esc(SC_KIND[c.kind]||c.kind)+'</td><td>'+esc([c.phone,c.email].filter(Boolean).join(' · '))+'</td><td class="r">'+(c.contacts||'')+'</td><td class="r">'+(c.sites||'')+'</td><td class="r">'+(c.enquiries?c.enquiries+(c.won?' ('+c.won+')':''):'')+'</td><td class="r">'+(c.jobs||'')+'</td><td>'+scDay(c.last)+'</td></tr>';
+    }).join(''):'<tr><td colspan="8" class="sub" style="padding:16px">'+(SC.cust.length?'Nothing matches.':'No customers yet — run the monday import on Overview, or add one.')+'</td></tr>';
+    tb.querySelectorAll('tr.scr').forEach(function(tr){ tr.onclick=function(){ scOpenCust(tr.getAttribute('data-id')); }; });
+    var more=document.getElementById('sc_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
+  }
+  function scInput(id,val,ph,w){ return '<input class="tinput" id="'+id+'" value="'+esc(val||'').replace(/"/g,'&quot;')+'" placeholder="'+esc(ph||'')+'" style="width:'+(w||'100%')+';box-sizing:border-box">'; }
+  async function scSave(url,method,body){ var r=await api(url,{method:method,body:JSON.stringify(body)}); var d=await r.json(); if(!r.ok||d.ok===false){ tShow(d.error||'Could not save'); return null; } SC.cust=null; return d; }
+  function scCustForm(c){
+    var ed=canApp('scaf.customers')==='edit', kinds=Object.keys(SC_KIND).map(function(k){ return '<option value="'+k+'"'+(c.kind===k?' selected':'')+'>'+SC_KIND[k]+'</option>'; }).join('');
+    return '<div class="scform"><label>Name'+scInput('scf_name',c.name)+'</label><label>Kind<select class="tinput" id="scf_kind" style="width:100%">'+kinds+'</select></label>'
+      +'<label>Email'+scInput('scf_email',c.email)+'</label><label>Phone'+scInput('scf_phone',c.phone)+'</label>'
+      +'<label style="grid-column:1/-1">Billing address'+scInput('scf_address',c.address)+'</label><label>VAT number'+scInput('scf_vat',c.vat_number)+'</label>'
+      +(c.id?'<label style="flex-direction:row;gap:6px;align-items:center;margin-top:22px;color:var(--ink)"><input type="checkbox" id="scf_active"'+(c.active!==false?' checked':'')+'> Active</label>':'<span></span>')
+      +'<label style="grid-column:1/-1">Notes<textarea class="tinput" id="scf_notes" rows="2" style="width:100%;box-sizing:border-box">'+esc(c.notes||'')+'</textarea></label></div>'
+      +(ed?'<div style="margin-top:10px"><button class="add" id="scf_save">'+(c.id?'Save customer':'Add customer')+'</button></div>':'');
+  }
+  function scCustBody(){ var g=function(i){ var el=document.getElementById(i); return el?el.value:''; }, a=document.getElementById('scf_active');
+    var b={name:g('scf_name'),kind:g('scf_kind'),email:g('scf_email'),phone:g('scf_phone'),address:g('scf_address'),vat_number:g('scf_vat'),notes:g('scf_notes')}; if(a)b.active=a.checked; return b; }
+  function scNewCust(){
+    openModal('New customer',scCustForm({kind:'commercial'}));
+    document.getElementById('scf_save').onclick=async function(){ var d=await scSave('/api/scaf/customers','POST',scCustBody()); if(d){ tShow('Saved'); scOpenCust(d.id); loadScafCust(); } };
+  }
+  async function scOpenCust(id){
+    openModal('Customer','<div class="sub">Loading…</div>');
+    try{ var c=await scGet('/api/scaf/customers/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    var ed=canApp('scaf.customers')==='edit';
+    var h=scCustForm(c);
+    var ctRow=function(p){ p=p||{}; return ed
+      ? '<tr data-ct="'+(p.id||'')+'"><td>'+scInput('',p.name,'Name')+'</td><td>'+scInput('',p.role,'Role')+'</td><td>'+scInput('',p.phone,'Phone')+'</td><td>'+scInput('',p.email,'Email')+'</td><td style="white-space:nowrap;text-align:right"><button class="pobtn" data-act="save">'+(p.id?'Save':'Add')+'</button>'+(p.id?' <button class="del" data-act="del">Delete</button>':'')+'</td></tr>'
+      : '<tr><td>'+esc(p.name||'')+'</td><td>'+esc(p.role||'')+'</td><td>'+esc(p.phone||'')+'</td><td>'+esc(p.email||'')+'</td></tr>'; };
+    h+='<div style="font-weight:700;margin:18px 0 4px">Contacts</div><table class="fjl"><thead><tr><th>NAME</th><th>ROLE</th><th>PHONE</th><th>EMAIL</th>'+(ed?'<th></th>':'')+'</tr></thead><tbody id="scf_ct">'+c.contacts.map(ctRow).join('')+(ed?ctRow(null):'')+'</tbody></table>';
+    var stRow=function(s){ s=s||{}; return ed
+      ? '<tr data-st="'+(s.id||'')+'"><td>'+scInput('',s.address,'Address with postcode')+'</td><td>'+scInput('',s.access_notes,'Access notes')+'</td><td style="white-space:nowrap;text-align:right"><button class="pobtn" data-act="save">'+(s.id?'Save':'Add')+'</button>'+(s.id?' <button class="del" data-act="del">Delete</button>':'')+'</td></tr>'
+      : '<tr><td>'+esc(s.address||'')+'</td><td>'+esc(s.access_notes||'')+'</td></tr>'; };
+    h+='<div style="font-weight:700;margin:18px 0 4px">Sites</div><table class="fjl"><thead><tr><th>ADDRESS</th><th>ACCESS NOTES</th>'+(ed?'<th></th>':'')+'</tr></thead><tbody id="scf_st">'+c.sites.map(stRow).join('')+(ed?stRow(null):'')+'</tbody></table>';
+    if(c.enquiries.length)h+='<div style="font-weight:700;margin:18px 0 4px">Enquiries ('+c.enquiries.length+')</div><div style="max-height:220px;overflow:auto">'+c.enquiries.map(function(e){ return '<div><a href="#" data-scenq="'+e.id+'">ACE'+e.number+'</a> '+scDay(e.received)+' · '+esc(e.title||'')+' · '+esc(SC_ENQ_STAGE[e.stage]||e.stage)+(e.price!=null?' · '+scMoney(e.price):'')+'</div>'; }).join('')+'</div>';
+    if(c.jobs.length)h+='<div style="font-weight:700;margin:18px 0 4px">Jobs ('+c.jobs.length+')</div><div style="max-height:220px;overflow:auto">'+c.jobs.map(function(j){ return '<div><a href="#" data-scjob="'+j.id+'">ACESC'+j.number+'</a> '+esc(j.title||'')+' · '+esc(SC_JOB_STAGE[j.stage]||j.stage)+(j.price!=null?' · '+scMoney(j.price):'')+'</div>'; }).join('')+'</div>';
+    openModal(esc(c.name),h); scLinks();
+    if(!ed)return;
+    document.getElementById('scf_save').onclick=async function(){ if(await scSave('/api/scaf/customers/'+id,'PUT',scCustBody())){ tShow('Saved'); loadScafCust(); } };
+    var vals=function(tr){ return [].map.call(tr.querySelectorAll('input'),function(i){ return i.value; }); };
+    document.querySelectorAll('#scf_ct tr').forEach(function(tr){ tr.querySelectorAll('button').forEach(function(b){ b.onclick=async function(){
+      var cid=tr.getAttribute('data-ct'), v=vals(tr);
+      if(b.getAttribute('data-act')==='del'){ if(!confirm('Delete this contact?'))return; await api('/api/scaf/contacts/'+cid,{method:'DELETE'}); SC.cust=null; scOpenCust(id); return; }
+      if(await scSave(cid?'/api/scaf/contacts/'+cid:'/api/scaf/contacts',cid?'PUT':'POST',{customer_id:id,name:v[0],role:v[1],phone:v[2],email:v[3]})){ tShow('Saved'); scOpenCust(id); } }; }); });
+    document.querySelectorAll('#scf_st tr').forEach(function(tr){ tr.querySelectorAll('button').forEach(function(b){ b.onclick=async function(){
+      var sid=tr.getAttribute('data-st'), v=vals(tr);
+      if(b.getAttribute('data-act')==='del'){ if(!confirm('Delete this site?'))return; await api('/api/scaf/sites/'+sid,{method:'DELETE'}); SC.cust=null; scOpenCust(id); return; }
+      if(await scSave(sid?'/api/scaf/sites/'+sid:'/api/scaf/sites',sid?'PUT':'POST',{customer_id:id,address:v[0],access_notes:v[1]})){ tShow('Saved'); scOpenCust(id); } }; }); });
+  }
+  (function(){
+    var deb={}, on=function(id,fn){ var el=document.getElementById(id); if(!el)return; var h=function(){ clearTimeout(deb[id]); deb[id]=setTimeout(fn,150); }; el.oninput=h; el.onchange=h; };
+    on('se_q',function(){ SC.shown.e=150; renderScafEnq(); }); on('se_stage',function(){ SC.shown.e=150; renderScafEnq(); }); on('se_year',function(){ SC.shown.e=150; renderScafEnq(); });
+    on('sj_q',function(){ SC.shown.j=150; renderScafJobs(); }); on('sj_stage',function(){ SC.shown.j=150; renderScafJobs(); }); on('sj_erector',function(){ SC.shown.j=150; renderScafJobs(); });
+    on('sc_q',function(){ SC.shown.c=150; renderScafCust(); }); on('sc_kind',function(){ SC.shown.c=150; renderScafCust(); }); on('sc_withenq',function(){ SC.shown.c=150; renderScafCust(); });
+    document.getElementById('se_more').onclick=function(){ SC.shown.e+=300; renderScafEnq(); };
+    document.getElementById('sj_more').onclick=function(){ SC.shown.j+=300; renderScafJobs(); };
+    document.getElementById('sc_more').onclick=function(){ SC.shown.c+=300; renderScafCust(); };
+    document.getElementById('sc_new').onclick=scNewCust;
+    document.getElementById('sv0_check').onclick=function(){ scImport(true); };
+    document.getElementById('sv0_run').onclick=function(){ if(confirm('Import from monday into the office app now?'))scImport(false); };
+  })();
   // ---- ACE Group businesses (home page tiles). Which ones a user sees comes from /api/me (Admin ▸ Users). ----
   function bizAll(){ return (typeof ROLE_MATRIX==='object'&&ROLE_MATRIX&&ROLE_MATRIX.businesses)||[]; }
   var MY_BIZ=null; try{ MY_BIZ=JSON.parse(sessionStorage.getItem('ace_biz_list')||'null'); }catch(e){}
@@ -7202,7 +7525,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // App access per role (Admin ▸ Roles): 'off' | 'view' | 'edit' for each Fin&Ops tab, from /api/me.
   var MY_APPS=null; try{ MY_APPS=JSON.parse(sessionStorage.getItem('ace_apps')||'null'); }catch(e){}
   function setMyApps(a){ if(!a)return false; var j=JSON.stringify(a), was=JSON.stringify(MY_APPS); MY_APPS=a; try{ sessionStorage.setItem('ace_apps',j); }catch(e){} return j!==was; }
-  function canApp(k){ if(myRole==='admin')return 'edit'; if(MY_APPS&&MY_APPS[k])return MY_APPS[k]; return canCap('finops.view')?(k==='fin.stock'?'view':'edit'):'off'; }
+  function canApp(k){ if(myRole==='admin')return 'edit'; if(MY_APPS&&MY_APPS[k])return MY_APPS[k]; if(k.indexOf('scaf.')===0)return myRole==='scaffolding'?'edit':'off'; return canCap('finops.view')?(k==='fin.stock'?'view':'edit'):'off'; }
   // A Fin&Ops window opened by someone who may only look: every field locked, only Cancel / Close left.
   function finRo(on){ var m=document.getElementById('modal'); m.classList.toggle('fro',!!on); if(on)document.querySelectorAll('#modalBody input,#modalBody select,#modalBody textarea').forEach(function(i){ i.disabled=true; }); }
   var LOGS=[];
@@ -7310,7 +7633,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
-    var isLogistics=(myRole==='logistics'), isFin=(myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse');
+    var isLogistics=(myRole==='logistics'), isFin=(myRole==='scaffolding'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse');
     show('tabItems',!isCustomer&&!isLogistics&&!isFin);
     show('tabFinOrders',canCap('sales.orders'));
     show('tabFinComm',canCap('sales.orders'));
@@ -7320,7 +7643,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabProd',canCap('time.manage'));
     show('tabCortizo',canCap('stock.view'));
     show('tabWh',canApp('wh.issues')!=='off');
-    show('tabScaf',myBiz().some(function(b){ return b.key==='scaffolding'; }));
+    var hasScaf=myBiz().some(function(b){ return b.key==='scaffolding'; });
+    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
     show('tabLabels',canCap('labels.print'));
     show('tabConfirm',canCap('confirmations.manage'));
     show('tabFinCosts',canApp('fin.costs')!=='off');
@@ -10399,7 +10723,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token'); keepSession({refresh_token:hp.get('refresh_token'),expires_at:hp.get('expires_at')});
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
+  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='scaffolding'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----
