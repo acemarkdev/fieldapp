@@ -3,7 +3,7 @@
 // The database (RLS, migration 0007) is the real boundary; this only decides what the
 // UI shows, so field staff don't see buttons that would be refused.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'production' | 'production_manager' | 'production_lead' | 'warehouse';
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'production' | 'production_manager' | 'production_lead' | 'warehouse' | 'scaffolding' | 'scaffolder';
 
 export type Capability =
   | 'jobs.manage' | 'items.create' | 'items.edit' | 'items.fit'
@@ -22,6 +22,8 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   production_manager: [], // same on the phone: the time screen only (the manager's pages are in the office app)
   production_lead: [],    // team leader: the time screen too (their Production pages are in the office app)
   warehouse: [],          // Wydania (warehouse issues) + the time screen
+  scaffolding: [],        // ACE Scaffolding office: the crew screen (all crews)
+  scaffolder: [],         // ACE Scaffolding crew: the crew screen (CrewScreen)
 };
 
 export function can(role: string | null | undefined, cap: Capability): boolean {

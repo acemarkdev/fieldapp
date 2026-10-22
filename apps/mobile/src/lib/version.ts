@@ -49,4 +49,11 @@
 //   production workers (log their own time). Needs migration 0084.
 // 0.75.2 — Production time: a task whose name already starts with its job number (Z_437_cnc_…) is shown
 //   without the job in front again ("Moje zadania", the running task, the correction sheet).
-export const APP_VERSION = '0.75.2';
+// 0.76.0 — Warehouse returns (Zwroty), QR scanning (expo-camera) — store build.
+// 0.76.1 — ACE Scaffolding crews (role Scaffolder; also the scaffolding office, and admin via "crew screen"): My day —
+//   the visits of my crews (or all crews) per day; a visit shows the site (tap → maps), the contact (tap → call) and
+//   the scaffolds; Done (a dismantle reports the day the hire stops), Handover with the client's finger signature
+//   (the hire starts, the certificate is made in the office app), delivery / collection notes per item, and the
+//   7-day inspection (safe / not safe, defects, actions, up to 4 photos). Inspections due tab. Talks to the office
+//   server (EXPO_PUBLIC_OFFICE_URL). Over the air on 0.76.0; needs office 1.48.0 and migrations 0101 + 0102.
+export const APP_VERSION = '0.76.1';

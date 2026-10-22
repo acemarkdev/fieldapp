@@ -14,7 +14,7 @@ const PL_ROLES = ['acemark_finance', 'sales_rep', 'acemark_fitter', 'production'
  *  everyone else → Framework. */
 export function defaultBusinesses(role: string | null | undefined): BusinessKey[] {
   if (role === 'admin') return [...BUSINESS_KEYS];
-  if (role === 'scaffolding') return ['scaffolding'];
+  if (role === 'scaffolding' || role === 'scaffolder') return ['scaffolding'];
   return PL_ROLES.includes(String(role)) ? ['acemark_pl'] : ['framework'];
 }
 /** The businesses a user sees: admin always all; otherwise the stored list (known keys only), else the default. */

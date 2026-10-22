@@ -67,6 +67,9 @@ export function renderHandoverPdf(d: HandoverPdfData): Promise<Buffer> {
   doc.font('Helvetica').fontSize(10.5).fillColor(INK).text(t(h.client_name || ''), L + W / 2 + 12, sy + 14, { width: half });
   if (h.signature && /^data:image\/png;base64,/.test(h.signature)) {
     try { doc.image(Buffer.from(h.signature.split(',')[1], 'base64'), L + W / 2 + 12, sy + 32, { fit: [half, 70] }); } catch { /* a bad image is left out */ }
+  } else if (h.signature && /^svg:\d+x\d+:/.test(h.signature)) {   // drawn on the phone: strokes, scaled into the box
+    const [, size, path] = h.signature.split(':'), [w, ht] = size.split('x').map(Number), k = Math.min(half / w, 70 / ht);
+    try { doc.save().translate(L + W / 2 + 12, sy + 32).scale(k).path(path).lineWidth(2.2 / k).strokeColor(INK).stroke().restore(); } catch { /* a bad path is left out */ }
   }
   doc.moveTo(L + W / 2 + 12, sy + 106).lineTo(R, sy + 106).strokeColor(LINE).stroke();
   doc.moveTo(L, sy + 106).lineTo(L + half, sy + 106).strokeColor(LINE).stroke();

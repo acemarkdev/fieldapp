@@ -3,11 +3,11 @@
 // RLS migration) — don't scatter role checks through the code.
 // See docs/roles-and-access.md.
 
-export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager' | 'production_lead' | 'warehouse' | 'scaffolding';
-export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse', 'scaffolding'];
+export type Role = 'admin' | 'office' | 'surveyor' | 'scanner' | 'fitter' | 'invoice_manager' | 'customer' | 'logistics' | 'acemark_finance' | 'sales_rep' | 'acemark_fitter' | 'production' | 'production_manager' | 'production_lead' | 'warehouse' | 'scaffolding' | 'scaffolder';
+export const ROLES: Role[] = ['admin', 'office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse', 'scaffolding', 'scaffolder'];
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Admin', office: 'Office', surveyor: 'Surveyor', scanner: 'Scanner', fitter: 'Fitter',
-  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager', production_lead: 'Production team leader', warehouse: 'Warehouse', scaffolding: 'Scaffolding office',
+  invoice_manager: 'Invoice manager', customer: 'Customer', logistics: 'Logistics', acemark_finance: 'Acemark Finance', sales_rep: 'Sales rep', acemark_fitter: 'Acemark Fitter', production: 'Production', production_manager: 'Production manager', production_lead: 'Production team leader', warehouse: 'Warehouse', scaffolding: 'Scaffolding office', scaffolder: 'Scaffolder (crew)',
 };
 
 export type Capability =
@@ -103,6 +103,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   warehouse: ['time.log'],
   // ACE Scaffolding office: only the Scaffolding business; its screens follow App access (scaf.*), no capability here.
   scaffolding: [],
+  // ACE Scaffolding crew: the phone app's crew screen only (through the office server).
+  scaffolder: [],
 };
 
 // A role's data scope (which rows they see). Fitters only see items ready to fit; everyone

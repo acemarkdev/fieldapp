@@ -20,6 +20,7 @@ import MappingStepperScreen from './src/screens/MappingStepperScreen';
 import ScheduleScreen from './src/screens/ScheduleScreen';
 import TimeScreen from './src/screens/TimeScreen';
 import WarehouseScreen from './src/screens/WarehouseScreen';
+import CrewScreen from './src/screens/CrewScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
 import { can, isFitter } from './src/lib/permissions';
@@ -45,6 +46,7 @@ export default function App() {
   const [demo, setDemo] = useState(false);
   const [demoEmail, setDemoEmail] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
+  const [crewMode, setCrewMode] = useState(false);   // admin: the ACE Scaffolding crew screen
   const { width } = useWindowDimensions();
   const isTablet = width >= 768; // phones get the stepper, tablets the full grid
 
@@ -115,7 +117,11 @@ export default function App() {
         </View>
       )}
       <View style={s.fill}>
-        {role === 'warehouse' ? <WarehouseScreen /> : (role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
+        {role === 'admin' && !demo && !job ? (
+          <TouchableOpacity onPress={() => setCrewMode(!crewMode)} style={{ paddingVertical: 6, alignItems: 'center', backgroundColor: C.soft }}>
+            <Text style={{ color: C.purple, fontWeight: '800' }}>{crewMode ? '‹ Back to the jobs' : 'ACE Scaffolding — crew screen ›'}</Text>
+          </TouchableOpacity>) : null}
+        {(role === 'scaffolder' || role === 'scaffolding' || (role === 'admin' && crewMode)) ? <CrewScreen /> : role === 'warehouse' ? <WarehouseScreen /> : (role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
               ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />

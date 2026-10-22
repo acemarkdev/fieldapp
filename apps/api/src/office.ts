@@ -32,6 +32,7 @@ import * as scafQ from './scafQuotes';
 import * as scafJ from './scafJobs';
 import * as scafB from './scafBilling';
 import * as scafS from './scafStock';
+import * as scafC from './scafCrew';
 import { renderStockNotePdf } from './scafStockPdf';
 import { renderInvoiceRequestPdf } from './scafInvoicePdf';
 import { renderHandoverPdf } from './scafHandoverPdf';
@@ -556,8 +557,46 @@ const server = createServer(async (req, res) => {
         if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' }); res.end(gzipSync(body)); }
         else send(res, 200, v);
       };
-      const scafErr = (e: any) => /scaf_stock|scaf_locations|column .*bom/.test(String(e?.message ?? '')) ? 'This needs migration 0100.' : /scaf_invoice|hire_stop_on|billed_to|retention_pct|payment_days|column .*billing/.test(String(e?.message ?? '')) ? 'This needs migration 0099.' : /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
+      const scafErr = (e: any) => /scaf_inspections|members/.test(String(e?.message ?? '')) ? 'This needs migrations 0101 and 0102.' : /scaf_stock|scaf_locations|column .*bom/.test(String(e?.message ?? '')) ? 'This needs migration 0100.' : /scaf_invoice|hire_stop_on|billed_to|retention_pct|payment_days|column .*billing/.test(String(e?.message ?? '')) ? 'This needs migration 0099.' : /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
       try {
+        // phase 4: the phone app for crews (scafCrew.ts) — scaffolders, the scaffolding office, admin, or anyone with Jobs edit
+        if (p.startsWith('/api/scaf/crew/')) {
+          const crewOk = ['scaffolder', 'scaffolding', 'admin'].includes(ctx.role) || hasApp(ctx.role, ['scaf.jobs'], 'edit', appOverrides);
+          if (!crewOk) { send(res, 403, { error: 'Not allowed.' }); return; }
+          const today = new Date().toISOString().slice(0, 10);
+          if (p === '/api/scaf/crew/day' && req.method === 'GET') {
+            const d = String(url.searchParams.get('day') ?? today), all = url.searchParams.get('all') === '1' && ctx.role !== 'scaffolder';
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { send(res, 400, { error: 'day as YYYY-MM-DD.' }); return; }
+            send(res, 200, { ...(await scafC.crewDay(ctx.tenant_id, ctx.id, d, all)), canAll: ctx.role !== 'scaffolder', me: ctx.name }); return;
+          }
+          if (p === '/api/scaf/crew/inspections-due' && req.method === 'GET') { send(res, 200, { due: await scafC.inspectionsDue(ctx.tenant_id, today, scafJ.addDays(today, 1)) }); return; }
+          if (p === '/api/scaf/crew/items' && req.method === 'GET') { send(res, 200, { items: (await scafS.listItems(ctx.tenant_id)).filter((i: any) => i.active !== false), locations: (await scafS.listLocations(ctx.tenant_id)).filter((l: any) => l.active !== false) }); return; }
+          if (p === '/api/scaf/crew/notes' && req.method === 'POST') {
+            const b = await readJson(req);
+            if (b.kind !== 'delivery' && b.kind !== 'collection') { send(res, 400, { error: 'Only deliveries and collections from the phone.' }); return; }
+            const r = await scafS.createNote(ctx.tenant_id, ctx.id, b); send(res, r.ok ? 200 : 400, r); return;
+          }
+          let mc = /^\/api\/scaf\/crew\/visits\/([0-9a-f-]{36})\/done$/.exec(p);
+          if (mc && req.method === 'POST') { const r = await scafC.visitDone(ctx.tenant_id, mc[1], await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+          mc = /^\/api\/scaf\/crew\/jobs\/([0-9a-f-]{36})\/(handover|inspections|stock)$/.exec(p);
+          if (mc && mc[2] === 'stock' && req.method === 'GET') { send(res, 200, await scafS.jobStock(ctx.tenant_id, mc[1])); return; }
+          if (mc && mc[2] === 'handover' && req.method === 'POST') { const r = await scafJ.createHandover(ctx.tenant_id, mc[1], ctx.id, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+          if (mc && mc[2] === 'inspections' && req.method === 'POST') { const r = await scafC.saveInspection(ctx.tenant_id, ctx.id, mc[1], await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+          send(res, 404, { error: 'Not found.' }); return;
+        }
+        // office side of phase 4: inspections, crew members
+        if (p === '/api/scaf/inspections-due' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; const t = new Date().toISOString().slice(0, 10); send(res, 200, { due: await scafC.inspectionsDue(ctx.tenant_id, t, t) }); return; }
+        if (p === '/api/scaf/crew-users' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; send(res, 200, { users: await scafC.crewUsers(ctx.tenant_id) }); return; }
+        let mx = /^\/api\/scaf\/crews\/([0-9a-f-]{36})\/members$/.exec(p);
+        if (mx && req.method === 'PUT') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafC.setCrewMembers(ctx.tenant_id, mx[1], (await readJson(req)).members); send(res, r.ok ? 200 : 400, r); return; }
+        mx = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})\/inspections$/.exec(p);
+        if (mx && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; send(res, 200, { inspections: await scafC.listInspections(ctx.tenant_id, mx[1]) }); return; }
+        mx = /^\/api\/scaf\/inspections\/([0-9a-f-]{36})\/photos$/.exec(p);
+        if (mx && req.method === 'GET') {
+          if (!allowApp(['scaf.jobs'], 'view')) return;
+          const { data: ins } = await db().from('scaf_inspections').select('photos').eq('tenant_id', ctx.tenant_id).eq('id', mx[1]).maybeSingle();
+          send(res, 200, { urls: await scafC.photoUrls(ctx.tenant_id, ((ins as any)?.photos ?? []) as string[]) }); return;
+        }
         if (p === '/api/scaf/summary' && req.method === 'GET') {
           if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs', 'scaf.billing', 'scaf.stock'], 'view')) return;
           send(res, 200, await scaf.summary(ctx.tenant_id)); return;
@@ -735,8 +774,8 @@ const server = createServer(async (req, res) => {
       } catch (e: any) { send(res, 500, { error: scafErr(e) }); return; }
       send(res, 404, { error: 'Not found.' }); return;
     }
-    // The Scaffolding office role uses only the Scaffolding pages.
-    if (ctx.role === 'scaffolding' && p !== '/api/me') { send(res, 403, { error: 'Not allowed.' }); return; }
+    // The Scaffolding office role uses only the Scaffolding pages; a scaffolder only the phone (crew) routes.
+    if ((ctx.role === 'scaffolding' || ctx.role === 'scaffolder') && p !== '/api/me') { send(res, 403, { error: 'Not allowed.' }); return; }
 
     if (p === '/api/me') { send(res, 200, { businesses: userBusinesses(ctx.role, await getUserBusinesses(ctx.id)), apps: appLevels(ctx.role, appOverrides), id: ctx.id, name: ctx.name, role: ctx.role, client_code: ctx.client_code ?? null, team_id: (ctx as any).team_id ?? null, language: await getUserLanguage(ctx.id) }); return; }
 
@@ -4267,7 +4306,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <main style="max-width:1500px">
       <div class="titlerow"><div><h2>Planner</h2><div class="sub">Erect, adapt, inspect, dismantle, deliver and collect — per crew and day. Click an empty cell to plan a visit.</div></div>
         <div style="display:flex;gap:8px;align-self:center;align-items:center"><button class="pobtn" id="spl_prev">‹ Week</button><b id="spl_week" style="min-width:170px;text-align:center"></b><button class="pobtn" id="spl_next">Week ›</button><button class="pobtn" id="spl_today">This week</button><button class="pobtn" id="spl_crews" style="display:none">Crews</button></div></div>
-      <div class="card2" style="overflow:auto;margin-top:14px" id="spl_grid"></div>
+      <div class="sub" id="spl_insp" style="margin:12px 0 0"></div>
+      <div class="card2" style="overflow:auto;margin-top:10px" id="spl_grid"></div>
     </main>
   </div>
   <div id="scafHireView" style="display:none">
@@ -5156,6 +5196,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var scafTabs=['scaf','scafenq','scafjobs','scafplan','scafhire','scafstock','scafcust'];
     if(scafTabs.indexOf(t)>=0)return myBiz().some(function(b){ return b.key==='scaffolding'; })?t:'home';
     if(myRole==='scaffolding')return 'scafenq';
+    if(myRole==='scaffolder')return 'home';
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
     if(myRole==='acemark_finance'&&t!=='finwh'&&t!=='finstock') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales'||t==='finpay'||t==='finorders'||t==='fincomm'||t==='finman')?t:'finperf';
     if(myRole==='sales_rep') return (t==='finorders'||t==='fincomm'||t==='finman')?t:'finorders';
@@ -5224,7 +5265,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function showApp(){
     document.getElementById('loginView').style.display='none';document.getElementById('appView').style.display='block';applyRole();
     if(myRole==='customer'){await loadCustomer();return;}
-    if(myRole==='scaffolding'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());return;}
+    if(myRole==='scaffolding'||myRole==='scaffolder'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());return;}
     try{ROOM_STATS=await (await api('/api/room-stats')).json();}catch(e){ROOM_STATS={};}
     await loadJobs();await loadItems();showTab(restoreTab());openPendingPo();
   }
@@ -7859,6 +7900,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     // visits
     h+='<div style="display:flex;align-items:center;gap:10px;margin:20px 0 6px"><b>Visits</b>'+(ed?'<button class="pobtn" id="sjb_visit" style="margin-left:auto">+ Plan a visit</button>':'')+'</div>'
       +((j.visits||[]).length?'<table class="fjl"><tbody>'+j.visits.map(function(v){ return '<tr class="scr" data-v="'+v.id+'" style="cursor:pointer"><td style="white-space:nowrap">'+scDay(v.day)+(v.days>1?' +'+(v.days-1)+'d':'')+'</td><td><span class="scchip" style="color:'+SC_VKC[v.kind]+';border-color:'+SC_VKC[v.kind]+'33">'+esc(SC_VK[v.kind]||v.kind)+'</span></td><td>'+esc(v.crew||'—')+'</td><td class="sub">'+esc(v.status)+(v.notes?' · '+esc(v.notes):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">None planned.</div>');
+    h+='<div style="font-weight:700;margin:20px 0 6px">Inspections <span class="sub" style="font-weight:400">— 7-day register, recorded on the phone</span></div><div id="sjb_insp"><div class="sub">Loading…</div></div>';
     if(canApp('scaf.stock')!=='off')h+='<div style="font-weight:700;margin:20px 0 6px">Materials on site</div><div id="sjb_stock"><div class="sub">Loading…</div></div>';
     if(canApp('scaf.billing')!=='off')h+='<div style="font-weight:700;margin:20px 0 6px">Invoicing</div><div id="sjb_bill"><div class="sub">Loading…</div></div>';
     // handovers
@@ -7868,6 +7910,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1040px,96vw)';
     if(canApp('scaf.billing')!=='off')scJobBilling(j);
     if(canApp('scaf.stock')!=='off')scJobStock(j);
+    scJobInspections(j);
     document.querySelectorAll('#modalBody [data-hpdf]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scPdf('/api/scaf/handovers/'+a.getAttribute('data-hpdf')+'/pdf','Handover ACESC'+j.number+'.pdf'); }; });
     document.querySelectorAll('#modalBody tr[data-v]').forEach(function(tr){ tr.onclick=function(){ var v=j.visits.filter(function(x){ return x.id===tr.getAttribute('data-v'); })[0]; scVisitForm(v,{job:j}); }; });
     if(!ed)return;
@@ -7973,6 +8016,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var to=scAdd(SCP.from,5), grid=document.getElementById('spl_grid');
     document.getElementById('spl_week').textContent=scDay(SCP.from)+' – '+scDay(to);
     document.getElementById('spl_crews').style.display=canApp('scaf.jobs')==='edit'?'':'none';
+    scGet('/api/scaf/inspections-due').then(function(d){ var el=document.getElementById('spl_insp'); var od=d.due.filter(function(x){ return x.overdue>0; });
+      el.innerHTML=d.due.length?'<b style="color:'+(od.length?'#b42318':'var(--ink)')+'">7-day inspections due today: '+d.due.length+(od.length?' ('+od.length+' overdue)':'')+'</b> — '+d.due.slice(0,8).map(function(x){ return '<a href="#" data-scjob="'+x.job.id+'">ACESC'+x.job.number+'</a> '+esc(x.element||'')+(x.overdue>0?' ('+x.overdue+'d)':''); }).join(' · ')+(d.due.length>8?' …':''):'';
+      el.querySelectorAll('[data-scjob]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenJob(a.getAttribute('data-scjob')); }; }); }).catch(function(){});
     try{ SCP.data=await scGet('/api/scaf/visits?from='+SCP.from+'&to='+to); }catch(e){ grid.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
     var days=[0,1,2,3,4,5].map(function(i){ return scAdd(SCP.from,i); }), names=['Mon','Tue','Wed','Thu','Fri','Sat'];
     var crews=SCP.data.crews.filter(function(c){ return c.active!==false; }).concat([{id:'',name:'No crew set'}]);
@@ -7986,10 +8032,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       scGet('/api/scaf/jobs/'+v.job_id).then(function(jj){ scVisitForm(v,{job:jj,crews:SCP.data.crews}); }); }; });
     if(canApp('scaf.jobs')==='edit')grid.querySelectorAll('.spcell').forEach(function(td){ td.onclick=function(){ scVisitForm(null,{day:td.getAttribute('data-day'),crew_id:td.getAttribute('data-crew'),crews:SCP.data.crews,jobs:SCP.data.jobs}); }; });
   }
+  async function scJobInspections(j){
+    var box=document.getElementById('sjb_insp'); if(!box)return;
+    try{ var ins=(await scGet('/api/scaf/jobs/'+j.id+'/inspections')).inspections; }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var name={}; (j.scaffolds||[]).forEach(function(x){ name[x.id]=(x.element||'Scaffold')+(x.tag?' · '+x.tag:''); });
+    var R={first_use:'before first use',weekly:'7-day',weather:'after bad weather',alteration:'after alteration',other:'other'};
+    box.innerHTML=ins.length?'<table class="fjl"><tbody>'+ins.slice(0,40).map(function(x){ return '<tr><td style="white-space:nowrap">'+scDay(x.day)+'</td><td>'+esc(name[x.scaffold_id]||'')+'</td><td>'+(x.safe?'<span class="scchip" style="color:#067647;border-color:#06764733">Safe</span>':'<span class="scchip" style="color:#b42318;border-color:#b4231833">NOT safe</span>')+'</td><td class="sub">'+esc(R[x.reason]||x.reason)+(x.inspector?' · '+esc(x.inspector):'')+'</td><td>'+esc(x.defects||'')+(x.actions?'<div class="sub" style="margin:0">'+esc(x.actions)+'</div>':'')+'</td><td>'+((x.photos||[]).length?'<a href="#" data-iph="'+x.id+'">'+x.photos.length+' photo(s)</a>':'')+'</td></tr>'; }).join('')+'</tbody></table>'
+      :'<div class="sub" style="margin:0">None recorded yet.</div>';
+    box.querySelectorAll('[data-iph]').forEach(function(a){ a.onclick=async function(e){ e.preventDefault(); try{ var u=(await scGet('/api/scaf/inspections/'+a.getAttribute('data-iph')+'/photos')).urls; u.forEach(function(x){ window.open(x,'_blank'); }); }catch(err){ tShow(err.message); } }; });
+  }
+  async function scCrewMembers(c){
+    try{ var users=(await scGet('/api/scaf/crew-users')).users; }catch(e){ tShow(e.message); return; }
+    var mem=c.members||[];
+    scModal('Members · '+esc(c.name),'<div class="sub" style="margin:0 0 10px">Members see the visits of this crew in the phone app (ACE Scaffolding — My day). Users with the role Scaffolder (crew) or Scaffolding office are listed; add them in Admin ▸ Users.</div>'
+      +(users.length?users.map(function(u){ return '<label style="display:flex;gap:8px;align-items:center;font-size:14px;padding:5px 0"><input type="checkbox" class="scmem" value="'+u.id+'"'+(mem.indexOf(u.id)>=0?' checked':'')+'> '+esc(u.name)+' <span class="sub" style="margin:0">'+esc(u.role==='scaffolder'?'scaffolder':'office')+'</span></label>'; }).join(''):'<div class="sub">No users with the Scaffolder role yet.</div>')
+      +'<div style="margin-top:12px;display:flex;gap:8px"><button class="add" id="scmem_save">Save</button><button class="pobtn" id="scmem_back">Back to crews</button></div>');
+    document.getElementById('scmem_back').onclick=scCrews;
+    document.getElementById('scmem_save').onclick=async function(){ var ids=[].map.call(document.querySelectorAll('.scmem:checked'),function(x){ return x.value; });
+      if(await scSend('/api/scaf/crews/'+c.id+'/members','PUT',{members:ids})){ tShow('Saved'); scCrews(); } };
+  }
   async function scCrews(){
     try{ var crews=(await scGet('/api/scaf/crews')).crews; }catch(e){ tShow(e.message); return; }
-    var row=function(c){ c=c||{kind:'own',active:true}; return '<tr data-c="'+(c.id||'')+'"><td>'+scInput('',c.name,'Name')+'</td><td><select class="tinput">'+scOpt([['own','Own crew'],['sub','Subcontractor']],c.kind)+'</select></td><td>'+scInput('',c.phone,'Phone')+'</td><td><label style="display:flex;gap:4px;align-items:center;font-size:12px"><input type="checkbox"'+(c.active!==false?' checked':'')+'> active</label></td><td><button class="pobtn">'+(c.id?'Save':'Add')+'</button></td></tr>'; };
+    var row=function(c){ c=c||{kind:'own',active:true}; return '<tr data-c="'+(c.id||'')+'"><td>'+scInput('',c.name,'Name')+'</td><td><select class="tinput">'+scOpt([['own','Own crew'],['sub','Subcontractor']],c.kind)+'</select></td><td>'+scInput('',c.phone,'Phone')+'</td><td><label style="display:flex;gap:4px;align-items:center;font-size:12px"><input type="checkbox"'+(c.active!==false?' checked':'')+'> active</label></td><td style="white-space:nowrap"><button class="pobtn">'+(c.id?'Save':'Add')+'</button>'+(c.id?' <button class="pobtn" data-mem="'+c.id+'" title="Who is in this crew — they see its visits on the phone">Members'+((c.members||[]).length?' ('+c.members.length+')':'')+'</button>':'')+'</td></tr>'; };
     scModal('Crews','<div class="sub" style="margin:0 0 10px">Our own crews and the subcontractors. Inactive crews stay on past jobs but are not offered for new visits.</div><table class="fjl"><tbody>'+crews.map(row).join('')+row(null)+'</tbody></table>');
+    document.querySelectorAll('#modalBody [data-mem]').forEach(function(b){ b.onclick=function(){ var c=crews.filter(function(x){ return x.id===b.getAttribute('data-mem'); })[0]; scCrewMembers(c); }; });
     document.querySelectorAll('#modalBody tr[data-c]').forEach(function(tr){ tr.querySelector('button').onclick=async function(){ var id=tr.getAttribute('data-c'), i=tr.querySelectorAll('input,select');
       var b={name:i[0].value,kind:i[1].value,phone:i[2].value,active:i[3].checked};
       if(await scSend(id?'/api/scaf/crews/'+id:'/api/scaf/crews',id?'PUT':'POST',b)){ tShow('Saved'); scCrews(); } }; });
@@ -8227,6 +8293,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var box=document.getElementById('bizTiles'); if(!box)return;
     var me=(document.getElementById('whoName')||{}).textContent||''; document.getElementById('homeHello').textContent=me?T('Hello, {0}',me.split(' ')[0]):'ACE Group';
     var list=myBiz();
+    if(myRole==='scaffolder'){ box.innerHTML='<div class="card2" style="padding:18px"><b>ACE Scaffolding crews work in the phone app.</b><div class="sub" style="margin:6px 0 0">Install FitAWindow on your phone and sign in with the same email — you will see the day of your crew, handovers, inspections and delivery / collection notes.</div></div>'; return; }
     box.innerHTML=list.map(function(b){
       var links=[]; b.groups.forEach(function(g){ (NAV_GROUPS[g]||[]).forEach(function(id){ var el=document.getElementById(id); if(el&&el.style.display!=='none'){ var t=tabNameOf(el); if(t&&t!=='scaf')links.push([t,el.textContent.trim()]); } }); });
       var first=links.length?links[0][0]:(b.key==='scaffolding'?'scaf':'');
@@ -8389,7 +8456,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     function show(id,ok){var el=document.getElementById(id);if(el)el.style.display=ok?'block':'none';}
     var isCustomer=(myRole==='customer');
     var navEl=document.querySelector('#appView nav.nav'); if(navEl)navEl.style.display=isCustomer?'none':'flex';
-    var isLogistics=(myRole==='logistics'), isFin=(myRole==='scaffolding'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse');
+    var isLogistics=(myRole==='logistics'), isFin=(myRole==='scaffolding'||myRole==='scaffolder'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse');
     show('tabItems',!isCustomer&&!isLogistics&&!isFin);
     show('tabFinOrders',canCap('sales.orders'));
     show('tabFinComm',canCap('sales.orders'));
@@ -11479,7 +11546,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var at=hp.get('access_token'); keepSession({refresh_token:hp.get('refresh_token'),expires_at:hp.get('expires_at')});
     history.replaceState(null,'',window.location.pathname);
     if(at){token=at;bootstrapSession();}
-  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='scaffolding'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
+  } else if(token){refreshLang();document.getElementById('appView').style.display='block';document.getElementById('loginView').style.display='none';applyRole();if(myRole==='scaffolding'||myRole==='scaffolder'||myRole==='logistics'||myRole==='acemark_finance'||myRole==='sales_rep'||myRole==='acemark_fitter'||myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse'){showTab(restoreTab());}else{loadJobs().then(loadItems).then(function(){showTab(restoreTab());openPendingPo();}).catch(logout);}}
 </script></body></html>`;
 
 // ---- standalone live wallboard (dark, auto-refreshing, key-gated) ----

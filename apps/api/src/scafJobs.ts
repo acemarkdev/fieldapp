@@ -78,7 +78,8 @@ export async function getJobFull(tenantId: string, id: string) {
     visits: visits.map((v) => ({ ...v, crew: v.crew_id ? crewName.get(v.crew_id) ?? null : null })), handovers };
 }
 export async function listCrews(tenantId: string) {
-  const { data, error } = await db().from('scaf_crews').select('id,name,kind,phone,notes,active').eq('tenant_id', tenantId).order('name');
+  const r1 = await db().from('scaf_crews').select('id,name,kind,phone,notes,active,members').eq('tenant_id', tenantId).order('name');
+  const { data, error } = r1.error && /members/.test(r1.error.message) ? await db().from('scaf_crews').select('id,name,kind,phone,notes,active').eq('tenant_id', tenantId).order('name') : r1;   // before 0102
   if (error) throw error; return data ?? [];
 }
 /** Planner: visits between two days (inclusive) with their job, site and crew. */
@@ -212,7 +213,8 @@ export async function createHandover(tenantId: string, jobId: string, userId: st
   const d = day(b?.day); if (!d) return { ok: false as const, error: 'Choose the handover day.' };
   const list = ids(b.scaffold_ids); if (!list.length) return { ok: false as const, error: 'Tick the scaffolds handed over.' };
   const client = txt(b.client_name, 120); if (!client) return { ok: false as const, error: 'Who received it for the client?' };
-  const sig = typeof b.signature === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(b.signature) && b.signature.length < 400_000 ? b.signature : null;
+  // the signature: a PNG from the office screen, or the strokes drawn on the phone ("svg:<w>x<h>:<path>")
+  const sig = typeof b.signature === 'string' && b.signature.length < 400_000 && (/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(b.signature) || /^svg:\d{2,4}x\d{2,4}:[ML0-9 .,-]{3,}$/.test(b.signature)) ? b.signature : null;
   const r = await db().from('scaf_handovers').insert({ tenant_id: tenantId, job_id: jobId, day: d, scaffold_ids: list, ace_person: txt(b.ace_person, 120), client_name: client, signature: sig, max_load: txt(b.max_load, 120), notes: long(b.notes, 2000), created_by: userId }).select('id').single();
   if (r.error) return { ok: false as const, error: r.error.message };
   await db().from('scaf_scaffolds').update({ status: 'on_hire', handed_over_on: d, edited_at: nowIso() }).eq('job_id', jobId).in('id', list).in('status', ['booked', 'erecting']);
