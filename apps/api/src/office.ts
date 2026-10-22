@@ -29,6 +29,8 @@ import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as 
 import { agentTenant, receiveSnapshot, listDocs, docsToCheck, lastSync, hasAgentKey, newAgentKey, setNotJob } from './subiekt';
 import * as scaf from './scaffolding';
 import * as scafQ from './scafQuotes';
+import * as scafJ from './scafJobs';
+import { renderHandoverPdf } from './scafHandoverPdf';
 import { renderQuotePdf } from './scafQuotePdf';
 import { receiveStock, catalogueView, sketchUrls, itemSources, addIgnore, removeIgnore } from './cortizo';
 import { gzipSync } from 'node:zlib';
@@ -550,7 +552,7 @@ const server = createServer(async (req, res) => {
         if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' }); res.end(gzipSync(body)); }
         else send(res, 200, v);
       };
-      const scafErr = (e: any) => /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
+      const scafErr = (e: any) => /scaf_crews|scaf_scaffolds|scaf_visits|scaf_handovers|checklist/.test(String(e?.message ?? '')) ? 'This needs migration 0098.' : /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
       try {
         if (p === '/api/scaf/summary' && req.method === 'GET') {
           if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs'], 'view')) return;
@@ -604,7 +606,47 @@ const server = createServer(async (req, res) => {
         if (m && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; const e = await scaf.getEnquiry(ctx.tenant_id, m[1]); if (!e) { send(res, 404, { error: 'Not found.' }); return; } let quotes: any[] = []; try { quotes = await scafQ.listQuotes(ctx.tenant_id, m[1]); } catch { /* 0097 not run */ } send(res, 200, { ...e, quotes }); return; }
         if (p === '/api/scaf/jobs' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; zipped({ jobs: await scaf.listJobs(ctx.tenant_id) }); return; }
         m = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})$/.exec(p);
-        if (m && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; const j = await scaf.getJob(ctx.tenant_id, m[1]); if (!j) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, j); return; }
+        if (m && req.method === 'GET') {
+          if (!allowApp(['scaf.jobs'], 'view')) return;
+          let j: any; try { j = await scafJ.getJobFull(ctx.tenant_id, m[1]); } catch { j = await scaf.getJob(ctx.tenant_id, m[1]); if (j) j.phase2 = false; }   // before 0098
+          if (!j) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, j); return;
+        }
+        // phase 2: jobs, scaffolds, the planner, handovers (scafJobs.ts, scafHandoverPdf.ts)
+        if (m && req.method === 'PUT') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafJ.saveJob(ctx.tenant_id, m[1], await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        let mj = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})\/(scaffolds|status|handovers)$/.exec(p);
+        if (mj && req.method === 'POST') {
+          if (!allowApp(['scaf.jobs'], 'edit')) return;
+          const b = await readJson(req);
+          const r = mj[2] === 'scaffolds' ? await scafJ.addScaffold(ctx.tenant_id, mj[1], b) : mj[2] === 'status' ? await scafJ.setScaffoldStatus(ctx.tenant_id, mj[1], b) : await scafJ.createHandover(ctx.tenant_id, mj[1], ctx.id, b);
+          send(res, r.ok ? 200 : 400, r); return;
+        }
+        mj = /^\/api\/scaf\/(scaffolds|visits|crews)\/([0-9a-f-]{36})$/.exec(p);
+        if (mj && (req.method === 'PUT' || req.method === 'DELETE')) {
+          if (!allowApp(['scaf.jobs'], 'edit')) return;
+          const [, kind, rid] = mj;
+          const r = req.method === 'DELETE'
+            ? (kind === 'scaffolds' ? await scafJ.deleteScaffold(ctx.tenant_id, rid) : kind === 'visits' ? await scafJ.deleteVisit(ctx.tenant_id, rid) : { ok: false as const, error: 'Set the crew inactive instead.' })
+            : (kind === 'scaffolds' ? await scafJ.updateScaffold(ctx.tenant_id, rid, await readJson(req)) : kind === 'visits' ? await scafJ.saveVisit(ctx.tenant_id, rid, await readJson(req)) : await scafJ.saveCrew(ctx.tenant_id, rid, await readJson(req)));
+          send(res, r.ok ? 200 : 400, r); return;
+        }
+        if (p === '/api/scaf/crews' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; send(res, 200, { crews: await scafJ.listCrews(ctx.tenant_id) }); return; }
+        if (p === '/api/scaf/crews' && req.method === 'POST') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafJ.saveCrew(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        if (p === '/api/scaf/visits' && req.method === 'GET') {
+          if (!allowApp(['scaf.jobs'], 'view')) return;
+          const from = String(url.searchParams.get('from') ?? ''), to = String(url.searchParams.get('to') ?? '');
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) { send(res, 400, { error: 'from / to as YYYY-MM-DD.' }); return; }
+          const [visits, crews, jobs] = await Promise.all([scafJ.listVisits(ctx.tenant_id, from, to), scafJ.listCrews(ctx.tenant_id), scafJ.activeJobs(ctx.tenant_id)]);
+          send(res, 200, { visits, crews, jobs }); return;
+        }
+        if (p === '/api/scaf/visits' && req.method === 'POST') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafJ.saveVisit(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        mj = /^\/api\/scaf\/handovers\/([0-9a-f-]{36})\/pdf$/.exec(p);
+        if (mj && req.method === 'GET') {
+          if (!allowApp(['scaf.jobs'], 'view')) return;
+          const d = await scafJ.handoverPdfData(ctx.tenant_id, mj[1]); if (!d || !d.job) { send(res, 404, { error: 'Not found.' }); return; }
+          const pdf = await renderHandoverPdf({ ...d, company: await scafQ.settings() });
+          res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="Handover ACESC${d.job.number} ${d.handover.day}.pdf"`, 'cache-control': 'no-store' });
+          res.end(pdf); return;
+        }
         if (p === '/api/scaf/customers' && req.method === 'GET') { if (!allowApp(['scaf.customers'], 'view')) return; zipped({ customers: await scaf.listCustomers(ctx.tenant_id) }); return; }
         if (p === '/api/scaf/customers' && req.method === 'POST') { if (!allowApp(['scaf.customers'], 'edit')) return; const r = await scaf.saveCustomer(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
         m = /^\/api\/scaf\/customers\/([0-9a-f-]{36})$/.exec(p);
@@ -3603,6 +3645,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .scform textarea.tinput{font-family:inherit;resize:vertical}
   .scbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:#f7f6fb;border-radius:12px;padding:10px 12px}.scbar label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
   table.scqt td{vertical-align:top;padding:6px 4px}table.scqt .tinput{padding:7px 8px;font-size:12.5px}
+  .sccheck{display:grid;gap:6px}.scck{display:grid;grid-template-columns:1.6fr 130px 150px 1.4fr;gap:8px;align-items:center;font-size:13px}.scck .tinput{padding:7px 9px}
+  .scacts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;background:#f7f6fb;border-radius:12px;padding:8px 10px}.scacts .tinput{padding:7px 9px}
+  .scsig{border:1px dashed #bdb8d3;border-radius:10px;background:#fff;width:100%;max-width:560px;height:150px;touch-action:none;cursor:crosshair}
+  table.splt{border-collapse:collapse;width:100%;min-width:900px}table.splt th{font-size:11.5px;color:var(--muted);text-align:left;padding:8px;border-bottom:1px solid var(--line)}table.splt th.today{color:var(--purple)}
+  table.splt td{border-bottom:1px solid var(--line);border-left:1px solid #f0eef6;vertical-align:top;padding:6px;height:64px}td.spcrew{font-weight:700;font-size:13px;width:140px;border-left:0}td.spcell{cursor:pointer;width:14%}td.spcell:hover{background:#faf9fd}
+  .spv{border-left:4px solid;background:#f7f6fb;border-radius:8px;padding:5px 7px;font-size:12px;margin-bottom:5px;cursor:pointer}.spv div{color:var(--muted);font-size:11.5px}.spv.done{opacity:.55}
   .scchip{display:inline-block;font-size:11.5px;font-weight:700;border:1px solid;border-radius:999px;padding:2px 9px;white-space:nowrap}
   table.sct tr.scr{cursor:pointer}table.sct tr.scr:hover td{background:#faf9fd}
   .scform{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}.scform label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
@@ -4061,6 +4109,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabScaf" class="tab" style="display:none" onclick="showTab('scaf')">Overview</button>
         <button id="tabScafEnq" class="tab" style="display:none" onclick="showTab('scafenq')">Enquiries</button>
         <button id="tabScafJobs" class="tab" style="display:none" onclick="showTab('scafjobs')">Jobs</button>
+        <button id="tabScafPlan" class="tab" style="display:none" onclick="showTab('scafplan')">Planner</button>
         <button id="tabScafCust" class="tab" style="display:none" onclick="showTab('scafcust')">Customers</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
@@ -4136,6 +4185,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       </div>
       <div class="card2" style="overflow:auto"><table class="fjl sct"><thead><tr><th>NUMBER</th><th>ENQUIRY</th><th>SITE / TITLE</th><th>CUSTOMER</th><th>ERECTED BY</th><th>STATUS</th><th>UP</th><th style="text-align:right">HIRE</th><th>DISMANTLE REQ.</th><th style="text-align:right">PRICE</th></tr></thead><tbody id="sj_rows"></tbody></table></div>
       <div style="text-align:center;margin:12px 0 30px"><button class="pobtn" id="sj_more" style="display:none">Show more</button></div>
+    </main>
+  </div>
+  <div id="scafPlanView" style="display:none">
+    <main style="max-width:1500px">
+      <div class="titlerow"><div><h2>Planner</h2><div class="sub">Erect, adapt, inspect, dismantle, deliver and collect — per crew and day. Click an empty cell to plan a visit.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center"><button class="pobtn" id="spl_prev">‹ Week</button><b id="spl_week" style="min-width:170px;text-align:center"></b><button class="pobtn" id="spl_next">Week ›</button><button class="pobtn" id="spl_today">This week</button><button class="pobtn" id="spl_crews" style="display:none">Crews</button></div></div>
+      <div class="card2" style="overflow:auto;margin-top:14px" id="spl_grid"></div>
     </main>
   </div>
   <div id="scafCustView" style="display:none">
@@ -4991,7 +5047,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(location.hash==='#costs'&&canCap('expenses.report')){ history.replaceState(null,'',location.pathname); return 'myexp'; }
     var t=sessionStorage.getItem('ace_tab')||(myBiz().length>1?'home':(myRole==='scanner'?'mapping':'dashboard'));
     if(t==='home'&&myBiz().length>1)return 'home';
-    var scafTabs=['scaf','scafenq','scafjobs','scafcust'];
+    var scafTabs=['scaf','scafenq','scafjobs','scafplan','scafcust'];
     if(scafTabs.indexOf(t)>=0)return myBiz().some(function(b){ return b.key==='scaffolding'; })?t:'home';
     if(myRole==='scaffolding')return 'scafenq';
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
@@ -6904,9 +6960,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sessionStorage.setItem('ace_tab',name);
     bizFollowTab(name);
     document.getElementById('homeView').style.display=name==='home'?'block':'none';
-    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
+    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafplan','scafPlanView','tabScafPlan'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
       document.getElementById(v[1]).style.display=name===v[0]?'block':'none'; var t=document.getElementById(v[2]); if(t)t.classList.toggle('on',name===v[0]); });
-    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafcust')loadScafCust();
+    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafplan')loadScafPlan(); if(name==='scafcust')loadScafCust();
     if(name==='home')renderHome();
     document.getElementById('dashView').style.display=name==='dashboard'?'block':'none';
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
@@ -7272,8 +7328,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sv_print').onclick=function(){ window.print(); };
   })();
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafPlan','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafplan:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -7391,22 +7447,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tb.querySelectorAll('tr.scr').forEach(function(tr){ tr.onclick=function(){ scOpenJob(tr.getAttribute('data-id')); }; });
     var more=document.getElementById('sj_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
   }
-  async function scOpenJob(id){
-    scModal('Job','<div class="sub">Loading…</div>');
-    try{ var j=await scGet('/api/scaf/jobs/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(x.message)+'</div>'; return; }
-    var weekly=j.price!=null&&j.rent_pct!=null?Number(j.price)*Number(j.rent_pct)/100:null;
-    var h='<div style="font-size:15px;font-weight:700">'+esc(j.title||'')+'</div>'+scRows([
-      ['Status',scChip(j.stage,SC_JOB_STAGE[j.stage]||j.stage,false)+(j.status_label?' <span class="sub">monday: '+esc(j.status_label)+'</span>':'')],
-      ['Enquiry',j.enquiry?'<a href="#" data-scenq="'+j.enquiry.id+'">ACE'+j.enquiry.number+'</a> '+esc(j.enquiry.title||''):''],
-      ['Customer',j.customer?'<a href="#" data-sccust="'+j.customer.id+'">'+esc(j.customer.name)+'</a>':''],['Site',j.site?esc(j.site.address):''],
-      ['Erected by',esc(j.erector||'')],['PO / order',esc(j.po_number||'')],['RAMS',esc(j.rams||'')],['Handover certificate',esc(j.handover||'')],
-      ['Up',[scDay(j.up_start),j.up_end&&j.up_end!==j.up_start?scDay(j.up_end):''].filter(Boolean).join(' – ')],
-      ['Hire included',j.hire_weeks!=null?czNum(j.hire_weeks,0)+' weeks':''],['Rent after it',j.rent_pct!=null?czNum(j.rent_pct,1)+'% of the price per week'+(weekly!=null?' = '+scMoney(Math.round(weekly*100)/100)+'/week':''):''],
-      ['Rent from – to',[scDay(j.rent_start),scDay(j.rent_end)].filter(Boolean).join(' – ')],['Dismantle requested',scDay(j.dismantle_request)],['Dismantle start',scDay(j.dismantle_start)],['Down',scDay(j.down_date)],
-      ['Price',scMoney(j.price)],['Actual cost up',scMoney(j.actual_cost_up)],['Actual cost down',scMoney(j.actual_cost_down)],['Invoiced',esc(j.invoiced||'')],['Payment',scMoney(j.payment)]]);
-    if(j.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday · <a href="https://ace189144.monday.com/boards/1594702968/pulses/'+j.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
-    scModal('ACESC'+j.number,h); scLinks();
-  }
+
 
   // Customers
   async function loadScafCust(){
@@ -7484,6 +7525,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sc_more').onclick=function(){ SC.shown.c+=300; renderScafCust(); };
     document.getElementById('sc_new').onclick=scNewCust;
     document.getElementById('se_new').onclick=scNewEnq;
+    document.getElementById('spl_prev').onclick=function(){ SCP.from=scAdd(SCP.from,-7); loadScafPlan(); };
+    document.getElementById('spl_next').onclick=function(){ SCP.from=scAdd(SCP.from,7); loadScafPlan(); };
+    document.getElementById('spl_today').onclick=function(){ SCP.from=null; loadScafPlan(); };
+    document.getElementById('spl_crews').onclick=scCrews;
     document.getElementById('sv0_settings').onclick=scSettings;
     document.getElementById('sv0_check').onclick=function(){ scImport(true); };
     document.getElementById('sv0_run').onclick=function(){ if(confirm('Import from monday into the office app now?'))scImport(false); };
@@ -7655,6 +7700,177 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +f('valid_days','Quotes valid for (days)')+'</div><div style="margin-top:12px"><button class="add" id="sst_save">Save</button></div>');
     document.getElementById('sst_save').onclick=async function(){ var b={}; ['name','phone','address','email','web','company_no','vat_no','intro','terms','valid_days'].forEach(function(k){ b[k]=scVal('sst_'+k); });
       if(await scSend('/api/scaf/settings','PUT',b)){ tShow('Saved'); closeModal(true); } };
+  }
+  // ---- Scaffolding phase 2: the job window (scaffolds, checklist, visits, handover, dismantle), the planner, crews ----
+  var SC_SCF={booked:'Booked',erecting:'Up — awaiting handover',on_hire:'On hire',dismantle_requested:'Dismantle requested',dismantling:'Dismantling',down:'Down'};
+  var SC_VK={erect:'Erect',adapt:'Adapt',inspect:'Inspect',dismantle:'Dismantle',deliver:'Deliver',collect:'Collect'};
+  var SC_VKC={erect:'#3c2a7a',adapt:'#7e3b8a',inspect:'#0f766e',dismantle:'#b42318',deliver:'#b45309',collect:'#6b6880'};
+  function scScfChip(s){ var c={booked:'#6b6880',erecting:'#b45309',on_hire:'#067647',dismantle_requested:'#b42318',dismantling:'#b42318',down:'#9a97ad'}[s]||'#3c2a7a'; return '<span class="scchip" style="color:'+c+';border-color:'+c+'33">'+esc(SC_SCF[s]||s)+'</span>'; }
+  function scJobsChanged(){ SC.jobs=null; var v=document.getElementById('scafJobsView'); if(v&&v.style.display==='block')loadScafJobs(); var pv=document.getElementById('scafPlanView'); if(pv&&pv.style.display==='block')loadScafPlan(); }
+  async function scOpenJob(id){
+    scModal('Job','<div class="sub">Loading…</div>');
+    try{ var j=await scGet('/api/scaf/jobs/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(x.message)+'</div>'; return; }
+    if(j.phase2===false){ scModal('ACESC'+j.number,'<div class="sub">This needs migration 0098 to show the scaffolds, planner and handover.</div>'+scRows([['Status',esc(SC_JOB_STAGE[j.stage]||j.stage)],['Customer',j.customer?esc(j.customer.name):''],['Site',j.site?esc(j.site.address):''],['Price',scMoney(j.price)]])); return; }
+    var ed=canApp('scaf.jobs')==='edit', dis=ed?'':' disabled', jstages=Object.keys(SC_JOB_STAGE).map(function(k){ return [k,SC_JOB_STAGE[k]]; });
+    var crewNames=(j.crews||[]).map(function(c){ return c.name; }); if(j.erector&&crewNames.indexOf(j.erector)<0)crewNames.push(j.erector);
+    var h='<div class="scbar"><label>Status<select class="tinput" id="sjb_stage"'+dis+'>'+scOpt(jstages,j.stage)+'</select></label>'
+      +'<label>Erected by<select class="tinput" id="sjb_erector"'+dis+'>'+scOpt(crewNames,j.erector,'—')+'</select></label>'
+      +'<label>PO / order no.'+scInput('sjb_po',j.po_number,'',' 150px')+'</label>'
+      +'<span class="sub" style="margin:0 0 8px auto">'+(j.enquiry?'Quote <a href="#" data-scenq="'+j.enquiry.id+'">ACE'+j.enquiry.number+'</a> · ':'')+'Price '+scMoney(j.price)+'</span></div>'
+      +'<div class="scform" style="margin-top:12px"><label style="grid-column:1/-1">Title'+scInput('sjb_title',j.title)+'</label>'
+      +'<label>Customer<span style="padding:9px 0;font-size:14px;color:var(--ink)">'+(j.customer?'<a href="#" data-sccust="'+j.customer.id+'">'+esc(j.customer.name)+'</a>':'—')+'</span></label>'
+      +'<label>Site contact<select class="tinput" id="sjb_contact"'+dis+'>'+scOpt((j.contacts||[]).map(function(p){ return [p.id,p.name+(p.phone?' · '+p.phone:'')]; }),j.contact_id,'—')+'</select></label>'
+      +'<label style="grid-column:1/-1">Site<span style="padding:6px 0;font-size:14px;color:var(--ink)">'+esc(j.site?j.site.address:'—')+'</span></label>'
+      +'<label style="grid-column:1/-1">Notes<textarea class="tinput" id="sjb_notes" rows="2"'+dis+'>'+esc(j.notes||'')+'</textarea></label></div>';
+    // checklist
+    var cl=j.checklist||{};
+    h+='<div style="font-weight:700;margin:16px 0 6px">Before we go up</div><div class="sccheck">'+(j.checks||[]).map(function(c){ var v=cl[c[0]]||{state:'todo'};
+      return '<div class="scck" data-ck="'+c[0]+'"><span>'+esc(c[1])+'</span><select class="tinput" data-f="state"'+dis+'>'+scOpt([['todo','To do'],['done','Done'],['na','Not needed']],v.state)+'</select><input type="date" class="tinput" data-f="on" value="'+esc(v.on||'')+'"'+dis+'><input class="tinput" data-f="note" placeholder="Note" value="'+esc(v.note||'')+'"'+dis+'></div>'; }).join('')+'</div>';
+    if(ed)h+='<div style="margin-top:10px"><button class="add" id="sjb_save">Save job</button></div>';
+    // scaffolds
+    var sc=j.scaffolds||[];
+    h+='<div style="display:flex;align-items:center;gap:10px;margin:20px 0 6px"><b>Scaffolds</b><span class="sub" style="margin:0">tick to act on several</span>'+(ed?'<button class="pobtn" id="sjb_addsc" style="margin-left:auto">+ Scaffold / variation</button>':'')+'</div>'
+      +(sc.length?'<table class="fjl"><thead><tr>'+(ed?'<th></th>':'')+'<th>SCAFFOLD</th><th>TAG</th><th style="text-align:right">PRICE</th><th>HIRE</th><th>STATUS</th><th>DATES</th>'+(ed?'<th></th>':'')+'</tr></thead><tbody>'+sc.map(function(s){
+        var rent=s.rent_weekly!=null?scMoney(s.rent_weekly)+'/wk':(s.rent_pct!=null?Number(s.rent_pct)+'%/wk':'');
+        var dates=[s.erected_on?'up '+scDay(s.erected_on):'',s.handed_over_on?'handed over '+scDay(s.handed_over_on):'',s.hire_ends?'rent from '+scDay(s.hire_ends):'',s.dismantle_requested_on?'dismantle asked '+scDay(s.dismantle_requested_on)+(s.dismantle_requested_by?' by '+s.dismantle_requested_by:''):'',s.down_on?'down '+scDay(s.down_on):''].filter(Boolean).join('<br>');
+        return '<tr>'+(ed?'<td><input type="checkbox" class="sjb_sc" value="'+s.id+'"></td>':'')+'<td><b>'+esc(s.element||'Scaffold')+'</b>'+(s.variation?' <span class="scchip" style="color:#7e3b8a;border-color:#7e3b8a33">variation</span>':'')+(s.description?'<div class="sub" style="margin:0">'+esc(s.description)+'</div>':'')+(s.variation&&s.confirmed_by?'<div class="sub" style="margin:0">confirmed by '+esc(s.confirmed_by)+(s.confirmed_on?' '+scDay(s.confirmed_on):'')+'</div>':'')+'</td>'
+          +'<td>'+esc(s.tag||'')+'</td><td class="r">'+scMoney(s.price)+'</td><td style="white-space:nowrap">'+(s.hire_weeks!=null?Number(s.hire_weeks)+' wk':'')+(rent?'<div class="sub" style="margin:0">then '+rent+'</div>':'')+'</td><td>'+scScfChip(s.status)+'</td><td class="sub" style="margin:0;font-size:12px">'+dates+'</td>'
+          +(ed?'<td style="white-space:nowrap"><button class="pobtn" data-scedit="'+s.id+'" style="padding:5px 9px">Edit</button></td>':'')+'</tr>'; }).join('')+'</tbody></table>'
+      :'<div class="sub" style="margin:0">No scaffolds on this job yet'+(j.monday_id?' (imported from monday — add them to track hire per scaffold)':'')+'.</div>');
+    if(ed&&sc.length)h+='<div class="scacts"><span class="sub" style="margin:0">With the ticked:</span><input type="date" class="tinput" id="sjb_day" value="'+scToday()+'">'
+      +'<button class="pobtn" data-st="erecting">Up (erected)</button><button class="add" id="sjb_hand">Handover…</button>'
+      +'<input class="tinput" id="sjb_by" placeholder="Dismantle asked by (name, how)" style="width:200px"><button class="pobtn" data-st="dismantle_requested">Dismantle requested</button>'
+      +'<button class="pobtn" data-st="down">Down</button></div>';
+    // visits
+    h+='<div style="display:flex;align-items:center;gap:10px;margin:20px 0 6px"><b>Visits</b>'+(ed?'<button class="pobtn" id="sjb_visit" style="margin-left:auto">+ Plan a visit</button>':'')+'</div>'
+      +((j.visits||[]).length?'<table class="fjl"><tbody>'+j.visits.map(function(v){ return '<tr class="scr" data-v="'+v.id+'" style="cursor:pointer"><td style="white-space:nowrap">'+scDay(v.day)+(v.days>1?' +'+(v.days-1)+'d':'')+'</td><td><span class="scchip" style="color:'+SC_VKC[v.kind]+';border-color:'+SC_VKC[v.kind]+'33">'+esc(SC_VK[v.kind]||v.kind)+'</span></td><td>'+esc(v.crew||'—')+'</td><td class="sub">'+esc(v.status)+(v.notes?' · '+esc(v.notes):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">None planned.</div>');
+    // handovers
+    if((j.handovers||[]).length)h+='<div style="font-weight:700;margin:20px 0 6px">Handover certificates</div>'+j.handovers.map(function(x){ return '<div>'+scDay(x.day)+' · '+esc(x.client_name||'')+' · '+(x.scaffold_ids||[]).length+' scaffold(s) · <a href="#" data-hpdf="'+x.id+'">PDF</a></div>'; }).join('');
+    if(j.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday · <a href="https://ace189144.monday.com/boards/1594702968/pulses/'+j.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
+    scModal('ACESC'+j.number,h); scLinks();
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1040px,96vw)';
+    document.querySelectorAll('#modalBody [data-hpdf]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scPdf('/api/scaf/handovers/'+a.getAttribute('data-hpdf')+'/pdf','Handover ACESC'+j.number+'.pdf'); }; });
+    document.querySelectorAll('#modalBody tr[data-v]').forEach(function(tr){ tr.onclick=function(){ var v=j.visits.filter(function(x){ return x.id===tr.getAttribute('data-v'); })[0]; scVisitForm(v,{job:j}); }; });
+    if(!ed)return;
+    var reopen=function(msg){ tShow(msg); scJobsChanged(); scOpenJob(id); };
+    document.getElementById('sjb_save').onclick=async function(){
+      var ck={}; document.querySelectorAll('#modalBody .scck').forEach(function(r){ var o={}; r.querySelectorAll('[data-f]').forEach(function(i){ o[i.getAttribute('data-f')]=i.value; }); ck[r.getAttribute('data-ck')]=o; });
+      if(await scSend('/api/scaf/jobs/'+id,'PUT',{stage:scVal('sjb_stage'),erector:scVal('sjb_erector'),po_number:scVal('sjb_po'),title:scVal('sjb_title'),contact_id:scVal('sjb_contact'),notes:scVal('sjb_notes'),checklist:ck}))reopen('Saved');
+    };
+    document.getElementById('sjb_addsc').onclick=function(){ scScaffoldForm(j,null); };
+    document.querySelectorAll('#modalBody [data-scedit]').forEach(function(b){ b.onclick=function(){ scScaffoldForm(j,sc.filter(function(s){ return s.id===b.getAttribute('data-scedit'); })[0]); }; });
+    var ticked=function(){ return [].map.call(document.querySelectorAll('#modalBody .sjb_sc:checked'),function(c){ return c.value; }); };
+    document.querySelectorAll('#modalBody [data-st]').forEach(function(b){ b.onclick=async function(){ var t=ticked(); if(!t.length){ tShow('Tick the scaffolds'); return; }
+      if(await scSend('/api/scaf/jobs/'+id+'/status','POST',{ids:t,status:b.getAttribute('data-st'),day:scVal('sjb_day'),by:scVal('sjb_by')}))reopen('Saved'); }; });
+    var hb=document.getElementById('sjb_hand'); if(hb)hb.onclick=function(){ var t=ticked(); if(!t.length){ tShow('Tick the scaffolds to hand over'); return; } scHandoverForm(j,t,scVal('sjb_day')); };
+    document.getElementById('sjb_visit').onclick=function(){ scVisitForm(null,{job:j}); };
+  }
+  async function scPdf(url,name){ tShow('Building the PDF…'); var r=await fetch(url,{headers:{Authorization:'Bearer '+token}}); if(!r.ok){ var x={}; try{ x=await r.json(); }catch(_){} tShow(x.error||'PDF failed'); return; }
+    var u=URL.createObjectURL(await r.blob()), a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },4000); }
+  function scScaffoldForm(j,s){
+    var isNew=!s; s=s||{variation:!!(j.quote_id||(j.scaffolds||[]).length)};
+    scModal((isNew?'Add a scaffold':'Scaffold')+' · ACESC'+j.number,'<div class="scform">'
+      +'<label>Element<input class="tinput" id="ssf_el" list="scdl_el2" value="'+esc(s.element||'')+'"></label><label>Tag'+scInput('ssf_tag',s.tag)+'</label>'
+      +'<label style="grid-column:1/-1">Description<textarea class="tinput" id="ssf_desc" rows="2">'+esc(s.description||'')+'</textarea></label>'
+      +'<label>Price £'+scInput('ssf_price',s.price)+'</label><label>Labour part £'+scInput('ssf_lab',s.labour)+'</label>'
+      +'<label>Hire weeks included'+scInput('ssf_hw',s.hire_weeks)+'</label><label>Then rent % a week'+scInput('ssf_rp',s.rent_pct)+'</label><label>or £ a week'+scInput('ssf_rw',s.rent_weekly)+'</label><span></span>'
+      +'<label style="flex-direction:row;align-items:center;gap:6px;grid-column:1/-1"><input type="checkbox" id="ssf_var"'+(s.variation?' checked':'')+'> Variation / adaption (added after the quote — adds to the job price)</label>'
+      +'<label>Confirmed in writing by'+scInput('ssf_cby',s.confirmed_by,'name, email / letter')+'</label><label>On<input type="date" class="tinput" id="ssf_con" value="'+esc(s.confirmed_on||'')+'"></label></div>'
+      +scDl('scdl_el2',(SCL&&SCL.elements)||[])
+      +'<div style="margin-top:12px;display:flex;gap:8px"><button class="add" id="ssf_save">'+(isNew?'Add':'Save')+'</button><button class="pobtn" id="ssf_back">Back to the job</button>'+(!isNew&&s.status==='booked'?'<button class="del" id="ssf_del" style="margin-left:auto">Remove</button>':'')+'</div>');
+    if(!SCL)scLookups();
+    document.getElementById('ssf_back').onclick=function(){ scOpenJob(j.id); };
+    document.getElementById('ssf_save').onclick=async function(){
+      var b={element:scVal('ssf_el'),tag:scVal('ssf_tag'),description:scVal('ssf_desc'),price:scVal('ssf_price'),labour:scVal('ssf_lab'),hire_weeks:scVal('ssf_hw'),rent_pct:scVal('ssf_rp'),rent_weekly:scVal('ssf_rw'),variation:document.getElementById('ssf_var').checked,confirmed_by:scVal('ssf_cby'),confirmed_on:scVal('ssf_con')};
+      if(await scSend(isNew?'/api/scaf/jobs/'+j.id+'/scaffolds':'/api/scaf/scaffolds/'+s.id,isNew?'POST':'PUT',b)){ tShow('Saved'); scJobsChanged(); scOpenJob(j.id); } };
+    var del=document.getElementById('ssf_del'); if(del)del.onclick=async function(){ if(!confirm('Remove this scaffold from the job?'))return; if(await scSend('/api/scaf/scaffolds/'+s.id,'DELETE')){ tShow('Removed'); scOpenJob(j.id); } };
+  }
+  function scHandoverForm(j,ticked,day){
+    var names=(j.scaffolds||[]).filter(function(s){ return ticked.indexOf(s.id)>=0; }).map(function(s){ return s.element||'Scaffold'; });
+    scModal('Handover · ACESC'+j.number,'<div class="sub" style="margin:0 0 10px">Hands over: '+esc(names.join(', '))+'. Their hire starts on the handover day.</div><div class="scform">'
+      +'<label>Handover day<input type="date" class="tinput" id="sho_day" value="'+esc(day||scToday())+'"></label><label>Handed over by (ACE)'+scInput('sho_ace','')+'</label>'
+      +'<label>Received by (client)'+scInput('sho_client',j.contact?j.contact.name:'')+'</label><label>Duty / loading'+scInput('sho_load','','e.g. General purpose, 2.0 kN/m²')+'</label>'
+      +'<label style="grid-column:1/-1">Notes'+scInput('sho_notes','')+'</label>'
+      +'<label style="grid-column:1/-1">Client signature (draw with the mouse or a finger)<canvas id="sho_sig" width="560" height="150" class="scsig"></canvas><a href="#" id="sho_clear" style="font-size:12px">Clear</a></label></div>'
+      +'<div style="margin-top:12px;display:flex;gap:8px"><button class="add" id="sho_save">Save handover — the hire starts</button><button class="pobtn" id="sho_back">Back to the job</button></div>');
+    var cv=document.getElementById('sho_sig'), cx=cv.getContext('2d'), drawing=false, signed=false;
+    cx.lineWidth=2.2; cx.lineCap='round'; cx.strokeStyle='#1e1b2e';
+    var pos=function(e){ var r=cv.getBoundingClientRect(), t=e.touches?e.touches[0]:e; return [(t.clientX-r.left)*cv.width/r.width,(t.clientY-r.top)*cv.height/r.height]; };
+    var down=function(e){ e.preventDefault(); drawing=true; var p=pos(e); cx.beginPath(); cx.moveTo(p[0],p[1]); };
+    var move=function(e){ if(!drawing)return; e.preventDefault(); var p=pos(e); cx.lineTo(p[0],p[1]); cx.stroke(); signed=true; };
+    var up=function(){ drawing=false; };
+    cv.addEventListener('mousedown',down); cv.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+    cv.addEventListener('touchstart',down,{passive:false}); cv.addEventListener('touchmove',move,{passive:false}); cv.addEventListener('touchend',up);
+    document.getElementById('sho_clear').onclick=function(e){ e.preventDefault(); cx.clearRect(0,0,cv.width,cv.height); signed=false; };
+    document.getElementById('sho_back').onclick=function(){ scOpenJob(j.id); };
+    document.getElementById('sho_save').onclick=async function(){
+      var d=await scSend('/api/scaf/jobs/'+j.id+'/handovers','POST',{day:scVal('sho_day'),scaffold_ids:ticked,ace_person:scVal('sho_ace'),client_name:scVal('sho_client'),max_load:scVal('sho_load'),notes:scVal('sho_notes'),signature:signed?cv.toDataURL('image/png'):null});
+      if(d){ tShow('Handed over — on hire'); scJobsChanged(); await scPdf('/api/scaf/handovers/'+d.id+'/pdf','Handover ACESC'+j.number+'.pdf'); scOpenJob(j.id); } };
+  }
+
+  // a visit (from the job window or the planner)
+  async function scVisitForm(v,ctx){
+    ctx=ctx||{}; var isNew=!v; v=v||{kind:'erect',day:ctx.day||scToday(),days:1,crew_id:ctx.crew_id||'',status:'planned',scaffold_ids:[]};
+    var crews=ctx.crews; if(!crews){ try{ crews=(await scGet('/api/scaf/crews')).crews; }catch(e){ crews=[]; } }
+    var job=ctx.job||null;
+    var jobsDl=ctx.jobs?scDl('scdl_jobs',ctx.jobs.map(function(x){ return 'ACESC'+x.number+' · '+(x.title||''); })):'';
+    var h=jobsDl+'<div class="scform">'
+      +(job?'<label style="grid-column:1/-1">Job<span style="padding:6px 0;font-size:14px;color:var(--ink)">ACESC'+job.number+' · '+esc(job.title||'')+'</span></label>'
+           :'<label style="grid-column:1/-1">Job<input class="tinput" id="svi_job" list="scdl_jobs" placeholder="Type the ACESC number or the site" autocomplete="off"></label>')
+      +'<label>Visit<select class="tinput" id="svi_kind">'+scOpt(Object.keys(SC_VK).map(function(k){ return [k,SC_VK[k]]; }),v.kind)+'</select></label>'
+      +'<label>Crew<select class="tinput" id="svi_crew">'+scOpt(crews.filter(function(c){ return c.active!==false||c.id===v.crew_id; }).map(function(c){ return [c.id,c.name+(c.kind==='sub'?' (sub)':'')]; }),v.crew_id,'— not set —')+'</select></label>'
+      +'<label>Day<input type="date" class="tinput" id="svi_day" value="'+esc(v.day)+'"></label><label>Working days'+scInput('svi_days',v.days)+'</label>'
+      +'<label>Status<select class="tinput" id="svi_status">'+scOpt([['planned','Planned'],['done','Done'],['cancelled','Cancelled']],v.status)+'</select></label><span></span>'
+      +'<div style="grid-column:1/-1" id="svi_scs"></div>'
+      +'<label style="grid-column:1/-1">Notes'+scInput('svi_notes',v.notes)+'</label></div>'
+      +'<div class="sub" style="margin:8px 0 0">Marking an erect visit done puts its scaffolds up; a dismantle visit done takes them down.</div>'
+      +'<div style="margin-top:12px;display:flex;gap:8px"><button class="add" id="svi_save">'+(isNew?'Plan the visit':'Save')+'</button>'+(job?'<button class="pobtn" id="svi_back">Back to the job</button>':'')+(!isNew?'<button class="del" id="svi_del" style="margin-left:auto">Delete</button>':'')+'</div>';
+    scModal(isNew?'Plan a visit':'Visit',h);
+    var showScs=function(jj){ var box=document.getElementById('svi_scs'); var list=(jj&&jj.scaffolds)||[];
+      box.innerHTML=list.length?'<div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">Scaffolds</div>'+list.map(function(s){ return '<label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink);font-weight:400;flex-direction:row"><input type="checkbox" class="svi_sc" value="'+s.id+'"'+((v.scaffold_ids||[]).indexOf(s.id)>=0||(isNew&&scVisitFits(v.kind,s.status))?' checked':'')+'> '+esc(s.element||'Scaffold')+' '+scScfChip(s.status)+'</label>'; }).join(''):''; };
+    if(job)showScs(job);
+    var ji=document.getElementById('svi_job');
+    if(ji)ji.onchange=async function(){ var m=/ACESC([0-9]+)/i.exec(ji.value)||/^([0-9]+)/.exec(ji.value.trim()), n=m?Number(m[1]):null, hit=(ctx.jobs||[]).filter(function(x){ return x.number===n; })[0];
+      if(!hit){ job=null; showScs(null); return; } try{ job=await scGet('/api/scaf/jobs/'+hit.id); showScs(job); }catch(e){ job={id:hit.id,number:hit.number}; } };
+    document.getElementById('svi_kind').onchange=function(){ if(!isNew)return; var k=this.value; document.querySelectorAll('.svi_sc').forEach(function(c){ var s=((job&&job.scaffolds)||[]).filter(function(x){ return x.id===c.value; })[0]; if(s)c.checked=scVisitFits(k,s.status); }); };
+    var back=document.getElementById('svi_back'); if(back)back.onclick=function(){ scOpenJob(job.id); };
+    document.getElementById('svi_save').onclick=async function(){
+      if(!job){ tShow('Choose the job'); return; }
+      var b={job_id:job.id,kind:scVal('svi_kind'),crew_id:scVal('svi_crew'),day:scVal('svi_day'),days:scVal('svi_days'),status:scVal('svi_status'),notes:scVal('svi_notes'),scaffold_ids:[].map.call(document.querySelectorAll('.svi_sc:checked'),function(c){ return c.value; })};
+      if(await scSend(isNew?'/api/scaf/visits':'/api/scaf/visits/'+v.id,isNew?'POST':'PUT',b)){ tShow('Saved'); scJobsChanged(); if(ctx.job)scOpenJob(job.id); else closeModal(true); } };
+    var del=document.getElementById('svi_del'); if(del)del.onclick=async function(){ if(!confirm('Delete this visit?'))return; if(await scSend('/api/scaf/visits/'+v.id,'DELETE')){ tShow('Deleted'); scJobsChanged(); if(ctx.job)scOpenJob(job.id); else closeModal(true); } };
+  }
+  function scVisitFits(kind,st){ return kind==='erect'?st==='booked':kind==='dismantle'?(st==='dismantle_requested'||st==='dismantling'||st==='on_hire'):false; }
+
+  // the planner: a week, crews down the side
+  var SCP={from:null,data:null};
+  function scMonday(d){ var x=new Date(d+'T00:00:00Z'), w=(x.getUTCDay()+6)%7; return new Date(x.getTime()-w*864e5).toISOString().slice(0,10); }
+  function scAdd(d,n){ return new Date(Date.parse(d+'T00:00:00Z')+n*864e5).toISOString().slice(0,10); }
+  async function loadScafPlan(){
+    if(!SCP.from)SCP.from=scMonday(scToday());
+    var to=scAdd(SCP.from,5), grid=document.getElementById('spl_grid');
+    document.getElementById('spl_week').textContent=scDay(SCP.from)+' – '+scDay(to);
+    document.getElementById('spl_crews').style.display=canApp('scaf.jobs')==='edit'?'':'none';
+    try{ SCP.data=await scGet('/api/scaf/visits?from='+SCP.from+'&to='+to); }catch(e){ grid.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var days=[0,1,2,3,4,5].map(function(i){ return scAdd(SCP.from,i); }), names=['Mon','Tue','Wed','Thu','Fri','Sat'];
+    var crews=SCP.data.crews.filter(function(c){ return c.active!==false; }).concat([{id:'',name:'No crew set'}]);
+    var cell=function(crewId,d){ return SCP.data.visits.filter(function(v){ return (v.crew_id||'')===crewId&&v.day<=d&&scAdd(v.day,Math.max(1,v.days)-1)>=d&&v.status!=='cancelled'; }); };
+    var h='<table class="splt"><thead><tr><th></th>'+days.map(function(d,i){ return '<th'+(d===scToday()?' class="today"':'')+'>'+names[i]+' '+scDay(d).slice(0,5)+'</th>'; }).join('')+'</tr></thead><tbody>';
+    crews.forEach(function(c){ var any=false, row='<tr><td class="spcrew">'+esc(c.name)+(c.kind==='sub'?'<div class="sub" style="margin:0">subcontractor</div>':'')+'</td>'+days.map(function(d){ var vs=cell(c.id,d); if(vs.length)any=true;
+        return '<td class="spcell" data-day="'+d+'" data-crew="'+c.id+'">'+vs.map(function(v){ return '<div class="spv'+(v.status==='done'?' done':'')+'" data-v="'+v.id+'" style="border-left-color:'+SC_VKC[v.kind]+'"><b>'+esc(SC_VK[v.kind])+'</b> ACESC'+v.job.number+'<div>'+esc((v.job.address||v.job.title||'').split(',')[0])+'</div></div>'; }).join('')+'</td>'; }).join('')+'</tr>';
+      if(c.id||any)h+=row; });
+    grid.innerHTML=h+'</tbody></table>';
+    grid.querySelectorAll('.spv').forEach(function(el){ el.onclick=function(ev){ ev.stopPropagation(); var v=SCP.data.visits.filter(function(x){ return x.id===el.getAttribute('data-v'); })[0];
+      scGet('/api/scaf/jobs/'+v.job_id).then(function(jj){ scVisitForm(v,{job:jj,crews:SCP.data.crews}); }); }; });
+    if(canApp('scaf.jobs')==='edit')grid.querySelectorAll('.spcell').forEach(function(td){ td.onclick=function(){ scVisitForm(null,{day:td.getAttribute('data-day'),crew_id:td.getAttribute('data-crew'),crews:SCP.data.crews,jobs:SCP.data.jobs}); }; });
+  }
+  async function scCrews(){
+    try{ var crews=(await scGet('/api/scaf/crews')).crews; }catch(e){ tShow(e.message); return; }
+    var row=function(c){ c=c||{kind:'own',active:true}; return '<tr data-c="'+(c.id||'')+'"><td>'+scInput('',c.name,'Name')+'</td><td><select class="tinput">'+scOpt([['own','Own crew'],['sub','Subcontractor']],c.kind)+'</select></td><td>'+scInput('',c.phone,'Phone')+'</td><td><label style="display:flex;gap:4px;align-items:center;font-size:12px"><input type="checkbox"'+(c.active!==false?' checked':'')+'> active</label></td><td><button class="pobtn">'+(c.id?'Save':'Add')+'</button></td></tr>'; };
+    scModal('Crews','<div class="sub" style="margin:0 0 10px">Our own crews and the subcontractors. Inactive crews stay on past jobs but are not offered for new visits.</div><table class="fjl"><tbody>'+crews.map(row).join('')+row(null)+'</tbody></table>');
+    document.querySelectorAll('#modalBody tr[data-c]').forEach(function(tr){ tr.querySelector('button').onclick=async function(){ var id=tr.getAttribute('data-c'), i=tr.querySelectorAll('input,select');
+      var b={name:i[0].value,kind:i[1].value,phone:i[2].value,active:i[3].checked};
+      if(await scSend(id?'/api/scaf/crews/'+id:'/api/scaf/crews',id?'PUT':'POST',b)){ tShow('Saved'); scCrews(); } }; });
   }
   // ---- ACE Group businesses (home page tiles). Which ones a user sees comes from /api/me (Admin ▸ Users). ----
   function bizAll(){ return (typeof ROLE_MATRIX==='object'&&ROLE_MATRIX&&ROLE_MATRIX.businesses)||[]; }
@@ -7842,7 +8058,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabCortizo',canCap('stock.view'));
     show('tabWh',canApp('wh.issues')!=='off');
     var hasScaf=myBiz().some(function(b){ return b.key==='scaffolding'; });
-    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
+    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafPlan',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
     show('tabLabels',canCap('labels.print'));
     show('tabConfirm',canCap('confirmations.manage'));
     show('tabFinCosts',canApp('fin.costs')!=='off');

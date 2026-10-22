@@ -218,7 +218,7 @@ export async function jobFromQuote(tenantId: string, quoteId: string) {
   if (q.status !== 'accepted') return { ok: false as const, error: 'Only an accepted quote becomes a job.' };
   const have = await db().from('scaf_jobs').select('id,number').eq('tenant_id', tenantId).eq('quote_id', quoteId).maybeSingle();
   if (have.data) return { ok: true as const, id: (have.data as any).id, number: (have.data as any).number, existed: true };
-  const { data: e } = await db().from('scaf_enquiries').select('id,title,customer_id,site_id').eq('id', q.enquiry_id).maybeSingle();
+  const { data: e } = await db().from('scaf_enquiries').select('id,title,customer_id,site_id,contact_id').eq('id', q.enquiry_id).maybeSingle();
   const terms = jobTerms(q.lines);
   for (let attempt = 0; attempt < 3; attempt++) {
     const number = await nextNumber(tenantId, 'scaf_jobs');
@@ -226,7 +226,13 @@ export async function jobFromQuote(tenantId: string, quoteId: string) {
       tenant_id: tenantId, number, title: (e as any)?.title ?? null, enquiry_id: q.enquiry_id, customer_id: (e as any)?.customer_id ?? null, site_id: (e as any)?.site_id ?? null,
       quote_id: quoteId, stage: 'upcoming', erector: 'ACE Scaff', price: q.totals.price, ...terms, edited_at: new Date().toISOString(),
     }).select('id').single();
-    if (!r.error) return { ok: true as const, id: (r.data as any).id, number };
+    if (!r.error) {
+      const jobId = (r.data as any).id;
+      // one scaffold per quote line (phase 2; skipped quietly before migration 0098)
+      await db().from('scaf_scaffolds').insert((q.lines as QuoteLine[]).map((l: QuoteLine, i: number) => ({ tenant_id: tenantId, job_id: jobId, position: i, element: l.element, description: l.description, price: l.price, labour: l.labour, hire_weeks: l.hire_weeks, rent_pct: l.rent_pct, rent_weekly: l.rent_weekly })));
+      if ((e as any)?.contact_id) await db().from('scaf_jobs').update({ contact_id: (e as any).contact_id }).eq('id', jobId);
+      return { ok: true as const, id: jobId, number };
+    }
     if (!/duplicate key/.test(r.error.message)) return { ok: false as const, error: r.error.message };
   }
   return { ok: false as const, error: 'Could not number the job — try again.' };

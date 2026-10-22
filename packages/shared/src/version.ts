@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.44.1';
+export const APP_VERSION = '1.45.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.45.0', date: '2026-10-22', changes: [
+    'ACE Scaffolding, phase 2 (office): the job window can be edited \u2014 status, erected by, PO number, site contact, notes, and a Before we go up checklist (RAMS, design / TG20, licence, alarm, hoist, access, neighbours, inspections booked) with done / not needed, date and note.',
+    'Scaffolds per job: a job made from a won quote gets one scaffold per quote line; more can be added \u2014 a variation / adaption (confirmed in writing by whom, when; adds to the job price). Each scaffold goes booked \u2192 up \u2192 on hire (handover) \u2192 dismantle requested (who asked, logged with the time) \u2192 dismantling \u2192 down, with its dates and when its rent starts (handover + included weeks). The job status follows its scaffolds.',
+    'Handover certificate: tick the scaffolds, the client signs on the screen (mouse or finger) \u2014 their hire starts that day; the signed certificate PDF downloads and stays on the job.',
+    'Planner (new tab): a week per crew \u2014 erect, adapt, inspect, dismantle, deliver, collect; click an empty cell to plan a visit for a job and its scaffolds. An erect visit marked done puts its scaffolds up; a dismantle visit done takes them down. Crews: our own and the subcontractors (the monday ones are added). Needs migration 0098.',
+  ] },
   { version: '1.44.1', date: '2026-10-22', changes: [
     'Scaffolding and Cortizo windows: the forms have a margin from the window edge and lighter labels; empty choices show \u201c\u2014\u201d.',
   ] },
