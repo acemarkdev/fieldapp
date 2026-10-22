@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.48.0';
+export const APP_VERSION = '1.49.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.49.0', date: '2026-10-22', changes: [
+    'ACE Scaffolding, phase 6: Reports (new tab) for any period (this year, last 12 months, last year or dates): the pipeline \u2014 enquiries and quoted value per month, won of decided, average quote, days from enquiry to quote, by source and by estimator / sales person; job profit \u2014 price + hire and extras invoiced on top against the estimated and actual costs, per job with a CSV; income \u2014 requests sent to accounts per month (price stages, hire, other); debtors \u2014 unpaid per customer by days late (not due, 1\u201330, 31\u201360, 61\u201390, over 90); and now \u2014 jobs up, scaffolds on hire, unbilled rent, stock value out on sites.',
+    'Overview: switch monday off (admin) \u2014 a checklist (last import, check, tell the team, make the monday boards read-only), then the import stops for good and the office app is the only record; it can be switched back on. No migration.',
+  ] },
   { version: '1.48.0', date: '2026-10-22', changes: [
     'ACE Scaffolding, phase 4: the phone app for crews (FitAWindow 0.76.1, over the air). New role Scaffolder (crew): My day \u2014 the visits of their crews; a visit shows the site (maps), the contact (call) and the scaffolds; Done (a dismantle reports the day the hire stops), Handover with the client signing with a finger (the hire starts; the certificate is in the job), delivery / collection notes, and the 7-day inspection with photos. The office and admin see all crews (admin: \u201cACE Scaffolding \u2014 crew screen\u201d on the phone).',
     'Office: Planner \u25b8 Crews \u25b8 Members \u2014 who is in each crew (they see its visits on the phone). The job window lists the inspections (safe / not safe, defects, actions, photos); the Planner shows the 7-day inspections due today and overdue. Needs migrations 0101 and 0102.',

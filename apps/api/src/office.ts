@@ -33,6 +33,7 @@ import * as scafJ from './scafJobs';
 import * as scafB from './scafBilling';
 import * as scafS from './scafStock';
 import * as scafC from './scafCrew';
+import * as scafR from './scafReports';
 import { renderStockNotePdf } from './scafStockPdf';
 import { renderInvoiceRequestPdf } from './scafInvoicePdf';
 import { renderHandoverPdf } from './scafHandoverPdf';
@@ -601,8 +602,21 @@ const server = createServer(async (req, res) => {
           if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs', 'scaf.billing', 'scaf.stock'], 'view')) return;
           send(res, 200, await scaf.summary(ctx.tenant_id)); return;
         }
+        // phase 6: reports and the monday switch-off (scafReports.ts)
+        if (p === '/api/scaf/reports' && req.method === 'GET') {
+          if (!allowApp(['scaf.enquiries', 'scaf.jobs', 'scaf.billing'], 'view')) return;
+          const from = String(url.searchParams.get('from') ?? ''), to = String(url.searchParams.get('to') ?? '');
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) { send(res, 400, { error: 'from / to as YYYY-MM-DD.' }); return; }
+          zipped(await scafR.reports(ctx.tenant_id, from, to, hasApp(ctx.role, ['scaf.billing'], 'view', appOverrides))); return;
+        }
+        if (p === '/api/scaf/monday' && req.method === 'GET') { if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs', 'scaf.billing', 'scaf.stock'], 'view')) return; send(res, 200, await scafR.mondayOff()); return; }
+        if (p === '/api/scaf/monday' && req.method === 'PUT') {
+          if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin switches monday off.' }); return; }
+          await scafR.setMondayOff((await readJson(req)).off === true, ctx.name || ctx.id); send(res, 200, { ok: true }); return;
+        }
         if (p === '/api/scaf/import' && req.method === 'POST') {
           if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin runs the monday import.' }); return; }
+          if ((await scafR.mondayOff()).off) { send(res, 400, { error: 'monday is switched off — the office app is the only record. Switch it back on (Overview) to import again.' }); return; }
           const b = await readJson(req);
           const plan = await scaf.readMonday();
           if (b.dry) {
@@ -3764,6 +3778,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .snfgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 14px}.snfcat{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;margin-top:8px}
   .snfi{display:flex !important;flex-direction:row !important;align-items:center;justify-content:space-between;gap:8px;font-size:13px !important;color:var(--ink) !important;font-weight:400 !important}.snfi small{display:block;color:var(--muted);font-size:11px}.snfi .tinput{width:70px;padding:6px 8px;text-align:right}
   table.sstt td{padding:5px 8px}
+  .srh{margin:26px 0 10px}.srcols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}@media(max-width:900px){.srcols{grid-template-columns:1fr}}
+  .scbar2{height:7px;background:#f0eef6;border-radius:4px;margin:2px 0;overflow:hidden}.scbar2 span{display:block;height:100%;border-radius:4px}
   .scchip{display:inline-block;font-size:11.5px;font-weight:700;border:1px solid;border-radius:999px;padding:2px 9px;white-space:nowrap}
   table.sct tr.scr{cursor:pointer}table.sct tr.scr:hover td{background:#faf9fd}
   .scform{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}.scform label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
@@ -4225,6 +4241,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <button id="tabScafPlan" class="tab" style="display:none" onclick="showTab('scafplan')">Planner</button>
         <button id="tabScafHire" class="tab" style="display:none" onclick="showTab('scafhire')">Hire &amp; invoicing</button>
         <button id="tabScafStock" class="tab" style="display:none" onclick="showTab('scafstock')">Stock</button>
+        <button id="tabScafRep" class="tab" style="display:none" onclick="showTab('scafrep')">Reports</button>
         <button id="tabScafCust" class="tab" style="display:none" onclick="showTab('scafcust')">Customers</button>
       </div></div>
       <div class="grp" id="grp_admin"><button class="grpbtn" onclick="toggleGrp('admin')">Admin \u25be</button><div class="grpmenu" id="menu_admin">
@@ -4254,6 +4271,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="sub">This business is being built into the office app, phase by phase. Now: customers, contacts and sites, and the enquiries and jobs brought over from monday. Next: the enquiry pipeline and quotes, then jobs, hire billing, the phone app for crews and stock.</div>
       <div class="statgrid" id="sv0_stats" style="margin:16px 0 0"></div>
       <div style="margin-top:12px"><button class="pobtn" id="sv0_settings" style="display:none">Quote settings — company details and terms</button></div>
+      <div id="sv0_monday"></div>
       <div class="card2" id="sv0_import" style="display:none;margin-top:16px;padding:16px 18px">
         <div class="groupt" style="padding:0 0 6px">IMPORT FROM MONDAY (ONE-OFF)</div>
         <div class="sub" style="margin:0 0 10px">Reads the ACE Scaffolding boards — Estimated Enquiries, Project Sheet and the customers they link to in My Contacts — into the office app. Run <b>Check</b> first to see what would come in. It can be run again until monday is switched off: new items are added and imported ones refreshed, but anything changed here is kept.</div>
@@ -4338,6 +4356,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="card2" style="overflow:auto;padding:12px 14px" id="sst_fc"></div>
       <h3 style="margin:22px 0 8px">Sites holding stock</h3><div class="card2" style="overflow:auto;padding:6px 8px" id="sst_sites"></div>
       <h3 style="margin:22px 0 8px">Recent notes</h3><div class="card2" style="overflow:auto;padding:6px 8px;margin-bottom:30px" id="sst_notes"></div>
+    </main>
+  </div>
+  <div id="scafRepView" style="display:none">
+    <main style="max-width:1400px">
+      <div class="titlerow"><div><h2>Reports</h2><div class="sub">ACE Scaffolding: pipeline, job profit, income and debtors.</div></div>
+        <div style="display:flex;gap:8px;align-self:center;align-items:center;flex-wrap:wrap"><input type="date" class="tinput" id="srp_from"><span>–</span><input type="date" class="tinput" id="srp_to">
+          <button class="pobtn" id="srp_year">This year</button><button class="pobtn" id="srp_12">Last 12 months</button><button class="pobtn" id="srp_last">Last year</button></div></div>
+      <div id="srp_body" style="margin:14px 0 40px"></div>
     </main>
   </div>
   <div id="scafCustView" style="display:none">
@@ -5193,7 +5219,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(location.hash==='#costs'&&canCap('expenses.report')){ history.replaceState(null,'',location.pathname); return 'myexp'; }
     var t=sessionStorage.getItem('ace_tab')||(myBiz().length>1?'home':(myRole==='scanner'?'mapping':'dashboard'));
     if(t==='home'&&myBiz().length>1)return 'home';
-    var scafTabs=['scaf','scafenq','scafjobs','scafplan','scafhire','scafstock','scafcust'];
+    var scafTabs=['scaf','scafenq','scafjobs','scafplan','scafhire','scafstock','scafrep','scafcust'];
     if(scafTabs.indexOf(t)>=0)return myBiz().some(function(b){ return b.key==='scaffolding'; })?t:'home';
     if(myRole==='scaffolding')return 'scafenq';
     if(myRole==='scaffolder')return 'home';
@@ -7107,9 +7133,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     sessionStorage.setItem('ace_tab',name);
     bizFollowTab(name);
     document.getElementById('homeView').style.display=name==='home'?'block':'none';
-    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafplan','scafPlanView','tabScafPlan'],['scafhire','scafHireView','tabScafHire'],['scafstock','scafStockView','tabScafStock'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
+    [['scaf','scafView','tabScaf'],['scafenq','scafEnqView','tabScafEnq'],['scafjobs','scafJobsView','tabScafJobs'],['scafplan','scafPlanView','tabScafPlan'],['scafhire','scafHireView','tabScafHire'],['scafstock','scafStockView','tabScafStock'],['scafrep','scafRepView','tabScafRep'],['scafcust','scafCustView','tabScafCust']].forEach(function(v){
       document.getElementById(v[1]).style.display=name===v[0]?'block':'none'; var t=document.getElementById(v[2]); if(t)t.classList.toggle('on',name===v[0]); });
-    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafplan')loadScafPlan(); if(name==='scafhire')loadScafHire(); if(name==='scafstock')loadScafStock(); if(name==='scafcust')loadScafCust();
+    if(name==='scaf')loadScafOverview(); if(name==='scafenq')loadScafEnq(); if(name==='scafjobs')loadScafJobs(); if(name==='scafplan')loadScafPlan(); if(name==='scafhire')loadScafHire(); if(name==='scafstock')loadScafStock(); if(name==='scafrep')loadScafRep(); if(name==='scafcust')loadScafCust();
     if(name==='home')renderHome();
     document.getElementById('dashView').style.display=name==='dashboard'?'block':'none';
     document.getElementById('itemsView').style.display=name==='items'?'flex':'none';
@@ -7475,8 +7501,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sv_print').onclick=function(){ window.print(); };
   })();
   // ---- grouped navigation ----
-  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafPlan','tabScafHire','tabScafStock','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
-  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafplan:'scaffolding',scafhire:'scaffolding',scafstock:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
+  var NAV_GROUPS={ops:['tabDash','tabItems','tabMapping','tabPlans','tabCal','tabSignoff','tabMyExp'],sales:['tabLeads'],crm:['tabCustomers'],finance:['tabBudget','tabInvoices'],purchasing:['tabPoReq','tabSuppliers','tabCostCentres'],logistics:['tabLabels','tabConfirm'],production:['tabProd','tabCortizo','tabWh'],scaffolding:['tabScaf','tabScafEnq','tabScafJobs','tabScafPlan','tabScafHire','tabScafStock','tabScafRep','tabScafCust'],finops:['tabFinPerf','tabFinCosts','tabFinJobs','tabFinSales','tabFinOrders','tabFinComm','tabFinPay','tabFinStock','tabFinMan'],admin:['tabTeams','tabCustAdmin','tabSync','tabTests','tabUsers','tabRoles','tabLogs','tabBilling']};
+  var TAB2GROUP={home:'',scaf:'scaffolding',scafenq:'scaffolding',scafjobs:'scaffolding',scafplan:'scaffolding',scafhire:'scaffolding',scafstock:'scaffolding',scafrep:'scaffolding',scafcust:'scaffolding',dashboard:'ops',items:'ops',mapping:'ops',plans:'ops',cal:'ops',signoff:'ops',myexp:'ops',confirm:'logistics',leads:'sales',customers:'crm',budget:'finance',invoices:'finance',teams:'admin',custadmin:'admin',costcentres:'purchasing',poreq:'purchasing',suppliers:'purchasing',labels:'logistics',prod:'production',cortizo:'production',fincosts:'finops',finperf:'finops',finjobs:'finops',finsales:'finops',finorders:'finops',fincomm:'finops',finpay:'finops',finman:'finops',finstock:'finops',sync:'admin',tests:'admin',users:'admin',roles:'admin',logs:'admin',billing:'admin'};
   function toggleGrp(gid){var m=document.getElementById('menu_'+gid);if(!m)return;var open=m.classList.contains('open');closeGrps();if(!open)m.classList.add('open');}
   function closeGrps(){var ms=document.querySelectorAll('.grpmenu');for(var i=0;i<ms.length;i++)ms[i].classList.remove('open');}
   function grpVisible(gid){var t=NAV_GROUPS[gid]||[];for(var i=0;i<t.length;i++){var el=document.getElementById(t[i]);if(el&&el.style.display!=='none')return true;}return false;}
@@ -7498,7 +7524,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   var SC_JOB_STAGE={booking:'Booking',upcoming:'Upcoming',to_be_rented:'To be rented',ongoing:'Ongoing',still_up:'Still up',being_rented:'Being rented',ready_for_dismantle:'Ready for dismantle',part_dismantled:'Part dismantled',down:'Down',commercial:'Commercial',na:'N/A'};
   var SC_JOB_ACTIVE=['upcoming','to_be_rented','ongoing','still_up','being_rented','ready_for_dismantle','part_dismantled','commercial'];
   var SC_KIND={commercial:'Commercial',trade:'Trade',domestic:'Domestic',ace:'ACE company'};
-  function scMoney(n){ if(n==null||n==='')return ''; var v=Number(n), d=Math.round(v*100)%100?2:0; return '£'+v.toLocaleString('en-GB',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+  function scMoney(n){ if(n==null||n==='')return ''; var v=Number(n), d=Math.round(v*100)%100?2:0; return (v<0?'-':'')+'£'+Math.abs(v).toLocaleString('en-GB',{minimumFractionDigits:d,maximumFractionDigits:d}); }
   function scDay(d){ if(!d)return ''; var p=String(d).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:d; }
   function scChip(stage,label,won){ var c=won?'#067647':(stage==='declined'||stage==='lost'||stage==='no_answer'||stage==='down'?'#9a97ad':(stage==='hot'||stage==='ready_for_dismantle'?'#b42318':'#3c2a7a')); return '<span class="scchip" style="color:'+c+';border-color:'+c+'33">'+esc(label)+'</span>'; }
   async function scGet(url){ var r=await api(url); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); return d; }
@@ -7509,6 +7535,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var box=document.getElementById('sv0_stats'); if(!box)return;
     document.getElementById('sv0_import').style.display=myRole==='admin'?'':'none';
     document.getElementById('sv0_settings').style.display=myRole==='admin'?'':'none';
+    scMondayCard();
     try{ var s=await scGet('/api/scaf/summary');
       box.innerHTML=svStat(czNum(s.enquiries,0),'Enquiries')+svStat(czNum(s.jobs,0),'Jobs')+svStat(czNum(s.customers,0),'Customers')+svStat(czNum(s.sites,0),'Sites')
         +svStat(esc(s.nextEnquiry)+' · '+esc(s.nextJob),'Next numbers')+svStat(s.importedAt?esc(czWhen(s.importedAt)):'—','Last monday import');
@@ -7678,6 +7705,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('spl_today').onclick=function(){ SCP.from=null; loadScafPlan(); };
     document.getElementById('spl_crews').onclick=scCrews;
     document.querySelectorAll('#sst_acts [data-nk]').forEach(function(b){ b.onclick=function(){ scNoteForm(b.getAttribute('data-nk')); }; });
+    var rset=function(a,b){ document.getElementById('srp_from').value=a; document.getElementById('srp_to').value=b; loadScafRep(); };
+    document.getElementById('srp_year').onclick=function(){ rset(scYearStart(),scToday()); };
+    document.getElementById('srp_12').onclick=function(){ rset(scAdd(scToday(),-365),scToday()); };
+    document.getElementById('srp_last').onclick=function(){ var y=Number(scToday().slice(0,4))-1; rset(y+'-01-01',y+'-12-31'); };
+    document.getElementById('srp_from').onchange=loadScafRep; document.getElementById('srp_to').onchange=loadScafRep;
     document.getElementById('sst_cat').onclick=scCatalogue; document.getElementById('sst_loc').onclick=scLocations;
     var hset=function(d){ document.getElementById('shi_upto').value=d; loadScafHire(); };
     document.getElementById('shi_week').onclick=function(){ hset(scLastSunday()); }; document.getElementById('shi_month').onclick=function(){ hset(scLastMonthEnd()); }; document.getElementById('shi_today').onclick=function(){ hset(scToday()); };
@@ -8280,6 +8312,67 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var b={kind:s.value,name:i[0].value,reg:i[1].value,position:i[2].value,active:i[3].checked};
       if(await scSend(id?'/api/scaf/stock/locations/'+id:'/api/scaf/stock/locations',id?'PUT':'POST',b)){ tShow('Saved'); scStockChanged(); scLocations(); } }; });
   }
+  // ---- Scaffolding phase 6: reports, and switching monday off ----
+  var SCR={data:null};
+  function scYearStart(){ return scToday().slice(0,4)+'-01-01'; }
+  function scBar(v,max,color){ var w=max>0?Math.max(2,Math.round(v/max*100)):0; return '<div class="scbar2"><span style="width:'+w+'%;background:'+(color||'var(--purple)')+'"></span></div>'; }
+  function scPct(v){ return v==null?'—':v+'%'; }
+  async function loadScafRep(){
+    var f=document.getElementById('srp_from'), t=document.getElementById('srp_to'); if(!f.value)f.value=scYearStart(); if(!t.value)t.value=scToday();
+    var box=document.getElementById('srp_body'); box.innerHTML='<div class="sub">Loading…</div>';
+    try{ SCR.data=await scGet('/api/scaf/reports?from='+f.value+'&to='+t.value); }catch(e){ box.innerHTML='<div class="sub">'+esc(e.message)+'</div>'; return; }
+    var d=SCR.data, p=d.pipeline, P=p.total, h='';
+    // now
+    h+='<div class="statgrid" id="srp_now" style="margin:0 0 6px">'+svStat(czNum(d.now.jobsUp,0),'Jobs up now')+(d.now.onHire!=null?svStat(czNum(d.now.onHire,0),'Scaffolds on hire'):'')+'</div>';
+    // pipeline
+    var st=P.status||{};
+    h+='<h3 class="srh">Pipeline — enquiries received '+scDay(d.from)+' – '+scDay(d.to)+'</h3><div class="statgrid">'+svStat(czNum(P.received,0),'Enquiries')+svStat(scMoney(Math.round(P.value)),'Quoted ('+P.quoted+')')+svStat(czNum(P.won,0),'Won · '+scMoney(Math.round(P.wonValue)))+svStat(scPct(P.conversion),'Won of decided ('+P.decided+')')+svStat(P.avgQuote!=null?scMoney(Math.round(P.avgQuote)):'—','Average quote')+svStat(P.avgDaysToQuote!=null?P.avgDaysToQuote+' d':'—','Enquiry to quote')+'</div>'
+      +'<div class="sub" style="margin:6px 0 0">Open '+(st.open||0)+' · won '+(st.won||0)+' · declined '+(st.declined||0)+' · lost / not required '+(st.lost||0)+' · no answer '+(st.no_answer||0)+(st.other?' · other '+st.other:'')+'</div>';
+    var mx=Math.max.apply(null,p.months.map(function(m){ return m.value; }).concat([1]));
+    h+='<div class="card2" style="overflow:auto;margin-top:10px"><table class="fjl"><thead><tr><th>MONTH</th><th style="text-align:right">ENQUIRIES</th><th style="text-align:right">QUOTED</th><th style="width:30%"></th><th style="text-align:right">WON</th><th style="text-align:right">WON VALUE</th><th style="text-align:right">WON OF DECIDED</th></tr></thead><tbody>'
+      +p.months.map(function(m){ return '<tr><td>'+esc(m.key)+'</td><td class="r">'+m.received+'</td><td class="r">'+scMoney(Math.round(m.value))+'</td><td>'+scBar(m.value,mx)+scBar(m.wonValue,mx,'#067647')+'</td><td class="r">'+m.won+'</td><td class="r">'+scMoney(Math.round(m.wonValue))+'</td><td class="r">'+scPct(m.conversion)+'</td></tr>'; }).join('')+'</tbody></table></div>';
+    var grp=function(title,rows){ return '<div class="card2" style="overflow:auto;padding:4px 8px"><table class="fjl"><thead><tr><th>'+title+'</th><th style="text-align:right">ENQUIRIES</th><th style="text-align:right">QUOTED</th><th style="text-align:right">WON</th><th style="text-align:right">WON VALUE</th><th style="text-align:right">WON OF DECIDED</th></tr></thead><tbody>'
+      +rows.slice(0,15).map(function(r){ return '<tr><td>'+esc(r.key)+'</td><td class="r">'+r.received+'</td><td class="r">'+scMoney(Math.round(r.value))+'</td><td class="r">'+r.won+'</td><td class="r">'+scMoney(Math.round(r.wonValue))+'</td><td class="r">'+scPct(r.conversion)+'</td></tr>'; }).join('')+'</tbody></table></div>'; };
+    h+='<div class="srcols">'+grp('SOURCE',p.sources)+grp('ESTIMATOR / SALES',p.people)+'</div>';
+    // job profit
+    var J=d.jobs, T=J.total;
+    h+='<h3 class="srh">Job profit — jobs up in the period</h3><div class="statgrid">'+svStat(czNum(T.jobs,0),'Jobs')+svStat(scMoney(Math.round(T.price)),'Price')+svStat(scMoney(Math.round(T.extra)),'Invoiced on top (hire, extras)')+svStat(scMoney(Math.round(T.revenue)),'Revenue')
+      +svStat(T.withActual?scMoney(Math.round(T.actualProfit)):'—','Actual profit ('+T.withActual+' with costs)')+svStat(scPct(T.margin),'Margin (with costs)')+'</div>'
+      +'<div style="display:flex;justify-content:flex-end;margin:8px 0 4px"><button class="pobtn" id="srp_csv">Export jobs CSV</button></div>'
+      +'<div class="card2" style="overflow:auto;max-height:480px"><table class="fjl sct"><thead><tr><th>JOB</th><th>CUSTOMER</th><th>STATUS</th><th style="text-align:right">PRICE</th><th style="text-align:right">ON TOP</th><th style="text-align:right">EST. COST</th><th style="text-align:right">ACTUAL COST</th><th style="text-align:right">EST. PROFIT</th><th style="text-align:right">ACTUAL PROFIT</th><th style="text-align:right">MARGIN</th></tr></thead><tbody>'
+      +J.rows.slice(0,300).map(function(r){ return '<tr class="scr" data-j="'+r.id+'"><td><b>ACESC'+r.number+'</b> <span class="sub" style="margin:0">'+esc(r.title||'')+'</span></td><td>'+esc(r.customer||'')+'</td><td>'+esc(SC_JOB_STAGE[r.stage]||r.stage)+'</td><td class="r">'+scMoney(r.price)+'</td><td class="r">'+(r.extra?scMoney(r.extra):'')+'</td><td class="r">'+(r.estCost!=null?scMoney(r.estCost):'')+'</td><td class="r">'+(r.actualCost!=null?scMoney(r.actualCost):'')+'</td><td class="r">'+(r.estProfit!=null?scMoney(r.estProfit):'')+'</td><td class="r"><b style="color:'+(r.actualProfit!=null&&r.actualProfit<0?'#b42318':'inherit')+'">'+(r.actualProfit!=null?scMoney(r.actualProfit):'')+'</b></td><td class="r">'+(r.margin!=null?r.margin+'%':'')+'</td></tr>'; }).join('')+'</tbody></table></div>'
+      +'<div class="sub" style="margin:6px 0 0">Estimated cost from the enquiry (cost up + down); actual cost entered on the job (monday: Actual Cost Up / Down). Price stages are part of the price; hire, extras and losses are on top.</div>';
+    if(d.income){ var I=d.income, im=Math.max.apply(null,I.months.map(function(m){ return m.total; }).concat([1]));
+      h+='<h3 class="srh">Income — requests for invoice sent to accounts</h3><div class="statgrid">'+svStat(scMoney(Math.round(I.total.total)),'Total')+svStat(scMoney(Math.round(I.total.price)),'Price stages')+svStat(scMoney(Math.round(I.total.rent)),'Hire (rent)')+svStat(scMoney(Math.round(I.total.other)),'Other')+'</div>'
+        +(I.months.length?'<div class="card2" style="overflow:auto;margin-top:10px"><table class="fjl"><thead><tr><th>MONTH</th><th style="text-align:right">PRICE STAGES</th><th style="text-align:right">HIRE</th><th style="text-align:right">OTHER</th><th style="text-align:right">TOTAL</th><th style="width:30%"></th></tr></thead><tbody>'
+        +I.months.map(function(m){ return '<tr><td>'+esc(m.key)+'</td><td class="r">'+scMoney(m.price)+'</td><td class="r">'+scMoney(m.rent)+'</td><td class="r">'+scMoney(m.other)+'</td><td class="r"><b>'+scMoney(m.total)+'</b></td><td>'+scBar(m.total,im,'#0f766e')+'</td></tr>'; }).join('')+'</tbody></table></div>':'<div class="sub">No requests sent in this period.</div>');
+      var D=d.debtors;
+      h+='<h3 class="srh">Debtors — invoiced, not paid (today)</h3><div class="statgrid">'+svStat(scMoney(Math.round(D.total.total)),'Unpaid')+svStat(scMoney(Math.round(D.total.notDue)),'Not due yet')+svStat(scMoney(Math.round(D.total.d30)),'1–30 days late')+svStat(scMoney(Math.round(D.total.d60)),'31–60')+svStat(scMoney(Math.round(D.total.d90)),'61–90')+svStat('<span style="color:'+(D.total.over90?'#b42318':'inherit')+'">'+scMoney(Math.round(D.total.over90))+'</span>','Over 90 days')+'</div>'
+        +(D.rows.length?'<div class="card2" style="overflow:auto;margin-top:10px"><table class="fjl"><thead><tr><th>CUSTOMER</th><th style="text-align:right">UNPAID</th><th style="text-align:right">NOT DUE</th><th style="text-align:right">1–30</th><th style="text-align:right">31–60</th><th style="text-align:right">61–90</th><th style="text-align:right">90+</th><th style="text-align:right">OLDEST</th></tr></thead><tbody>'
+        +D.rows.map(function(r){ return '<tr><td>'+esc(r.customer)+'</td><td class="r"><b>'+scMoney(r.total)+'</b></td><td class="r">'+(r.notDue?scMoney(r.notDue):'')+'</td><td class="r">'+(r.d30?scMoney(r.d30):'')+'</td><td class="r">'+(r.d60?scMoney(r.d60):'')+'</td><td class="r">'+(r.d90?scMoney(r.d90):'')+'</td><td class="r" style="color:#b42318">'+(r.over90?scMoney(r.over90):'')+'</td><td class="r">'+(r.oldest>0?r.oldest+' d late':'')+'</td></tr>'; }).join('')+'</tbody></table></div>':'<div class="sub">Nothing unpaid.</div>'); }
+    box.innerHTML=h;
+    box.querySelectorAll('tr[data-j]').forEach(function(tr){ tr.onclick=function(){ scOpenJob(tr.getAttribute('data-j')); }; });
+    document.getElementById('srp_csv').onclick=function(){ var q=function(v){ v=v==null?'':String(v); return /[";,]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }, n=function(v){ return v==null?'':String(v).replace('.',','); };
+      var lines=[['Job','Title','Customer','Status','Erected by','Price','Invoiced on top','Revenue','Est. cost','Actual cost','Est. profit','Actual profit','Margin %'].join(';')].concat(SCR.data.jobs.rows.map(function(r){ return ['ACESC'+r.number,r.title,r.customer,SC_JOB_STAGE[r.stage]||r.stage,r.erector,n(r.price),n(r.extra),n(r.revenue),n(r.estCost),n(r.actualCost),n(r.estProfit),n(r.actualProfit),n(r.margin)].map(q).join(';'); }));
+      var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\\r\\n')],{type:'text/csv;charset=utf-8'})); a.download='scaffolding-job-profit '+SCR.data.from+' '+SCR.data.to+'.csv'; a.click(); };
+    // now: unbilled rent and stock out on sites, when the user may see them
+    if(canApp('scaf.billing')!=='off')scGet('/api/scaf/hire?upTo='+scToday()+'&freq=all').then(function(x){ var n=document.getElementById('srp_now'); if(n)n.insertAdjacentHTML('beforeend',svStat(scMoney(x.stats.unbilledToday),'Unbilled rent to today')+svStat(czNum(x.stats.rentRunning,0),'Paying rent now')); }).catch(function(){});
+    if(canApp('scaf.stock')!=='off')scGet('/api/scaf/stock').then(function(x){ var n=document.getElementById('srp_now'); if(n)n.insertAdjacentHTML('beforeend',svStat(scMoney(Math.round(x.sites.reduce(function(a,s){ return a+s.value; },0))),'Stock value out on sites')); }).catch(function(){});
+  }
+  // Overview ▸ monday
+  async function scMondayCard(){
+    var box=document.getElementById('sv0_monday'); if(!box)return;
+    try{ var m=await scGet('/api/scaf/monday'); }catch(e){ box.innerHTML=''; return; }
+    var admin=myRole==='admin';
+    document.getElementById('sv0_import').style.display=admin&&!m.off?'':'none';
+    box.innerHTML=m.off
+      ? '<div class="card2" style="margin-top:16px;padding:14px 18px;background:#e7f6ec"><b>monday is switched off</b> — the office app is the only record for ACE Scaffolding'+(m.at?' (since '+esc(czWhen(m.at))+(m.by?', '+esc(m.by):'')+')':'')+'.'+(admin?' <a href="#" id="sv0_mon_on" style="margin-left:8px;font-size:12px">Switch the import back on</a>':'')+'</div>'
+      : (admin?'<div class="card2" style="margin-top:16px;padding:16px 18px"><div class="groupt" style="padding:0 0 6px">SWITCH MONDAY OFF</div><div class="sub" style="margin:0 0 8px">When everyone works in the office app:</div>'
+        +'<ol class="scplan" style="font-size:13px"><li>Run <b>Check monday</b> and <b>Import</b> once more, so the last changes come over.</li><li>Check a few live jobs, the open enquiries and the customers here.</li><li>Tell the team: from now on enquiries, quotes, jobs and the planner are only in the office app (crews on the phone).</li><li>In monday, make the ACE Scaffolding boards read-only for the team (board permissions) — keep them as an archive.</li><li>Switch off here: the import stops, so nothing from monday can overwrite the office app.</li></ol>'
+        +'<button class="add" id="sv0_mon_off" style="margin-top:8px">Switch monday off</button></div>':'');
+    var off=document.getElementById('sv0_mon_off'); if(off)off.onclick=async function(){ if(!confirm('Switch monday off? The import stops; the office app is the only record for ACE Scaffolding.'))return; if(await scSend('/api/scaf/monday','PUT',{off:true})){ tShow('monday switched off'); scMondayCard(); } };
+    var on=document.getElementById('sv0_mon_on'); if(on)on.onclick=async function(e){ e.preventDefault(); if(!confirm('Switch the monday import back on?'))return; if(await scSend('/api/scaf/monday','PUT',{off:false})){ tShow('Import back on'); scMondayCard(); } };
+  }
   // ---- ACE Group businesses (home page tiles). Which ones a user sees comes from /api/me (Admin ▸ Users). ----
   function bizAll(){ return (typeof ROLE_MATRIX==='object'&&ROLE_MATRIX&&ROLE_MATRIX.businesses)||[]; }
   var MY_BIZ=null; try{ MY_BIZ=JSON.parse(sessionStorage.getItem('ace_biz_list')||'null'); }catch(e){}
@@ -8467,7 +8560,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabCortizo',canCap('stock.view'));
     show('tabWh',canApp('wh.issues')!=='off');
     var hasScaf=myBiz().some(function(b){ return b.key==='scaffolding'; });
-    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafPlan',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafHire',hasScaf&&canApp('scaf.billing')!=='off'); show('tabScafStock',hasScaf&&canApp('scaf.stock')!=='off'); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
+    show('tabScaf',hasScaf); show('tabScafEnq',hasScaf&&canApp('scaf.enquiries')!=='off'); show('tabScafJobs',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafPlan',hasScaf&&canApp('scaf.jobs')!=='off'); show('tabScafHire',hasScaf&&canApp('scaf.billing')!=='off'); show('tabScafStock',hasScaf&&canApp('scaf.stock')!=='off'); show('tabScafRep',hasScaf&&(canApp('scaf.enquiries')!=='off'||canApp('scaf.jobs')!=='off'||canApp('scaf.billing')!=='off')); show('tabScafCust',hasScaf&&canApp('scaf.customers')!=='off');
     show('tabLabels',canCap('labels.print'));
     show('tabConfirm',canCap('confirmations.manage'));
     show('tabFinCosts',canApp('fin.costs')!=='off');
