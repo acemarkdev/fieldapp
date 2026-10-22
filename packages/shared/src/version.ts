@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.44.0';
+export const APP_VERSION = '1.44.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.44.1', date: '2026-10-22', changes: [
+    'Scaffolding and Cortizo windows: the forms have a margin from the window edge and lighter labels; empty choices show \u201c\u2014\u201d.',
+  ] },
   { version: '1.44.0', date: '2026-10-22', changes: [
     'ACE Scaffolding, phase 1 (office): + New enquiry \u2014 the next ACE number; pick the customer (or type a new one with its contact), its contact and site (or a new address), source, domestic / commercial, private / trade, deadline, estimator, sales person and what is needed.',
     'The enquiry window can be edited: status (a reason when declined or lost), follow-up date and what to do, contact, site, people, dates, scope and notes. Enquiries: a Chase-ups due filter and count, and a Follow up column (red when due).',

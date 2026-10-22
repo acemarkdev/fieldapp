@@ -3599,6 +3599,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .verchip:hover{background:rgba(255,255,255,.24);color:#fff}
   .loginver{text-align:center;color:#a9a4c4;font-size:11px;margin-top:14px}
   .nav{display:flex;gap:4px;margin-left:26px}
+  .scm{padding:8px 24px 24px}.scm .scform label,.scm .scbar label{font-weight:600;font-size:12px;letter-spacing:.01em}.scm .scform .tinput{font-size:14px}
+  .scform textarea.tinput{font-family:inherit;resize:vertical}
   .scbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:#f7f6fb;border-radius:12px;padding:10px 12px}.scbar label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
   table.scqt td{vertical-align:top;padding:6px 4px}table.scqt .tinput{padding:7px 8px;font-size:12.5px}
   .scchip{display:inline-block;font-size:11.5px;font-weight:700;border:1px solid;border-radius:999px;padding:2px 9px;white-space:nowrap}
@@ -7110,7 +7112,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       :'<div class="sub" style="margin:0">'+esc(TR('No Subiekt product has this symbol.'))+'</div>';
     var srcRef=it.own?it.sib:it.ref;
     if(srcRef)h+='<div style="font-weight:700;margin:16px 0 4px">'+esc(it.own?T('{0} in the catalogues',srcRef):TR('In the catalogues'))+'</div><div id="cz_src" class="sub" style="margin:0">'+esc(TR('Loading…'))+'</div>';
-    openModal(esc(it.ref),h);
+    openModal(esc(it.ref),'<div class="scm">'+h+'</div>');
     if(!srcRef){ czSketches(document.getElementById('modalBody')); return; }
     czSketches(document.getElementById('modalBody'));
     try{ var r=await api('/api/cortizo/sources?ref='+encodeURIComponent(srcRef)); var x=await r.json(); var box=document.getElementById('cz_src'); if(!box)return;
@@ -7126,7 +7128,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +u.map(function(s){return '<tr><td><b>'+esc(s.symbol)+'</b></td><td>'+esc(s.name||'')+'</td><td>'+esc(s.warehouse||'')+'</td><td class="r">'+czNum(s.qty,3)+' '+esc(s.unit||'')+'</td>'+(can?'<td style="text-align:right"><button class="del" data-czign="'+esc(guess(s.symbol))+'">'+esc(TR('Not Cortizo'))+'</button></td>':'')+'</tr>';}).join('')+'</tbody></table></div>'
       :'<div class="sub" style="margin:0">'+esc(TR('Nothing left — every Cortizo product in Subiekt has a reference.'))+'</div>');
     if(ig.length)h+='<div style="font-weight:700;margin:16px 0 4px">'+esc(T('Not Cortizo ({0} hidden)',(CZ.d.ignored||0)))+'</div><div class="chips" style="gap:6px">'+ig.map(function(p){ return '<span class="chip" style="cursor:default">'+esc(p)+(can?' <a href="#" data-czunign="'+esc(p)+'" title="'+esc(TR('Show again'))+'">&times;</a>':'')+'</span>'; }).join('')+'</div>';
-    openModal(esc(TR('Subiekt symbols with no reference')),h);
+    openModal(esc(TR('Subiekt symbols with no reference')),'<div class="scm">'+h+'</div>');
     var box=document.getElementById('modalBody');
     box.querySelectorAll('[data-czign]').forEach(function(b){ b.onclick=async function(){
       var p=prompt(TR('Hide as Not Cortizo — this symbol, or all symbols starting with the letters before * :'),b.getAttribute('data-czign')); if(!p)return;
@@ -7284,6 +7286,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       b.style.display=(grpVisible(gid)&&inBiz)?'':'none';});
     var hb=document.getElementById('homeBtn'); if(hb){ var many=myBiz().length>1; hb.style.display=many?'':'none'; document.getElementById('bizName').textContent=home||!cur?TR('All businesses'):cur.name; }
     setActiveGroup(sessionStorage.getItem('ace_tab')||'dashboard');}
+  // Scaffolding windows: the modal body has no padding of its own
+  function scModal(title,html){ openModal(title,'<div class="scm">'+html+'</div>'); }
   // ---- ACE Scaffolding: Overview (counts + monday import), Enquiries, Jobs, Customers (scaffolding.ts) ----
   var SC={enq:null,jobs:null,cust:null,shown:{e:150,j:150,c:150}};
   var SC_ENQ_STAGE={new:'New',waiting_access:'Waiting for access',awaiting_details:'Awaiting details / meeting',survey:'Survey required',quote_required:'Quote required',quote_draft:'Quote in draft',quote_sent:'Quote sent',pending:'Seen, pending',hot:'Hot',won:'Won',declined:'Declined',lost:'Lost / not required',no_answer:'No answer (old quote)',on_hold:'On hold',other:'Other'};
@@ -7388,8 +7392,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var more=document.getElementById('sj_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
   }
   async function scOpenJob(id){
-    openModal('Job','<div class="sub">Loading…</div>');
-    try{ var j=await scGet('/api/scaf/jobs/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    scModal('Job','<div class="sub">Loading…</div>');
+    try{ var j=await scGet('/api/scaf/jobs/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(x.message)+'</div>'; return; }
     var weekly=j.price!=null&&j.rent_pct!=null?Number(j.price)*Number(j.rent_pct)/100:null;
     var h='<div style="font-size:15px;font-weight:700">'+esc(j.title||'')+'</div>'+scRows([
       ['Status',scChip(j.stage,SC_JOB_STAGE[j.stage]||j.stage,false)+(j.status_label?' <span class="sub">monday: '+esc(j.status_label)+'</span>':'')],
@@ -7401,7 +7405,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       ['Rent from – to',[scDay(j.rent_start),scDay(j.rent_end)].filter(Boolean).join(' – ')],['Dismantle requested',scDay(j.dismantle_request)],['Dismantle start',scDay(j.dismantle_start)],['Down',scDay(j.down_date)],
       ['Price',scMoney(j.price)],['Actual cost up',scMoney(j.actual_cost_up)],['Actual cost down',scMoney(j.actual_cost_down)],['Invoiced',esc(j.invoiced||'')],['Payment',scMoney(j.payment)]]);
     if(j.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday · <a href="https://ace189144.monday.com/boards/1594702968/pulses/'+j.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
-    openModal('ACESC'+j.number,h); scLinks();
+    scModal('ACESC'+j.number,h); scLinks();
   }
 
   // Customers
@@ -7439,12 +7443,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function scCustBody(){ var g=function(i){ var el=document.getElementById(i); return el?el.value:''; }, a=document.getElementById('scf_active');
     var b={name:g('scf_name'),kind:g('scf_kind'),email:g('scf_email'),phone:g('scf_phone'),address:g('scf_address'),vat_number:g('scf_vat'),notes:g('scf_notes')}; if(a)b.active=a.checked; return b; }
   function scNewCust(){
-    openModal('New customer',scCustForm({kind:'commercial'}));
+    scModal('New customer',scCustForm({kind:'commercial'}));
     document.getElementById('scf_save').onclick=async function(){ var d=await scSave('/api/scaf/customers','POST',scCustBody()); if(d){ tShow('Saved'); scOpenCust(d.id); loadScafCust(); } };
   }
   async function scOpenCust(id){
-    openModal('Customer','<div class="sub">Loading…</div>');
-    try{ var c=await scGet('/api/scaf/customers/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    scModal('Customer','<div class="sub">Loading…</div>');
+    try{ var c=await scGet('/api/scaf/customers/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(x.message)+'</div>'; return; }
     var ed=canApp('scaf.customers')==='edit';
     var h=scCustForm(c);
     var ctRow=function(p){ p=p||{}; return ed
@@ -7457,7 +7461,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     h+='<div style="font-weight:700;margin:18px 0 4px">Sites</div><table class="fjl"><thead><tr><th>ADDRESS</th><th>ACCESS NOTES</th>'+(ed?'<th></th>':'')+'</tr></thead><tbody id="scf_st">'+c.sites.map(stRow).join('')+(ed?stRow(null):'')+'</tbody></table>';
     if(c.enquiries.length)h+='<div style="font-weight:700;margin:18px 0 4px">Enquiries ('+c.enquiries.length+')</div><div style="max-height:220px;overflow:auto">'+c.enquiries.map(function(e){ return '<div><a href="#" data-scenq="'+e.id+'">ACE'+e.number+'</a> '+scDay(e.received)+' · '+esc(e.title||'')+' · '+esc(SC_ENQ_STAGE[e.stage]||e.stage)+(e.price!=null?' · '+scMoney(e.price):'')+'</div>'; }).join('')+'</div>';
     if(c.jobs.length)h+='<div style="font-weight:700;margin:18px 0 4px">Jobs ('+c.jobs.length+')</div><div style="max-height:220px;overflow:auto">'+c.jobs.map(function(j){ return '<div><a href="#" data-scjob="'+j.id+'">ACESC'+j.number+'</a> '+esc(j.title||'')+' · '+esc(SC_JOB_STAGE[j.stage]||j.stage)+(j.price!=null?' · '+scMoney(j.price):'')+'</div>'; }).join('')+'</div>';
-    openModal(esc(c.name),h); scLinks();
+    scModal(esc(c.name),h); scLinks();
     if(!ed)return;
     document.getElementById('scf_save').onclick=async function(){ if(await scSave('/api/scaf/customers/'+id,'PUT',scCustBody())){ tShow('Saved'); loadScafCust(); } };
     var vals=function(tr){ return [].map.call(tr.querySelectorAll('input'),function(i){ return i.value; }); };
@@ -7508,12 +7512,12 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<label>Site<select class="tinput" id="sne_site"><option value="">New site (type the address below)</option></select></label>'
       +'<label style="grid-column:1/-1" id="sne_addrl">Site address'+scInput('sne_addr','','Address with postcode')+'</label>'
       +'<label style="grid-column:1/-1">Title (empty = the site address)'+scInput('sne_title','')+'</label>'
-      +'<label>Source<input class="tinput" id="sne_source" list="scdl_src"></label><label>Domestic / commercial<select class="tinput" id="sne_sector">'+scOpt(['Commercial','Domestic'],'',' ')+'</select></label>'
-      +'<label>Private / trade<select class="tinput" id="sne_ctype">'+scOpt(['Private','Trade','Commercial'],'',' ')+'</select></label><label>Deadline<input type="date" class="tinput" id="sne_deadline"></label>'
+      +'<label>Source<input class="tinput" id="sne_source" list="scdl_src"></label><label>Domestic / commercial<select class="tinput" id="sne_sector">'+scOpt(['Commercial','Domestic'],'','—')+'</select></label>'
+      +'<label>Private / trade<select class="tinput" id="sne_ctype">'+scOpt(['Private','Trade','Commercial'],'','—')+'</select></label><label>Deadline<input type="date" class="tinput" id="sne_deadline"></label>'
       +'<label>Estimator<input class="tinput" id="sne_estimator" list="scdl_people"></label><label>Sales person<input class="tinput" id="sne_sales" list="scdl_people"></label>'
       +'<label style="grid-column:1/-1">What is needed<textarea class="tinput" id="sne_desc" rows="3"></textarea></label></div>'
       +'<div style="margin-top:12px"><button class="add" id="sne_save">Add enquiry</button> <span class="sub" style="margin:0 0 0 8px">It gets the next ACE number.</span></div>';
-    openModal('New enquiry',h);
+    scModal('New enquiry',h);
     var custId=null;
     var pick=async function(){
       var name=scVal('sne_cust').trim(), c=SC.cust.filter(function(x){ return x.name.toLowerCase()===name.toLowerCase(); })[0];
@@ -7538,8 +7542,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
   // the enquiry window, editable
   async function scOpenEnq(id){
-    openModal('Enquiry','<div class="sub">Loading…</div>'); await scLookups();
-    try{ var e=await scGet('/api/scaf/enquiries/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    scModal('Enquiry','<div class="sub">Loading…</div>'); await scLookups();
+    try{ var e=await scGet('/api/scaf/enquiries/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(x.message)+'</div>'; return; }
     var ed=canApp('scaf.enquiries')==='edit', dis=ed?'':' disabled';
     var cust=null; if(e.customer){ try{ cust=await scGet('/api/scaf/customers/'+e.customer.id); }catch(x){} }
     var prof=e.price!=null?Number(e.price)-(Number(e.est_cost_up)||0)-(Number(e.est_cost_down)||0):null;
@@ -7556,8 +7560,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +'<label>Contact<select class="tinput" id="seq_contact"'+dis+'>'+scOpt((cust?cust.contacts:[]).map(function(p){ return [p.id,p.name+(p.phone?' · '+p.phone:'')]; }),e.contact_id,'—')+'</select></label>'
       +'<label style="grid-column:1/-1">Site<select class="tinput" id="seq_site"'+dis+'>'+scOpt((cust?cust.sites:[]).concat(e.site&&!(cust&&cust.sites.some(function(s){ return s.id===e.site.id; }))?[e.site]:[]).map(function(s){ return [s.id,s.address]; }),e.site_id,'—')+'</select></label>'
       +'<label>Source<input class="tinput" id="seq_source" list="scdl_src" value="'+esc(e.source||'')+'"'+dis+'></label>'
-      +'<label>Domestic / commercial<select class="tinput" id="seq_sector"'+dis+'>'+scOpt(['Commercial','Domestic'],e.sector,' ')+'</select></label>'
-      +'<label>Private / trade<select class="tinput" id="seq_ctype"'+dis+'>'+scOpt(['Private','Trade','Commercial'],e.client_type,' ')+'</select></label>'
+      +'<label>Domestic / commercial<select class="tinput" id="seq_sector"'+dis+'>'+scOpt(['Commercial','Domestic'],e.sector,'—')+'</select></label>'
+      +'<label>Private / trade<select class="tinput" id="seq_ctype"'+dis+'>'+scOpt(['Private','Trade','Commercial'],e.client_type,'—')+'</select></label>'
       +'<label>Size (m²)'+scInput('seq_m2',e.size_m2)+'</label>'
       +'<label>Received<input type="date" class="tinput" id="seq_received" value="'+esc(e.received||'')+'"'+dis+'></label><label>Deadline<input type="date" class="tinput" id="seq_deadline" value="'+esc(e.deadline||'')+'"'+dis+'></label>'
       +'<label>Estimator<input class="tinput" id="seq_estimator" list="scdl_people" value="'+esc(e.estimator||'')+'"'+dis+'></label><label>Surveyor<input class="tinput" id="seq_surveyor" list="scdl_people" value="'+esc(e.surveyor||'')+'"'+dis+'></label>'
@@ -7570,7 +7574,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +((e.quotes||[]).length?'<table class="fjl"><tbody>'+e.quotes.map(function(q){ return '<tr class="scr" data-q="'+q.id+'" style="cursor:pointer"><td><b>v'+q.revision+'</b></td><td>'+scQStatus(q.status)+'</td><td class="r">'+scMoney(q.totals.price)+'</td><td class="r sub">'+(q.totals.margin!=null?q.totals.margin+'% margin':'')+'</td><td class="sub">'+(q.sent_at?'sent '+scDay(q.sent_at):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">No quote yet.</div>');
     if(e.jobs&&e.jobs.length)h+='<div style="font-weight:700;margin:14px 0 4px">Jobs</div>'+e.jobs.map(function(j){ return '<div><a href="#" data-scjob="'+j.id+'">ACESC'+j.number+'</a> '+esc(j.title||'')+' · '+esc(SC_JOB_STAGE[j.stage]||j.stage)+'</div>'; }).join('');
     if(e.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday · <a href="https://ace189144.monday.com/boards/1630857450/pulses/'+e.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
-    openModal('ACE'+e.number,h); scLinks();
+    scModal('ACE'+e.number,h); scLinks();
     document.querySelectorAll('#modalBody tr[data-q]').forEach(function(tr){ tr.onclick=function(){ scOpenQuote(tr.getAttribute('data-q')); }; });
     if(!ed)return;
     document.getElementById('seq_stage').onchange=function(){ var v=this.value; document.getElementById('seq_lossl').style.display=(v==='declined'||v==='lost')?'':'none'; };
@@ -7600,8 +7604,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('scq_tot').innerHTML=svStat(scMoney(p),'Total (ex VAT)')+(hasLab?svStat(scMoney(lab)+' / '+scMoney(p-lab),'Labour / hire'):'')+svStat(scMoney(up+dn),'Est. costs up + down')+svStat(scMoney(prof)+(p>0?' · '+Math.round(prof*1000/p)/10+'%':''),'Est. profit')+svStat(scMoney(wk),'Weekly rent after hire');
   }
   async function scOpenQuote(id){
-    openModal('Quote','<div class="sub">Loading…</div>'); await scLookups();
-    try{ var q=await scGet('/api/scaf/quotes/'+id), e=await scGet('/api/scaf/enquiries/'+q.enquiry_id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    scModal('Quote','<div class="sub">Loading…</div>'); await scLookups();
+    try{ var q=await scGet('/api/scaf/quotes/'+id), e=await scGet('/api/scaf/enquiries/'+q.enquiry_id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub scm">'+esc(x.message)+'</div>'; return; }
     SCQ=q; var can=canApp('scaf.enquiries')==='edit', ed=can&&q.status==='draft', dis=ed?'':' disabled';
     var h=scDl('scdl_el',SCL.elements)
       +'<div class="sub" style="margin:0 0 10px">'+scQStatus(q.status)+' &nbsp;'+esc(e.title||'')+(e.customer?' · '+esc(e.customer.name):'')+(q.sent_at?' · sent '+scDay(q.sent_at):'')+(q.status!=='draft'?' — a sent quote is fixed; make a new revision to change it.':'')+'</div>'
@@ -7619,7 +7623,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +(q.status==='accepted'&&canApp('scaf.jobs')==='edit'?'<button class="add" id="scq_job">Create the job (ACESC)</button>':'')
       +(ed?'<button class="del" id="scq_del" style="margin-left:auto">Delete draft</button>':'')
       +'</div>';
-    openModal('ACE'+e.number+' v'+q.revision,h);
+    scModal('ACE'+e.number+' v'+q.revision,h);
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1180px,96vw)';
     var tb=document.getElementById('scq_lines');
     var wire=function(){ tb.querySelectorAll('input,textarea').forEach(function(i){ i.oninput=scQTotals; }); tb.querySelectorAll('[data-act="rm"]').forEach(function(b){ b.onclick=function(){ b.closest('tr').remove(); scQTotals(); }; }); };
@@ -7644,7 +7648,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function scSettings(){
     try{ var s=await scGet('/api/scaf/settings'); }catch(e){ tShow(e.message); return; }
     var f=function(k,l,w){ return '<label'+(w?' style="grid-column:1/-1"':'')+'>'+l+scInput('sst_'+k,s[k])+'</label>'; };
-    openModal('Quote settings','<div class="sub" style="margin:0 0 10px">Printed on every quote PDF. The opening text, terms and validity are the defaults for a new quote (each quote can change them).</div><div class="scform">'
+    scModal('Quote settings','<div class="sub" style="margin:0 0 10px">Printed on every quote PDF. The opening text, terms and validity are the defaults for a new quote (each quote can change them).</div><div class="scform">'
       +f('name','Company name')+f('phone','Phone')+f('address','Address',true)+f('email','Email')+f('web','Website')+f('company_no','Company number')+f('vat_no','VAT number')
       +'<label style="grid-column:1/-1">Opening text<textarea class="tinput" id="sst_intro" rows="2">'+esc(s.intro||'')+'</textarea></label>'
       +'<label style="grid-column:1/-1">Terms (one per line)<textarea class="tinput" id="sst_terms" rows="7">'+esc(s.terms||'')+'</textarea></label>'
