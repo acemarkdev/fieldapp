@@ -28,6 +28,8 @@ import { previewMondayJobs, applyMondayJobs } from './mondayJobs';
 import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as addProdTask, setTaskActive, setTasksActive, listEditLog, listEntries as listTimeEntries, saveEntry as saveTimeEntry, deleteEntry as deleteTimeEntry, listRates as listWorkerRates, setRate as setWorkerRate, hoursBetween, rateRows, rateBook, rateFor, removeRateRow, recordDefaultRate, todayPL } from './prodTime';
 import { agentTenant, receiveSnapshot, listDocs, docsToCheck, lastSync, hasAgentKey, newAgentKey, setNotJob } from './subiekt';
 import * as scaf from './scaffolding';
+import * as scafQ from './scafQuotes';
+import { renderQuotePdf } from './scafQuotePdf';
 import { receiveStock, catalogueView, sketchUrls, itemSources, addIgnore, removeIgnore } from './cortizo';
 import { gzipSync } from 'node:zlib';
 import { receiveLots, stockView, historyFor } from './stockValue';
@@ -548,7 +550,7 @@ const server = createServer(async (req, res) => {
         if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-encoding': 'gzip', vary: 'accept-encoding' }); res.end(gzipSync(body)); }
         else send(res, 200, v);
       };
-      const scafErr = (e: any) => /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
+      const scafErr = (e: any) => /scaf_quote|next_action|loss_reason/.test(String(e?.message ?? '')) ? 'This needs migration 0097.' : /scaf_|relation .* does not exist/.test(String(e?.message ?? '')) ? 'ACE Scaffolding needs migrations 0095 and 0096.' : String(e?.message ?? e);
       try {
         if (p === '/api/scaf/summary' && req.method === 'GET') {
           if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs'], 'view')) return;
@@ -568,9 +570,38 @@ const server = createServer(async (req, res) => {
           }
           send(res, 200, { ok: true, ...(await scaf.writePlan(ctx.tenant_id, plan)) }); return;
         }
+        // phase 1: the pipeline and quotes (scafQuotes.ts, scafQuotePdf.ts)
+        if (p === '/api/scaf/lookups' && req.method === 'GET') {
+          if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs'], 'view')) return;
+          const { data } = await db().from('scaf_enquiries').select('estimator,salesperson,surveyor,source').eq('tenant_id', ctx.tenant_id).order('received', { ascending: false }).limit(1500);
+          const uniq = (f: string) => [...new Set((data ?? []).flatMap((r: any) => String(r[f] ?? '').split(',').map((x) => x.trim())).filter(Boolean))].sort();
+          send(res, 200, { elements: scafQ.ELEMENTS, lossReasons: scafQ.LOSS_REASONS, people: [...new Set([...uniq('estimator'), ...uniq('salesperson'), ...uniq('surveyor')])].sort(), sources: uniq('source') }); return;
+        }
+        if (p === '/api/scaf/settings' && req.method === 'GET') { if (!allowApp(['scaf.customers', 'scaf.enquiries', 'scaf.jobs'], 'view')) return; send(res, 200, await scafQ.settings()); return; }
+        if (p === '/api/scaf/settings' && req.method === 'PUT') { if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin changes the quote settings.' }); return; } const r = await scafQ.saveSettings(await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        if (p === '/api/scaf/enquiries' && req.method === 'POST') { if (!allowApp(['scaf.enquiries'], 'edit')) return; const r = await scafQ.saveEnquiry(ctx.tenant_id, null, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        let mq = /^\/api\/scaf\/enquiries\/([0-9a-f-]{36})(\/quotes)?$/.exec(p);
+        if (mq && !mq[2] && req.method === 'PUT') { if (!allowApp(['scaf.enquiries'], 'edit')) return; const r = await scafQ.saveEnquiry(ctx.tenant_id, mq[1], await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+        if (mq && mq[2] && req.method === 'POST') { if (!allowApp(['scaf.enquiries'], 'edit')) return; const r = await scafQ.newQuote(ctx.tenant_id, mq[1], ctx.id); send(res, r.ok ? 200 : 400, r); return; }
+        mq = /^\/api\/scaf\/quotes\/([0-9a-f-]{36})(\/pdf|\/status|\/job)?$/.exec(p);
+        if (mq) {
+          const [, qid, sub] = mq;
+          if (!sub && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; const q = await scafQ.getQuote(ctx.tenant_id, qid); if (!q) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, q); return; }
+          if (!sub && req.method === 'PUT') { if (!allowApp(['scaf.enquiries'], 'edit')) return; const r = await scafQ.saveQuote(ctx.tenant_id, qid, await readJson(req)); send(res, r.ok ? 200 : 400, r); return; }
+          if (!sub && req.method === 'DELETE') { if (!allowApp(['scaf.enquiries'], 'edit')) return; const r = await scafQ.deleteQuote(ctx.tenant_id, qid); send(res, r.ok ? 200 : 400, r); return; }
+          if (sub === '/status' && req.method === 'POST') { if (!allowApp(['scaf.enquiries'], 'edit')) return; const b = await readJson(req); const r = await scafQ.setQuoteStatus(ctx.tenant_id, qid, String(b.status ?? ''), b.reason); send(res, r.ok ? 200 : 400, r); return; }
+          if (sub === '/job' && req.method === 'POST') { if (!allowApp(['scaf.jobs'], 'edit')) return; const r = await scafQ.jobFromQuote(ctx.tenant_id, qid); send(res, r.ok ? 200 : 400, r); return; }
+          if (sub === '/pdf' && req.method === 'GET') {
+            if (!allowApp(['scaf.enquiries'], 'view')) return;
+            const d = await scafQ.quotePdfData(ctx.tenant_id, qid); if (!d) { send(res, 404, { error: 'Not found.' }); return; }
+            const pdf = await renderQuotePdf(d);
+            res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="Quotation ACE${d.enquiry?.number ?? ''} v${d.quote.revision}.pdf"`, 'cache-control': 'no-store' });
+            res.end(pdf); return;
+          }
+        }
         if (p === '/api/scaf/enquiries' && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; zipped({ enquiries: await scaf.listEnquiries(ctx.tenant_id) }); return; }
         let m = /^\/api\/scaf\/enquiries\/([0-9a-f-]{36})$/.exec(p);
-        if (m && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; const e = await scaf.getEnquiry(ctx.tenant_id, m[1]); if (!e) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, e); return; }
+        if (m && req.method === 'GET') { if (!allowApp(['scaf.enquiries'], 'view')) return; const e = await scaf.getEnquiry(ctx.tenant_id, m[1]); if (!e) { send(res, 404, { error: 'Not found.' }); return; } let quotes: any[] = []; try { quotes = await scafQ.listQuotes(ctx.tenant_id, m[1]); } catch { /* 0097 not run */ } send(res, 200, { ...e, quotes }); return; }
         if (p === '/api/scaf/jobs' && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; zipped({ jobs: await scaf.listJobs(ctx.tenant_id) }); return; }
         m = /^\/api\/scaf\/jobs\/([0-9a-f-]{36})$/.exec(p);
         if (m && req.method === 'GET') { if (!allowApp(['scaf.jobs'], 'view')) return; const j = await scaf.getJob(ctx.tenant_id, m[1]); if (!j) { send(res, 404, { error: 'Not found.' }); return; } send(res, 200, j); return; }
@@ -3568,6 +3599,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .verchip:hover{background:rgba(255,255,255,.24);color:#fff}
   .loginver{text-align:center;color:#a9a4c4;font-size:11px;margin-top:14px}
   .nav{display:flex;gap:4px;margin-left:26px}
+  .scbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:#f7f6fb;border-radius:12px;padding:10px 12px}.scbar label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+  table.scqt td{vertical-align:top;padding:6px 4px}table.scqt .tinput{padding:7px 8px;font-size:12.5px}
   .scchip{display:inline-block;font-size:11.5px;font-weight:700;border:1px solid;border-radius:999px;padding:2px 9px;white-space:nowrap}
   table.sct tr.scr{cursor:pointer}table.sct tr.scr:hover td{background:#faf9fd}
   .scform{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}.scform label{font-size:12px;font-weight:700;color:var(--muted);display:flex;flex-direction:column;gap:4px}
@@ -4054,6 +4087,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <h2>ACE Scaffolding</h2>
       <div class="sub">This business is being built into the office app, phase by phase. Now: customers, contacts and sites, and the enquiries and jobs brought over from monday. Next: the enquiry pipeline and quotes, then jobs, hire billing, the phone app for crews and stock.</div>
       <div class="statgrid" id="sv0_stats" style="margin:16px 0 0"></div>
+      <div style="margin-top:12px"><button class="pobtn" id="sv0_settings" style="display:none">Quote settings — company details and terms</button></div>
       <div class="card2" id="sv0_import" style="display:none;margin-top:16px;padding:16px 18px">
         <div class="groupt" style="padding:0 0 6px">IMPORT FROM MONDAY (ONE-OFF)</div>
         <div class="sub" style="margin:0 0 10px">Reads the ACE Scaffolding boards — Estimated Enquiries, Project Sheet and the customers they link to in My Contacts — into the office app. Run <b>Check</b> first to see what would come in. It can be run again until monday is switched off: new items are added and imported ones refreshed, but anything changed here is kept.</div>
@@ -4076,7 +4110,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
   <div id="scafEnqView" style="display:none">
     <main style="max-width:1400px">
-      <div class="titlerow"><div><h2>Enquiries</h2><div class="sub" id="se_sub">ACE Scaffolding enquiries and estimates (ACE numbers).</div></div></div>
+      <div class="titlerow"><div><h2>Enquiries</h2><div class="sub" id="se_sub">ACE Scaffolding enquiries and estimates (ACE numbers).</div></div>
+        <div style="display:flex;gap:8px;align-self:center"><button class="pobtn" id="se_new" style="display:none">+ New enquiry</button></div></div>
       <div class="chips" style="gap:8px;margin:14px 0 8px">
         <input id="se_q" class="tinput" style="min-width:240px" placeholder="Search number, site, customer">
         <select id="se_stage" class="tinput"></select>
@@ -4084,7 +4119,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <span class="sub" style="margin:0 0 0 auto" id="se_count"></span>
       </div>
       <div class="statgrid" id="se_stats" style="margin:6px 0 14px"></div>
-      <div class="card2" style="overflow:auto"><table class="fjl sct"><thead><tr><th>NUMBER</th><th>RECEIVED</th><th>SITE / TITLE</th><th>CUSTOMER</th><th>STATUS</th><th style="text-align:right">PRICE</th><th style="text-align:right">EST. PROFIT</th><th>ESTIMATOR / SALES</th></tr></thead><tbody id="se_rows"></tbody></table></div>
+      <div class="card2" style="overflow:auto"><table class="fjl sct"><thead><tr><th>NUMBER</th><th>RECEIVED</th><th>SITE / TITLE</th><th>CUSTOMER</th><th>STATUS</th><th style="text-align:right">PRICE</th><th style="text-align:right">EST. PROFIT</th><th>FOLLOW UP</th><th>ESTIMATOR / SALES</th></tr></thead><tbody id="se_rows"></tbody></table></div>
       <div style="text-align:center;margin:12px 0 30px"><button class="pobtn" id="se_more" style="display:none">Show more</button></div>
     </main>
   </div>
@@ -7266,6 +7301,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function loadScafOverview(){
     var box=document.getElementById('sv0_stats'); if(!box)return;
     document.getElementById('sv0_import').style.display=myRole==='admin'?'':'none';
+    document.getElementById('sv0_settings').style.display=myRole==='admin'?'':'none';
     try{ var s=await scGet('/api/scaf/summary');
       box.innerHTML=svStat(czNum(s.enquiries,0),'Enquiries')+svStat(czNum(s.jobs,0),'Jobs')+svStat(czNum(s.customers,0),'Customers')+svStat(czNum(s.sites,0),'Sites')
         +svStat(esc(s.nextEnquiry)+' · '+esc(s.nextJob),'Next numbers')+svStat(s.importedAt?esc(czWhen(s.importedAt)):'—','Last monday import');
@@ -7292,15 +7328,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var tb=document.getElementById('se_rows');
     if(!SC.enq){ tb.innerHTML='<tr><td colspan="8" class="sub" style="padding:16px">Loading…</td></tr>'; try{ SC.enq=(await scGet('/api/scaf/enquiries')).enquiries; }catch(e){ scErrRow(tb,8,e); return; } }
     var st=document.getElementById('se_stage'), ks=st.value||'open';
-    st.innerHTML='<option value="open">Open enquiries</option><option value="all">All enquiries</option>'+Object.keys(SC_ENQ_STAGE).map(function(k){ return '<option value="'+k+'">'+esc(SC_ENQ_STAGE[k])+'</option>'; }).join(''); st.value=ks;
+    document.getElementById('se_new').style.display=canApp('scaf.enquiries')==='edit'?'':'none';
+    st.innerHTML='<option value="open">Open enquiries</option><option value="chase">Chase-ups due</option><option value="all">All enquiries</option>'+Object.keys(SC_ENQ_STAGE).map(function(k){ return '<option value="'+k+'">'+esc(SC_ENQ_STAGE[k])+'</option>'; }).join(''); st.value=ks;
     var yr=document.getElementById('se_year'), ky=yr.value, years={}; SC.enq.forEach(function(e){ if(e.received)years[e.received.slice(0,4)]=1; });
     yr.innerHTML='<option value="">All years</option>'+Object.keys(years).sort().reverse().map(function(y){ return '<option>'+y+'</option>'; }).join(''); yr.value=ky;
     SC.shown.e=150; renderScafEnq();
   }
+  function scDue(e){ return SC_ENQ_OPEN.indexOf(e.stage)>=0&&e.next_action&&e.next_action<=scToday(); }
   function scEnqFiltered(){
     var q=document.getElementById('se_q').value.trim().toLowerCase().split(' ').filter(Boolean), st=document.getElementById('se_stage').value||'open', y=document.getElementById('se_year').value;
     return (SC.enq||[]).filter(function(e){
-      if(st==='open'&&SC_ENQ_OPEN.indexOf(e.stage)<0)return false; if(st!=='open'&&st!=='all'&&e.stage!==st)return false;
+      if(st==='open'&&SC_ENQ_OPEN.indexOf(e.stage)<0)return false; if(st==='chase'&&!scDue(e))return false; if(st!=='open'&&st!=='chase'&&st!=='all'&&e.stage!==st)return false;
       if(y&&String(e.received||'').slice(0,4)!==y)return false;
       if(q.length){ var hay=('ace'+e.number+' '+(e.title||'')+' '+(e.customer||'')+' '+(e.estimator||'')+' '+(e.salesperson||'')+' '+(e.source||'')).toLowerCase(); if(!q.every(function(w){ return hay.indexOf(w)>=0; }))return false; }
       return true; });
@@ -7310,30 +7348,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var all=scEnqFiltered(), list=all.slice(0,SC.shown.e);
     document.getElementById('se_count').textContent=all.length+' of '+SC.enq.length;
     var sum=function(f){ return all.reduce(function(a,e){ return a+(Number(e[f])||0); },0); }, won=all.filter(function(e){ return e.stage==='won'; }), decided=all.filter(function(e){ return e.stage==='won'||e.stage==='declined'||e.stage==='lost'||e.stage==='no_answer'; });
-    document.getElementById('se_stats').innerHTML=svStat(czNum(all.length,0),'Enquiries')+svStat(scMoney(Math.round(sum('price'))),'Quoted value')+svStat(czNum(won.length,0),'Won')+svStat(decided.length?Math.round(won.length*100/decided.length)+'%':'—','Won of decided')+svStat(scMoney(Math.round(won.reduce(function(a,e){ return a+(Number(e.price)||0); },0))),'Won value');
+    document.getElementById('se_stats').innerHTML=svStat(czNum(all.length,0),'Enquiries')+svStat(scMoney(Math.round(sum('price'))),'Quoted value')+svStat(czNum(won.length,0),'Won')+svStat(decided.length?Math.round(won.length*100/decided.length)+'%':'—','Won of decided')+svStat(scMoney(Math.round(won.reduce(function(a,e){ return a+(Number(e.price)||0); },0))),'Won value')+svStat(czNum(SC.enq.filter(scDue).length,0),'Chase-ups due (all)');
     tb.innerHTML=list.length?list.map(function(e){
       var prof=e.price!=null&&(e.est_cost_up!=null||e.est_cost_down!=null)?e.price-(e.est_cost_up||0)-(e.est_cost_down||0):null;
-      return '<tr class="scr" data-id="'+e.id+'"><td style="white-space:nowrap"><b>ACE'+e.number+'</b></td><td style="white-space:nowrap">'+scDay(e.received)+'</td><td>'+esc(e.title||'')+'</td><td>'+esc(e.customer||'')+'</td><td>'+scChip(e.stage,SC_ENQ_STAGE[e.stage]||e.stage,e.stage==='won')+(e.follow_up&&e.follow_up!=='N/A'?'<div class="sub" style="margin:2px 0 0">'+esc(e.follow_up)+'</div>':'')+'</td><td class="r">'+scMoney(e.price)+'</td><td class="r">'+(prof==null?'':scMoney(Math.round(prof)))+'</td><td>'+esc([e.estimator,e.salesperson].filter(Boolean).join(' / '))+'</td></tr>';
-    }).join(''):'<tr><td colspan="8" class="sub" style="padding:16px">'+(SC.enq.length?'Nothing matches.':'No enquiries yet — run the monday import on Overview.')+'</td></tr>';
+      return '<tr class="scr" data-id="'+e.id+'"><td style="white-space:nowrap"><b>ACE'+e.number+'</b></td><td style="white-space:nowrap">'+scDay(e.received)+'</td><td>'+esc(e.title||'')+'</td><td>'+esc(e.customer||'')+'</td><td>'+scChip(e.stage,SC_ENQ_STAGE[e.stage]||e.stage,e.stage==='won')+(e.follow_up&&e.follow_up!=='N/A'?'<div class="sub" style="margin:2px 0 0">'+esc(e.follow_up)+'</div>':'')+(e.loss_reason?'<div class="sub" style="margin:2px 0 0">'+esc(e.loss_reason)+'</div>':'')+'</td><td class="r">'+scMoney(e.price)+'</td><td class="r">'+(prof==null?'':scMoney(Math.round(prof)))+'</td><td style="white-space:nowrap">'+(e.next_action&&SC_ENQ_OPEN.indexOf(e.stage)>=0?'<span style="color:'+(scDue(e)?'#b42318':'var(--ink)')+'">'+scDay(e.next_action)+'</span>'+(e.next_action_note?'<div class="sub" style="margin:0">'+esc(e.next_action_note)+'</div>':''):'')+'</td><td>'+esc([e.estimator,e.salesperson].filter(Boolean).join(' / '))+'</td></tr>';
+    }).join(''):'<tr><td colspan="9" class="sub" style="padding:16px">'+(SC.enq.length?'Nothing matches.':'No enquiries yet — run the monday import on Overview.')+'</td></tr>';
     tb.querySelectorAll('tr.scr').forEach(function(tr){ tr.onclick=function(){ scOpenEnq(tr.getAttribute('data-id')); }; });
     var more=document.getElementById('se_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
   }
   function scRows(pairs){ return '<table class="fjl" style="margin-top:6px"><tbody>'+pairs.filter(function(p){ return p[1]!=null&&p[1]!==''; }).map(function(p){ return '<tr><td style="width:180px;color:var(--muted)">'+esc(p[0])+'</td><td>'+p[1]+'</td></tr>'; }).join('')+'</tbody></table>'; }
-  async function scOpenEnq(id){
-    openModal('Enquiry','<div class="sub">Loading…</div>');
-    try{ var e=await scGet('/api/scaf/enquiries/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
-    var prof=e.price!=null?Number(e.price)-(Number(e.est_cost_up)||0)-(Number(e.est_cost_down)||0):null;
-    var h='<div style="font-size:15px;font-weight:700">'+esc(e.title||'')+'</div>'+scRows([
-      ['Status',scChip(e.stage,SC_ENQ_STAGE[e.stage]||e.stage,e.stage==='won')+(e.status_label?' <span class="sub">monday: '+esc(e.status_label)+'</span>':'')],['Follow up',esc(e.follow_up||'')],
-      ['Customer',e.customer?'<a href="#" data-sccust="'+e.customer.id+'">'+esc(e.customer.name)+'</a>':''],['Contact',e.contact?esc([e.contact.name,e.contact.phone,e.contact.email].filter(Boolean).join(' · ')):''],
-      ['Site',e.site?esc(e.site.address):''],['Source',esc(e.source||'')],['Domestic / commercial',esc(e.sector||'')],['Private / trade',esc(e.client_type||'')],
-      ['Received',scDay(e.received)],['Deadline',scDay(e.deadline)],['Quote sent',scDay(e.quote_sent)],
-      ['Price',scMoney(e.price)],['Est. cost up',scMoney(e.est_cost_up)],['Est. cost down',scMoney(e.est_cost_down)],['Est. profit',prof==null?'':scMoney(Math.round(prof))+(e.price>0?' ('+Math.round(prof*100/e.price)+'%)':'')],['Size',e.size_m2!=null?czNum(e.size_m2,1)+' m²':''],
-      ['Estimator',esc(e.estimator||'')],['Surveyor',esc(e.surveyor||'')],['Sales',esc(e.salesperson||'')]]);
-    if(e.jobs&&e.jobs.length)h+='<div style="font-weight:700;margin:14px 0 4px">Jobs</div>'+e.jobs.map(function(j){ return '<div><a href="#" data-scjob="'+j.id+'">ACESC'+j.number+'</a> '+esc(j.title||'')+' · '+esc(SC_JOB_STAGE[j.stage]||j.stage)+'</div>'; }).join('');
-    if(e.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday'+(e.edited_at?'':' (not changed here)')+' · <a href="https://ace189144.monday.com/boards/1630857450/pulses/'+e.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
-    openModal('ACE'+e.number,h); scLinks();
-  }
   function scLinks(){ var b=document.getElementById('modalBody');
     b.querySelectorAll('[data-sccust]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenCust(a.getAttribute('data-sccust')); }; });
     b.querySelectorAll('[data-scjob]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenJob(a.getAttribute('data-scjob')); }; });
@@ -7456,9 +7479,179 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sj_more').onclick=function(){ SC.shown.j+=300; renderScafJobs(); };
     document.getElementById('sc_more').onclick=function(){ SC.shown.c+=300; renderScafCust(); };
     document.getElementById('sc_new').onclick=scNewCust;
+    document.getElementById('se_new').onclick=scNewEnq;
+    document.getElementById('sv0_settings').onclick=scSettings;
     document.getElementById('sv0_check').onclick=function(){ scImport(true); };
     document.getElementById('sv0_run').onclick=function(){ if(confirm('Import from monday into the office app now?'))scImport(false); };
   })();
+  // ---- Scaffolding phase 1: the pipeline (new / edit enquiry, status, follow-ups) and quotes ----
+  var SCL=null;   // lookups: elements, loss reasons, people, sources
+  async function scLookups(){ if(!SCL){ try{ SCL=await scGet('/api/scaf/lookups'); }catch(e){ SCL={elements:[],lossReasons:[],people:[],sources:[]}; } } return SCL; }
+  function scToday(){ return new Date().toISOString().slice(0,10); }
+  function scOpt(list,cur,blank){ return (blank!=null?'<option value="">'+esc(blank)+'</option>':'')+list.map(function(x){ var v=Array.isArray(x)?x[0]:x, l=Array.isArray(x)?x[1]:x; return '<option value="'+esc(v)+'"'+(String(cur||'')===String(v)?' selected':'')+'>'+esc(l)+'</option>'; }).join(''); }
+  function scDl(id,list){ return '<datalist id="'+id+'">'+list.map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist>'; }
+  function scVal(id){ var el=document.getElementById(id); return el?el.value:''; }
+  function scEnqChanged(){ SC.enq=null; var v=document.getElementById('scafEnqView'); if(v&&v.style.display==='block')loadScafEnq(); }
+  async function scSend(url,method,body){ var r=await api(url,{method:method,body:body==null?undefined:JSON.stringify(body)}); var d={}; try{ d=await r.json(); }catch(e){} if(!r.ok||d.ok===false){ tShow(d.error||'Could not save'); return null; } return d; }
+  function scLossSel(id,cur){ return '<select class="tinput" id="'+id+'" style="width:100%">'+scOpt(SCL.lossReasons,cur,'— reason —')+'</select>'; }
+
+  // new enquiry
+  async function scNewEnq(){
+    await scLookups(); if(!SC.cust){ try{ SC.cust=(await scGet('/api/scaf/customers')).customers; }catch(e){ SC.cust=[]; } }
+    var h=scDl('scdl_cust',SC.cust.map(function(c){ return c.name; }))+scDl('scdl_people',SCL.people)+scDl('scdl_src',SCL.sources)
+      +'<div class="scform">'
+      +'<label style="grid-column:1/-1">Customer<input class="tinput" id="sne_cust" list="scdl_cust" placeholder="Start typing — pick an existing customer or type a new name" autocomplete="off"></label>'
+      +'<div id="sne_newcust" style="display:none;grid-column:1/-1"><div class="sub" style="margin:0 0 6px">New customer — it will be added.</div><div class="scform">'
+      +'<label>Kind<select class="tinput" id="sne_kind">'+scOpt([['commercial','Commercial'],['trade','Trade'],['domestic','Domestic'],['ace','ACE company']],'commercial')+'</select></label><label>Contact name'+scInput('sne_cname','')+'</label>'
+      +'<label>Phone'+scInput('sne_cphone','')+'</label><label>Email'+scInput('sne_cemail','')+'</label></div></div>'
+      +'<label>Contact<select class="tinput" id="sne_contact"><option value="">—</option></select></label>'
+      +'<label>Site<select class="tinput" id="sne_site"><option value="">New site (type the address below)</option></select></label>'
+      +'<label style="grid-column:1/-1" id="sne_addrl">Site address'+scInput('sne_addr','','Address with postcode')+'</label>'
+      +'<label style="grid-column:1/-1">Title (empty = the site address)'+scInput('sne_title','')+'</label>'
+      +'<label>Source<input class="tinput" id="sne_source" list="scdl_src"></label><label>Domestic / commercial<select class="tinput" id="sne_sector">'+scOpt(['Commercial','Domestic'],'',' ')+'</select></label>'
+      +'<label>Private / trade<select class="tinput" id="sne_ctype">'+scOpt(['Private','Trade','Commercial'],'',' ')+'</select></label><label>Deadline<input type="date" class="tinput" id="sne_deadline"></label>'
+      +'<label>Estimator<input class="tinput" id="sne_estimator" list="scdl_people"></label><label>Sales person<input class="tinput" id="sne_sales" list="scdl_people"></label>'
+      +'<label style="grid-column:1/-1">What is needed<textarea class="tinput" id="sne_desc" rows="3"></textarea></label></div>'
+      +'<div style="margin-top:12px"><button class="add" id="sne_save">Add enquiry</button> <span class="sub" style="margin:0 0 0 8px">It gets the next ACE number.</span></div>';
+    openModal('New enquiry',h);
+    var custId=null;
+    var pick=async function(){
+      var name=scVal('sne_cust').trim(), c=SC.cust.filter(function(x){ return x.name.toLowerCase()===name.toLowerCase(); })[0];
+      custId=c?c.id:null; document.getElementById('sne_newcust').style.display=(!c&&name)?'':'none';
+      var cs=document.getElementById('sne_contact'), ss=document.getElementById('sne_site');
+      cs.innerHTML='<option value="">—</option>'; ss.innerHTML='<option value="">New site (type the address below)</option>';
+      if(c){ try{ var d=await scGet('/api/scaf/customers/'+c.id); cs.innerHTML='<option value="">—</option>'+d.contacts.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name+(p.phone?' · '+p.phone:''))+'</option>'; }).join('');
+        ss.innerHTML+=d.sites.map(function(s){ return '<option value="'+s.id+'">'+esc(s.address)+'</option>'; }).join(''); }catch(e){} }
+      document.getElementById('sne_addrl').style.display=ss.value?'none':'';
+    };
+    document.getElementById('sne_cust').onchange=pick; document.getElementById('sne_cust').onblur=pick;
+    document.getElementById('sne_site').onchange=function(){ document.getElementById('sne_addrl').style.display=this.value?'none':''; };
+    document.getElementById('sne_save').onclick=async function(){
+      var name=scVal('sne_cust').trim(); if(!name){ tShow('Choose or add the customer'); return; }
+      var b={customer_id:custId,contact_id:scVal('sne_contact')||null,site_id:scVal('sne_site')||null,title:scVal('sne_title'),source:scVal('sne_source'),sector:scVal('sne_sector'),client_type:scVal('sne_ctype'),deadline:scVal('sne_deadline'),estimator:scVal('sne_estimator'),salesperson:scVal('sne_sales'),description:scVal('sne_desc')};
+      if(!custId)b.new_customer={name:name,kind:scVal('sne_kind'),contact:scVal('sne_cname'),phone:scVal('sne_cphone'),email:scVal('sne_cemail')};
+      if(!b.site_id&&scVal('sne_addr').trim())b.new_site={address:scVal('sne_addr')};
+      var d=await scSend('/api/scaf/enquiries','POST',b); if(!d)return;
+      tShow('ACE'+d.number+' added'); SC.cust=null; scEnqChanged(); scOpenEnq(d.id);
+    };
+  }
+
+  // the enquiry window, editable
+  async function scOpenEnq(id){
+    openModal('Enquiry','<div class="sub">Loading…</div>'); await scLookups();
+    try{ var e=await scGet('/api/scaf/enquiries/'+id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    var ed=canApp('scaf.enquiries')==='edit', dis=ed?'':' disabled';
+    var cust=null; if(e.customer){ try{ cust=await scGet('/api/scaf/customers/'+e.customer.id); }catch(x){} }
+    var prof=e.price!=null?Number(e.price)-(Number(e.est_cost_up)||0)-(Number(e.est_cost_down)||0):null;
+    var stages=Object.keys(SC_ENQ_STAGE).map(function(k){ return [k,SC_ENQ_STAGE[k]]; });
+    var h=scDl('scdl_people',SCL.people)+scDl('scdl_src',SCL.sources)
+      +'<div class="scbar"><label>Status<select class="tinput" id="seq_stage"'+dis+'>'+scOpt(stages,e.stage)+'</select></label>'
+      +'<label id="seq_lossl" style="display:'+(e.stage==='declined'||e.stage==='lost'?'':'none')+'">Reason'+scLossSel('seq_loss',e.loss_reason)+'</label>'
+      +'<label>Follow up on<input type="date" class="tinput" id="seq_next" value="'+esc(e.next_action||'')+'"'+dis+'></label>'
+      +'<label style="flex:1;min-width:180px">What to do'+scInput('seq_nextn',e.next_action_note,'e.g. chase the quote')+'</label></div>'
+      +(e.status_label?'<div class="sub" style="margin:4px 0 0">monday status: '+esc(e.status_label)+(e.follow_up?' · follow up: '+esc(e.follow_up):'')+'</div>':'')
+      +'<div class="scform" style="margin-top:12px">'
+      +'<label style="grid-column:1/-1">Title'+scInput('seq_title',e.title)+'</label>'
+      +'<label>Customer<span style="padding:9px 0;font-size:14px;color:var(--ink)">'+(e.customer?'<a href="#" data-sccust="'+e.customer.id+'">'+esc(e.customer.name)+'</a>':'—')+'</span></label>'
+      +'<label>Contact<select class="tinput" id="seq_contact"'+dis+'>'+scOpt((cust?cust.contacts:[]).map(function(p){ return [p.id,p.name+(p.phone?' · '+p.phone:'')]; }),e.contact_id,'—')+'</select></label>'
+      +'<label style="grid-column:1/-1">Site<select class="tinput" id="seq_site"'+dis+'>'+scOpt((cust?cust.sites:[]).concat(e.site&&!(cust&&cust.sites.some(function(s){ return s.id===e.site.id; }))?[e.site]:[]).map(function(s){ return [s.id,s.address]; }),e.site_id,'—')+'</select></label>'
+      +'<label>Source<input class="tinput" id="seq_source" list="scdl_src" value="'+esc(e.source||'')+'"'+dis+'></label>'
+      +'<label>Domestic / commercial<select class="tinput" id="seq_sector"'+dis+'>'+scOpt(['Commercial','Domestic'],e.sector,' ')+'</select></label>'
+      +'<label>Private / trade<select class="tinput" id="seq_ctype"'+dis+'>'+scOpt(['Private','Trade','Commercial'],e.client_type,' ')+'</select></label>'
+      +'<label>Size (m²)'+scInput('seq_m2',e.size_m2)+'</label>'
+      +'<label>Received<input type="date" class="tinput" id="seq_received" value="'+esc(e.received||'')+'"'+dis+'></label><label>Deadline<input type="date" class="tinput" id="seq_deadline" value="'+esc(e.deadline||'')+'"'+dis+'></label>'
+      +'<label>Estimator<input class="tinput" id="seq_estimator" list="scdl_people" value="'+esc(e.estimator||'')+'"'+dis+'></label><label>Surveyor<input class="tinput" id="seq_surveyor" list="scdl_people" value="'+esc(e.surveyor||'')+'"'+dis+'></label>'
+      +'<label>Sales person<input class="tinput" id="seq_sales" list="scdl_people" value="'+esc(e.salesperson||'')+'"'+dis+'></label><span></span>'
+      +'<label style="grid-column:1/-1">What is needed (shown on the quote as the scope)<textarea class="tinput" id="seq_desc" rows="3"'+dis+'>'+esc(e.description||'')+'</textarea></label>'
+      +'<label style="grid-column:1/-1">Notes<textarea class="tinput" id="seq_notes" rows="2"'+dis+'>'+esc(e.notes||'')+'</textarea></label></div>'
+      +(ed?'<div style="margin-top:10px"><button class="add" id="seq_save">Save enquiry</button></div>':'')
+      +'<div class="sub" style="margin:10px 0 0">Price '+(e.price!=null?scMoney(e.price):'—')+(prof!=null?' · est. profit '+scMoney(Math.round(prof))+(e.price>0?' ('+Math.round(prof*100/e.price)+'%)':''):'')+(e.quote_sent?' · quote sent '+scDay(e.quote_sent):'')+'</div>';
+    h+='<div style="display:flex;align-items:center;gap:10px;margin:18px 0 6px"><b>Quotes</b>'+(ed?'<button class="pobtn" id="seq_newq">+ New quote'+(e.quotes&&e.quotes.length?' (copy of v'+e.quotes[0].revision+')':'')+'</button>':'')+'</div>'
+      +((e.quotes||[]).length?'<table class="fjl"><tbody>'+e.quotes.map(function(q){ return '<tr class="scr" data-q="'+q.id+'" style="cursor:pointer"><td><b>v'+q.revision+'</b></td><td>'+scQStatus(q.status)+'</td><td class="r">'+scMoney(q.totals.price)+'</td><td class="r sub">'+(q.totals.margin!=null?q.totals.margin+'% margin':'')+'</td><td class="sub">'+(q.sent_at?'sent '+scDay(q.sent_at):'')+'</td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">No quote yet.</div>');
+    if(e.jobs&&e.jobs.length)h+='<div style="font-weight:700;margin:14px 0 4px">Jobs</div>'+e.jobs.map(function(j){ return '<div><a href="#" data-scjob="'+j.id+'">ACESC'+j.number+'</a> '+esc(j.title||'')+' · '+esc(SC_JOB_STAGE[j.stage]||j.stage)+'</div>'; }).join('');
+    if(e.monday_id)h+='<div class="sub" style="margin:14px 0 0">Imported from monday · <a href="https://ace189144.monday.com/boards/1630857450/pulses/'+e.monday_id+'" target="_blank" rel="noopener">open in monday</a></div>';
+    openModal('ACE'+e.number,h); scLinks();
+    document.querySelectorAll('#modalBody tr[data-q]').forEach(function(tr){ tr.onclick=function(){ scOpenQuote(tr.getAttribute('data-q')); }; });
+    if(!ed)return;
+    document.getElementById('seq_stage').onchange=function(){ var v=this.value; document.getElementById('seq_lossl').style.display=(v==='declined'||v==='lost')?'':'none'; };
+    document.getElementById('seq_save').onclick=async function(){
+      var b={stage:scVal('seq_stage'),loss_reason:scVal('seq_loss'),next_action:scVal('seq_next'),next_action_note:scVal('seq_nextn'),title:scVal('seq_title'),contact_id:scVal('seq_contact'),site_id:scVal('seq_site'),
+        source:scVal('seq_source'),sector:scVal('seq_sector'),client_type:scVal('seq_ctype'),size_m2:scVal('seq_m2'),received:scVal('seq_received'),deadline:scVal('seq_deadline'),
+        estimator:scVal('seq_estimator'),surveyor:scVal('seq_surveyor'),salesperson:scVal('seq_sales'),description:scVal('seq_desc'),notes:scVal('seq_notes')};
+      if(await scSend('/api/scaf/enquiries/'+id,'PUT',b)){ tShow('Saved'); scEnqChanged(); scOpenEnq(id); }
+    };
+    document.getElementById('seq_newq').onclick=async function(){ var d=await scSend('/api/scaf/enquiries/'+id+'/quotes','POST',{}); if(d)scOpenQuote(d.id); };
+  }
+  function scQStatus(s){ var c={draft:'#3c2a7a',sent:'#b45309',accepted:'#067647',declined:'#9a97ad',superseded:'#9a97ad'}[s]||'#3c2a7a'; return '<span class="scchip" style="color:'+c+';border-color:'+c+'33">'+esc({draft:'Draft',sent:'Sent',accepted:'Accepted',declined:'Declined',superseded:'Superseded'}[s]||s)+'</span>'; }
+
+  // the quote editor
+  var SCQ=null;
+  function scQLineRow(l,ed){ l=l||{}; var dis=ed?'':' disabled', n=function(f,w){ return '<input class="tinput scqn" data-f="'+f+'" value="'+(l[f]==null?'':esc(String(l[f])))+'" style="width:'+(w||70)+'px"'+dis+'>'; };
+    return '<tr class="scql"><td><input class="tinput" data-f="element" list="scdl_el" value="'+esc(l.element||'')+'" style="width:150px"'+dis+'><textarea class="tinput" data-f="description" rows="2" style="width:150px;margin-top:4px;display:block" placeholder="Description"'+dis+'>'+esc(l.description||'')+'</textarea></td>'
+      +'<td>'+n('price',90)+'</td><td>'+n('labour',80)+'</td><td>'+n('est_cost_up',80)+'</td><td>'+n('est_cost_down',80)+'</td><td>'+n('hire_weeks',55)+'</td><td>'+n('rent_pct',55)+'</td><td>'+n('rent_weekly',70)+'</td>'
+      +'<td class="r sub scqw" style="white-space:nowrap"></td>'+(ed?'<td><button class="del" data-act="rm" title="Remove line">×</button></td>':'')+'</tr>'; }
+  function scQRead(){ return [].map.call(document.querySelectorAll('#scq_lines tr.scql'),function(tr){ var o={}; tr.querySelectorAll('[data-f]').forEach(function(i){ o[i.getAttribute('data-f')]=i.value; }); return o; }); }
+  function scNum(v){ var t=String(v==null?'':v).split(',').join('').split('£').join('').trim(); if(t==='')return null; var n=Number(t); return isFinite(n)?n:null; }
+  function scQTotals(){
+    var ls=scQRead(), p=0, lab=0, hasLab=false, up=0, dn=0, wk=0;
+    document.querySelectorAll('#scq_lines tr.scql').forEach(function(tr,i){ var l=ls[i], pr=scNum(l.price)||0, w=scNum(l.rent_weekly)!=null?scNum(l.rent_weekly):(scNum(l.rent_pct)!=null?Math.round(pr*scNum(l.rent_pct))/100:null);
+      tr.querySelector('.scqw').textContent=w!=null?scMoney(w)+'/wk':''; p+=pr; if(scNum(l.labour)!=null){ hasLab=true; lab+=scNum(l.labour); } up+=scNum(l.est_cost_up)||0; dn+=scNum(l.est_cost_down)||0; wk+=w||0; });
+    var prof=p-up-dn;
+    document.getElementById('scq_tot').innerHTML=svStat(scMoney(p),'Total (ex VAT)')+(hasLab?svStat(scMoney(lab)+' / '+scMoney(p-lab),'Labour / hire'):'')+svStat(scMoney(up+dn),'Est. costs up + down')+svStat(scMoney(prof)+(p>0?' · '+Math.round(prof*1000/p)/10+'%':''),'Est. profit')+svStat(scMoney(wk),'Weekly rent after hire');
+  }
+  async function scOpenQuote(id){
+    openModal('Quote','<div class="sub">Loading…</div>'); await scLookups();
+    try{ var q=await scGet('/api/scaf/quotes/'+id), e=await scGet('/api/scaf/enquiries/'+q.enquiry_id); }catch(x){ document.getElementById('modalBody').innerHTML='<div class="sub">'+esc(x.message)+'</div>'; return; }
+    SCQ=q; var can=canApp('scaf.enquiries')==='edit', ed=can&&q.status==='draft', dis=ed?'':' disabled';
+    var h=scDl('scdl_el',SCL.elements)
+      +'<div class="sub" style="margin:0 0 10px">'+scQStatus(q.status)+' &nbsp;'+esc(e.title||'')+(e.customer?' · '+esc(e.customer.name):'')+(q.sent_at?' · sent '+scDay(q.sent_at):'')+(q.status!=='draft'?' — a sent quote is fixed; make a new revision to change it.':'')+'</div>'
+      +'<div style="overflow:auto"><table class="fjl scqt"><thead><tr><th>ELEMENT / DESCRIPTION</th><th>PRICE £</th><th title="The part of the price that is erection and dismantling labour (CIS / VAT reverse charge)">LABOUR £</th><th>EST. COST UP £</th><th>EST. COST DOWN £</th><th title="Hire weeks included in the price">HIRE WKS</th><th title="Weekly rent after the included weeks, % of the price">RENT %/WK</th><th title="Or a fixed weekly rent">OR £/WK</th><th>RENT</th>'+(ed?'<th></th>':'')+'</tr></thead><tbody id="scq_lines">'
+      +(q.lines.length?q.lines:[{}]).map(function(l){ return scQLineRow(l,ed); }).join('')+'</tbody></table></div>'
+      +(ed?'<button class="pobtn" id="scq_add" style="margin-top:6px">+ Add line</button>':'')
+      +'<div class="statgrid" id="scq_tot" style="margin:14px 0"></div>'
+      +'<div class="scform"><label style="grid-column:1/-1">Opening text<textarea class="tinput" id="scq_intro" rows="2"'+dis+'>'+esc(q.intro||'')+'</textarea></label>'
+      +'<label style="grid-column:1/-1">Terms (one per line)<textarea class="tinput" id="scq_terms" rows="5"'+dis+'>'+esc(q.terms||'')+'</textarea></label>'
+      +'<label>Valid for (days)<input class="tinput" id="scq_valid" value="'+esc(String(q.valid_days||30))+'"'+dis+'></label><span></span></div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center">'
+      +(ed?'<button class="add" id="scq_save">Save</button><button class="pobtn" id="scq_sent">Save and mark sent</button>':'')
+      +'<button class="pobtn" id="scq_pdf">Download PDF</button>'
+      +(can&&q.status==='sent'?'<button class="add" id="scq_acc">Accepted — job won</button><span>'+scLossSel('scq_reason','')+'</span><button class="pobtn" id="scq_dec">Declined</button><button class="pobtn" id="scq_back" title="Marked sent by mistake">Back to draft</button>':'')
+      +(q.status==='accepted'&&canApp('scaf.jobs')==='edit'?'<button class="add" id="scq_job">Create the job (ACESC)</button>':'')
+      +(ed?'<button class="del" id="scq_del" style="margin-left:auto">Delete draft</button>':'')
+      +'</div>';
+    openModal('ACE'+e.number+' v'+q.revision,h);
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1180px,96vw)';
+    var tb=document.getElementById('scq_lines');
+    var wire=function(){ tb.querySelectorAll('input,textarea').forEach(function(i){ i.oninput=scQTotals; }); tb.querySelectorAll('[data-act="rm"]').forEach(function(b){ b.onclick=function(){ b.closest('tr').remove(); scQTotals(); }; }); };
+    wire(); scQTotals();
+    var save=async function(){ return await scSend('/api/scaf/quotes/'+id,'PUT',{lines:scQRead(),intro:scVal('scq_intro'),terms:scVal('scq_terms'),valid_days:scVal('scq_valid')}); };
+    var after=function(msg){ tShow(msg); scEnqChanged(); scOpenQuote(id); };
+    var on=function(i,fn){ var el=document.getElementById(i); if(el)el.onclick=fn; };
+    on('scq_add',function(){ tb.insertAdjacentHTML('beforeend',scQLineRow({},true)); wire(); });
+    on('scq_save',async function(){ if(await save())after('Saved'); });
+    on('scq_sent',async function(){ if(!await save())return; if(!confirm('Mark this quote as sent to the customer? It is then fixed, and the enquiry moves to Quote sent with a chase-up in a week.'))return; if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'sent'}))after('Marked sent'); });
+    on('scq_pdf',async function(){ if(ed&&!await save())return; tShow('Building the PDF…');
+      var r=await fetch('/api/scaf/quotes/'+id+'/pdf',{headers:{Authorization:'Bearer '+token}}); if(!r.ok){ var x={}; try{ x=await r.json(); }catch(_){} tShow(x.error||'PDF failed'); return; }
+      var u=URL.createObjectURL(await r.blob()), a=document.createElement('a'); a.href=u; a.download='Quotation ACE'+e.number+' v'+q.revision+'.pdf'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },4000); });
+    on('scq_acc',async function(){ if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'accepted'}))after('Won'); });
+    on('scq_dec',async function(){ var r=scVal('scq_reason'); if(!r){ tShow('Choose the reason'); return; } if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'declined',reason:r}))after('Declined'); });
+    on('scq_back',async function(){ if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'draft'}))after('Back to draft'); });
+    on('scq_job',async function(){ var d=await scSend('/api/scaf/quotes/'+id+'/job','POST',{}); if(d){ tShow((d.existed?'Already a job: ':'Job created: ')+'ACESC'+d.number); SC.jobs=null; scOpenJob(d.id); } });
+    on('scq_del',async function(){ if(!confirm('Delete this draft?'))return; if(await scSend('/api/scaf/quotes/'+id,'DELETE')){ tShow('Deleted'); scOpenEnq(q.enquiry_id); } });
+  }
+
+  // Overview ▸ quote settings (admin)
+  async function scSettings(){
+    try{ var s=await scGet('/api/scaf/settings'); }catch(e){ tShow(e.message); return; }
+    var f=function(k,l,w){ return '<label'+(w?' style="grid-column:1/-1"':'')+'>'+l+scInput('sst_'+k,s[k])+'</label>'; };
+    openModal('Quote settings','<div class="sub" style="margin:0 0 10px">Printed on every quote PDF. The opening text, terms and validity are the defaults for a new quote (each quote can change them).</div><div class="scform">'
+      +f('name','Company name')+f('phone','Phone')+f('address','Address',true)+f('email','Email')+f('web','Website')+f('company_no','Company number')+f('vat_no','VAT number')
+      +'<label style="grid-column:1/-1">Opening text<textarea class="tinput" id="sst_intro" rows="2">'+esc(s.intro||'')+'</textarea></label>'
+      +'<label style="grid-column:1/-1">Terms (one per line)<textarea class="tinput" id="sst_terms" rows="7">'+esc(s.terms||'')+'</textarea></label>'
+      +f('valid_days','Quotes valid for (days)')+'</div><div style="margin-top:12px"><button class="add" id="sst_save">Save</button></div>');
+    document.getElementById('sst_save').onclick=async function(){ var b={}; ['name','phone','address','email','web','company_no','vat_no','intro','terms','valid_days'].forEach(function(k){ b[k]=scVal('sst_'+k); });
+      if(await scSend('/api/scaf/settings','PUT',b)){ tShow('Saved'); closeModal(true); } };
+  }
   // ---- ACE Group businesses (home page tiles). Which ones a user sees comes from /api/me (Admin ▸ Users). ----
   function bizAll(){ return (typeof ROLE_MATRIX==='object'&&ROLE_MATRIX&&ROLE_MATRIX.businesses)||[]; }
   var MY_BIZ=null; try{ MY_BIZ=JSON.parse(sessionStorage.getItem('ace_biz_list')||'null'); }catch(e){}

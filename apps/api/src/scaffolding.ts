@@ -331,7 +331,7 @@ export async function nextNumber(tenantId: string, table: 'scaf_enquiries' | 'sc
 const nameMap = async (tenantId: string) => new Map((await all<any>('scaf_customers', 'id,name', tenantId)).map((c) => [c.id, c.name]));
 export async function listEnquiries(tenantId: string) {
   const [rows, cust] = await Promise.all([
-    all<any>('scaf_enquiries', 'id,number,title,customer_id,stage,status_label,follow_up,source,sector,client_type,received,quote_sent,price,est_cost_up,est_cost_down,estimator,salesperson', tenantId),
+    all<any>('scaf_enquiries', 'id,number,title,customer_id,stage,status_label,follow_up,loss_reason,source,sector,client_type,received,quote_sent,price,est_cost_up,est_cost_down,estimator,salesperson,next_action,next_action_note', tenantId),
     nameMap(tenantId),
   ]);
   return rows.map((r) => ({ ...r, customer: cust.get(r.customer_id) ?? null, price: r.price === null ? null : Number(r.price), est_cost_up: r.est_cost_up === null ? null : Number(r.est_cost_up), est_cost_down: r.est_cost_down === null ? null : Number(r.est_cost_down) }))

@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.43.1';
+export const APP_VERSION = '1.44.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.44.0', date: '2026-10-22', changes: [
+    'ACE Scaffolding, phase 1 (office): + New enquiry \u2014 the next ACE number; pick the customer (or type a new one with its contact), its contact and site (or a new address), source, domestic / commercial, private / trade, deadline, estimator, sales person and what is needed.',
+    'The enquiry window can be edited: status (a reason when declined or lost), follow-up date and what to do, contact, site, people, dates, scope and notes. Enquiries: a Chase-ups due filter and count, and a Follow up column (red when due).',
+    'Quotes: revisions v1, v2\u2026 (a new one copies the last); priced elements \u2014 element, description, price (erect + dismantle + the included hire weeks), its labour part, estimated cost up / down, hire weeks, then rent % a week or a fixed \u00a3 a week; live totals with estimated profit and weekly rent. Quote PDF with the company details and terms. Save and mark sent \u2192 the enquiry is Quote sent with a chase-up in a week; Accepted \u2192 won, Create the job gives it the next ACESC number with the price, hire weeks and rent %; Declined with a reason.',
+    'Overview \u25b8 Quote settings (admin): company name, address, phone, email, company and VAT numbers, the default opening text, terms and validity. Needs migration 0097.',
+  ] },
   { version: '1.43.1', date: '2026-10-22', changes: [
     'Scaffolding import: an enquiry with a job comes in as Won; a quote left at \u201c4. Quote sent\u201d / \u201c5. Quote seen\u201d more than 6 months after the enquiry as \u201cNo answer (old quote)\u201d \u2014 no longer counted as open (Hot, New, Survey\u2026 stay as set).',
     'Scaffolding import: job number typos (ACECS1498, ACES1592) are read; jobs and enquiries with no ACESC / ACE number on monday get the next free number once; test items and bookings without a number are left out.',
