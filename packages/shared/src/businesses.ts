@@ -4,12 +4,12 @@
 export type BusinessKey = 'framework' | 'acemark_pl' | 'scaffolding';
 export interface Business { key: BusinessKey; name: string; country: 'UK' | 'PL' | 'DE'; desc: string; groups: string[] }
 export const BUSINESSES: Business[] = [
-  { key: 'framework', name: 'Framework', country: 'UK', desc: 'Window and door installation: jobs, survey and mapping, fitting, sign-off, purchasing and logistics.', groups: ['ops', 'sales', 'crm', 'finance', 'purchasing', 'logistics'] },
-  { key: 'acemark_pl', name: 'Acemark PL', country: 'PL', desc: 'Production in Orpiszew, the warehouse and Fin&Ops: costs, job costs, sales, payroll, performance.', groups: ['production', 'finops'] },
+  { key: 'framework', name: 'Framework', country: 'UK', desc: 'Window and door installation: jobs, survey and mapping, fitting, sign-off and purchasing.', groups: ['ops', 'sales', 'crm', 'finance', 'purchasing'] },
+  { key: 'acemark_pl', name: 'Acemark PL', country: 'PL', desc: 'Production in Orpiszew, the warehouse, logistics (labels, confirmations) and Fin&Ops: costs, job costs, sales, payroll, performance.', groups: ['production', 'finops', 'logistics'] },
   { key: 'scaffolding', name: 'ACE Scaffolding', country: 'UK', desc: 'Scaffold enquiries and quotes, jobs and contracts, hire billing, inspections and stock.', groups: ['scaffolding'] },
 ];
 export const BUSINESS_KEYS = BUSINESSES.map((b) => b.key);
-const PL_ROLES = ['acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse'];
+const PL_ROLES = ['logistics', 'acemark_finance', 'sales_rep', 'acemark_fitter', 'production', 'production_manager', 'production_lead', 'warehouse'];
 /** Without a setting on the user: admin → all; the Polish roles → Acemark PL; Scaffolding office → ACE Scaffolding;
  *  everyone else → Framework. */
 export function defaultBusinesses(role: string | null | undefined): BusinessKey[] {

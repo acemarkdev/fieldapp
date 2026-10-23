@@ -37,10 +37,10 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   ok('office lacks labels.print', can('office', 'labels.print') === false);
 }
 
-// --- acemark_finance: Fin&Ops (view) + sales orders, and nothing else ---
+// --- acemark_finance: Fin&Ops (view) + sales orders + Logistics (labels, confirmations), and nothing else ---
 {
   const { CAPABILITIES } = await import('./permissions');
-  const fin = new Set(['finops.view', 'sales.orders']);
+  const fin = new Set(['finops.view', 'sales.orders', 'labels.print', 'confirmations.manage']);
   for (const c of CAPABILITIES) ok(`acemark_finance ${c.key} === ${fin.has(c.key)}`, can('acemark_finance', c.key) === fin.has(c.key));
   for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'sales_rep'] as const) ok(`${r} lacks finops.view`, can(r, 'finops.view') === false);
   // --- sales_rep: the sales orders register and nothing else ---

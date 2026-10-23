@@ -88,8 +88,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   customer: [],
   // Logistics menu only (Labels, Confirmations) — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
   logistics: ['labels.print', 'confirmations.manage', 'stock.view'],
-  // Fin&Ops menu only (company cost control) — no jobs, items or anything else.
-  acemark_finance: ['finops.view', 'sales.orders'],
+  // Fin&Ops menu (company cost control) and Logistics (labels, report confirmations) — no jobs, items or anything else.
+  acemark_finance: ['finops.view', 'sales.orders', 'labels.print', 'confirmations.manage'],   // + Logistics (Labels, Confirmations), Acemark PL
   sales_rep: ['sales.orders'],
   // Cost reports form only (extra installation costs on a sales order) — nothing else, no mobile app.
   acemark_fitter: ['expenses.report'],
