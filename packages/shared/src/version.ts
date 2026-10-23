@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.53.0';
+export const APP_VERSION = '1.54.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.54.0', date: '2026-10-23', changes: [
+    'Fin&Ops ▸ Stock value: a new product window — the name with warehouse, supplier and group; tiles for quantity, value, average unit cost and last issue (red when nothing was issued for 6 months); the age bar with its shares; each delivery’s age in the colour of its age bucket. A Cortizo item shows its drawing from the Cortizo catalogue, the reference, description, weight and systems (a profile in no catalogue shows the drawing of its HI version).',
+    'Stock value: click an age column (0–90 d … > 2 y) to show only the stock of that age, largest first, in the groups and the products; click it again, or VALUE, for all ages.',
+  ] },
   { version: '1.53.0', date: '2026-10-23', changes: [
     'Fin&Ops ▸ Sales orders: budget and actual are kept apart. In the order window the planned costs (purchase, installation, delivery) and the planned realisation month are in an amber BUDGET section, and a Budget | Actual table shows purchase (actual = supplier invoices on monday), installation (actual = typed + cost reports paid out), delivery, total cost and margin. The actual side is green, red when the actual margin is under 30 %.',
     'The list: BUDGET COST and BUDGET MARGIN columns in amber, ACTUAL COST and ACTUAL MARGIN in green or red (under 30 %). The CSV has the budget margin, actual cost and actual margin.',

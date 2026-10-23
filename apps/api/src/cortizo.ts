@@ -285,3 +285,39 @@ export async function sketchUrls(tenantId: string, files: string[]): Promise<Rec
   for (const d of data ?? []) if (d.signedUrl && d.path) out[d.path.slice(tenantId.length + 1)] = d.signedUrl;
   return out;
 }
+
+// ---- one Subiekt symbol → its catalogue reference and drawing (the Stock value detail window) ----
+/** The references a symbol could be, to fetch before matching: the symbol cut at each separator
+ *  ("COR-3787 RAL 9005 CM" → … "COR-3787 RAL", "COR-3787"), each also as COR-<n> / <n>. */
+export function symbolCandidates(symbol: string): string[] {
+  const s = tight(symbol), out = new Set<string>();
+  const add = (h: string) => { if (!h) return; out.add(h); const n = /^(?:COR[- ]?)?(\d{3,6})$/.exec(h); if (n) { out.add('COR-' + n[1]); out.add(n[1]); } };
+  add(s);
+  for (let i = s.length - 1; i > 0; i--) if (/[-_/., ]/.test(s[i])) add(s.slice(0, i).replace(/[-_/., ]+$/, ''));
+  const k = /^COR[- ]?(\d{3,6})/.exec(s); if (k) add(k[1]);
+  return [...out].slice(0, 40);
+}
+export interface SymbolCortizo { ref: string; en: string | null; es: string | null; kind: string | null; weight: number | null; systems: string[]; sketch: string | null; sib: string | null }
+/** The catalogue reference of a Subiekt symbol, with a signed URL for its drawing; a 4–5 digit profile that is
+ *  in no catalogue shows the drawing of its HI version (n + 1), as on Cortizo profiles. null = not Cortizo. */
+export async function cortizoForSymbol(tenantId: string, symbol: string, cref?: string | null): Promise<SymbolCortizo | null> {
+  const cands = [...new Set([...symbolCandidates(symbol), ...(cref ? symbolCandidates(tight(cref).split(' ')[0]) : [])])];
+  if (!cands.length) return null;
+  const cols = 'ref,kind,desc_en,desc_es,weight_g_m,sketch,systems';
+  const { data, error } = await db().from('cortizo_items').select(cols).eq('tenant_id', tenantId).in('ref', cands);
+  if (error) throw error;
+  const rows = (data ?? []) as any[], keys = refKeys(rows.map((r) => r.ref));
+  const ref = (cref ? matchCustomField(cref, keys) : null) ?? matchSymbol(symbol, keys);
+  let it = ref ? rows.find((r) => r.ref === ref) : undefined, sib: string | null = null;
+  if (!it) {
+    const n = /^COR[- ]?(\d{4,5})(?!\d)/.exec(tight(symbol));
+    if (!n) return null;
+    const hiRef = 'COR-' + (Number(n[1]) + 1);
+    const hi = await db().from('cortizo_items').select(cols).eq('tenant_id', tenantId).eq('ref', hiRef).maybeSingle();
+    if (hi.error) throw hi.error;
+    if (!hi.data || !/\bHI\b/.test(String(hi.data.desc_en ?? '') + ' ' + String(hi.data.desc_es ?? ''))) return null;
+    it = { ...hi.data, ref: 'COR-' + n[1], desc_en: null, desc_es: null, weight_g_m: null }; sib = hiRef;
+  }
+  const url = it.sketch ? (await sketchUrls(tenantId, [it.sketch]))[it.sketch] ?? null : null;
+  return { ref: it.ref, en: it.desc_en ?? null, es: it.desc_es ?? null, kind: it.kind ?? null, weight: it.weight_g_m == null ? null : Number(it.weight_g_m), systems: it.systems ?? [], sketch: url, sib };
+}
