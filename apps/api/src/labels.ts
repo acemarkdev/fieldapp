@@ -149,8 +149,11 @@ const OFF_X = (PAGE_W - COLS * CELL_W) / 2, OFF_Y = (PAGE_H - ROWS * CELL_H) / 2
 const PAD = SAFE_MM * MM;
 const COMPANY = ['Ul. Koźmińska 10', '63-440 Raszków', 'NIP: PL6222839864', 'Email: biuro@wemokna.pl'];
 const ACEMARK = ['Ul. Koźmińska 32', '63-714 Orpiszew', 'NIP: PL6211842704', 'Email: biuro@acemark.com.pl'];
-/** The phone printed under the company details — a setting on the Labels page (config key label_phone). */
+/** The phone printed under the company details — a setting per company on the Labels page
+ *  (config keys label_phone for WEM, label_phone_acemark for Acemark). */
 export const DEFAULT_LABEL_PHONE = '+48 510 744 727';
+export const labelPhoneKey = (layout: unknown) => (layout === 'acemark' ? 'label_phone_acemark' : 'label_phone');
+export const defaultLabelPhone = (layout: unknown) => (layout === 'acemark' ? '' : DEFAULT_LABEL_PHONE);
 /** "510744727" / "+48510744727" / "0048 510 744 727" → "+48 510 744 727"; anything else is kept as typed. */
 export function formatLabelPhone(v: unknown): string {
   const raw = String(v ?? '').trim(), d = raw.replace(/[^0-9+]/g, '').replace(/^00/, '+');
@@ -226,8 +229,10 @@ function drawAcemark(doc: PDFKit.PDFDocument, lab: LabelItem, opts: LabelSheetOp
   if (opts.company) {
     const cx = x + 12 * MM, lh = 3.7 * MM;
     doc.font('SB').fontSize(9.5).fillColor('#000').text('ACEMARK sp. z o.o.', cx, y, { lineBreak: false });
-    ACEMARK.forEach((t, j) => doc.font('SR').fontSize(9).text(t, cx, y + lh * (j + 1), { lineBreak: false }));
-    y += lh * 5 + 1.5 * MM;
+    const phone = formatLabelPhone(opts.phone ?? '');
+    const rows = [...ACEMARK, ...(phone ? ['Tel. ' + phone] : [])];
+    rows.forEach((t, j) => doc.font('SR').fontSize(9).text(t, cx, y + lh * (j + 1), { lineBreak: false }));
+    y += lh * (rows.length + 1) + 1.5 * MM;
   } else y += 17 * MM;   // anonymous: the size and order line in the middle of the label
   if (lab.kind === 'hardware') {
     doc.font('SB').fontSize(26).fillColor('#000').text('HARDWARE', x, y + 3 * MM, { width: w, align: 'center', lineBreak: false });

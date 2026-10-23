@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.51.0';
+export const APP_VERSION = '1.51.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.51.1', date: '2026-10-23', changes: [
+    'Labels: the phone is per company \u2014 choosing WEM or Acemark shows and saves that company\u2019s number; Acemark labels print it (Tel.) under the email when it is set. WEM keeps its number.',
+  ] },
   { version: '1.51.0', date: '2026-10-23', changes: [
     'Labels: Acemark labels from a CortizoCad PRODUCTION LIST (LP 0004/10/2026 \u2026) \u2014 each position\u2019s size (B \u00d7 H) and quantity is read, the job line is the order (add the Z number in front); the label has the ACEMARK sp. z o.o. details, \u201cWymiar okna:\u201d, the size in large bold and the order line (the \u201cWZ\u00d3R etykiet - druk Acemark\u201d layout). The file decides WEM or Acemark; it can be switched. Untick Company details for anonymous labels.',
     'Labels (WEM and Acemark): Copies of each label \u2014 2 by default, 1\u20138, set on the screen.',
