@@ -1,9 +1,10 @@
-# ACE office / FitAWindow — set up a Windows laptop for development (run once, in PowerShell).
+﻿# (Saved as UTF-8 with a BOM so Windows PowerShell 5.1 reads it right.)
+# ACE office / FitAWindow - set up a Windows laptop for development (run once, in PowerShell).
 #   Right-click Start > Terminal (or PowerShell), then:
 #     Set-ExecutionPolicy -Scope Process Bypass -Force; & "$HOME\Downloads\setup-windows.ps1"
 # What it does: installs Git and Node.js (if missing, with winget), clones the repo to C:\apps\ace-fieldapp, turns
 # on the pre-push check, installs the packages, runs the checks, and creates Claude's memory notes for this project.
-# What it does NOT do: copy the secret .env files — copy those yourself from the Mac (USB / password manager).
+# What it does NOT do: copy the secret .env files - copy those yourself from the Mac (USB / password manager).
 $ErrorActionPreference = 'Stop'
 $Root = 'C:\apps'; $Repo = Join-Path $Root 'ace-fieldapp'
 function Step($t) { Write-Host "`n== $t" -ForegroundColor Cyan }
@@ -13,8 +14,8 @@ function RefreshPath { $env:Path = [Environment]::GetEnvironmentVariable('Path',
 Step 'Git and Node.js'
 if (-not (Have git)) { winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements; RefreshPath }
 if (-not (Have node)) { winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements; RefreshPath }
-if (-not (Have git) -or -not (Have node)) { Write-Host 'Git or Node.js is still not found — close this window, open a new one and run the script again.' -ForegroundColor Yellow; exit 1 }
-Write-Host ("git " + (git --version) + " · node " + (node -v))
+if (-not (Have git) -or -not (Have node)) { Write-Host 'Git or Node.js is still not found - close this window, open a new one and run the script again.' -ForegroundColor Yellow; exit 1 }
+Write-Host ("git " + (git --version) + " | node " + (node -v))
 
 Step "Folders: $Root"
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
@@ -92,7 +93,7 @@ $missing = @(
   @{ f = Join-Path $Repo '.env.prod'; what = 'prod database (from the Mac: ~/apps/ace-fieldapp/.env.prod)' },
   @{ f = Join-Path $Repo 'apps\mobile\.env'; what = 'phone app, test database (from the Mac: ~/apps/ace-fieldapp/apps/mobile/.env)' }
 ) | Where-Object { -not (Test-Path $_.f) }
-foreach ($m in $missing) { Write-Host ("  copy  " + $m.f + "   — " + $m.what) -ForegroundColor Yellow }
+foreach ($m in $missing) { Write-Host ("  copy  " + $m.f + "   - " + $m.what) -ForegroundColor Yellow }
 if (-not $missing) { Write-Host '  the three .env files are in place' -ForegroundColor Green }
 Write-Host "  phone app: cd $Repo\apps\mobile; npx eas-cli login   (account radekthering)"
 Write-Host "  optional:  loose files from the Mac (koszty-import.tsv, spec-matrix.html, *-powerapp.zip) -> $Root\from-mac"
