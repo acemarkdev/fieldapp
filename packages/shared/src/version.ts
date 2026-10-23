@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.51.3';
+export const APP_VERSION = '1.51.4';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.51.4', date: '2026-10-23', changes: [
+    'Fin&Ops ▸ Sales: the page description now says the invoices come from Subiekt automatically (every 30 minutes; changed in Subiekt) and that + Add invoice is only for what Subiekt does not have, such as a planned invoice. In English and Polish.',
+  ] },
   { version: '1.51.3', date: '2026-10-23', changes: [
     'ACE Scaffolding ▸ Enquiries: Export CSV — downloads the enquiries the filters show (all of them, not only the first page): number, received, site / title, customer, status, price, est. profit, follow-up date and estimator / sales. Semicolons and UTF-8, so Excel opens it with the Polish letters right.',
   ] },
