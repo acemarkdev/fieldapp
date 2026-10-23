@@ -139,11 +139,11 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
     if (o.first_payment_date) { counted_date = o.first_payment_date; counted_from = 'manual'; }
     else if (firstInv && (!firstCash || firstInv <= firstCash)) { counted_date = firstInv; counted_from = 'invoice'; }
     else if (firstCash) { counted_date = firstCash; counted_from = 'cash'; }
-    // installation cost = what is typed on the order + the fitters' cost reports that have been paid
+    // budget = the costs typed on the order; the fitters' paid cost reports are actuals and count only on the actual side
     const exps = (expBy.get(o.id) ?? []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
     const sumOf = (st: string[]) => round2(exps.filter((e) => st.includes(e.status)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
     const cost_reports_paid = sumOf(['paid']);
-    const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + cost_reports_paid + (o.cost_delivery ?? 0));
+    const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + (o.cost_delivery ?? 0));
     return { ...o, code: orderCode(o.job_ref) || orderCode(o.order_ref), costs, margin: o.net ? round2((o.net - costs) / o.net) : null,
       invoices, payments: pays, invoiced, cash, paid: round2(invoiced + cash), counted_date, counted_from,
       expenses: exps, cost_reports_paid, cost_reports_open: sumOf(['submitted', 'approved']), ...actual(o, cost_reports_paid) };

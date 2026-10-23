@@ -34,7 +34,10 @@ ok('paid reports add up per order; the rest are ignored', paid.get('o1') === 150
 const order: OrderRow = { id: 'o1', rep_user_id: 'R1', rep_name: 'T', company: 'Acemark', supplier: null, material: null, customer: 'Krüger', order_ref: 'OK DE1', job_ref: null, status: 'accepted', offer_year: 2026, offer_month: 10, enquiry_month: 10, net: 10000, cost_purchase: 5000, cost_install: 1000, cost_delivery: 500, planned_year: null, planned_month: null, first_payment_date: null, invoice_refs: null, note: null, comment: null };
 const ex = (id: string, amount: number, status: any) => ({ id, order_id: 'o1', user_id: 'u', user_name: 'Jan', kind: 'allowance' as const, amount, note: null, status, created_at: '2026-10-13T08:00:00Z', decided_by: null, decided_at: null, reject_reason: null, paid_by: null, paid_at: null });
 const v = buildOrderViews([order, { ...order, id: 'o2' }], [], [], [ex('e1', 400, 'paid'), ex('e2', 300, 'approved'), ex('e3', 200, 'submitted')])[0];
-ok('order: paid reports are added on top of the typed installation cost', v.cost_reports_paid === 400 && v.costs === 6900 && v.margin === 0.31, [v.cost_reports_paid, v.costs, v.margin]);
+ok('order: the budget is only what is typed — paid reports are actuals', v.cost_reports_paid === 400 && v.costs === 6500 && v.margin === 0.35, [v.cost_reports_paid, v.costs, v.margin]);
+const pur = { order_key: 'OKDE1', order_code: 'OK DE1', invoice_no: 'FV 1', supplier: 'S', invoice_date: '2026-10-01', net: 4800, from: 'lines' as const };
+const va = buildOrderViews([order], [], [], [ex('e1', 400, 'paid')], [pur])[0];
+ok('order: paid reports are added on top of the typed installation cost on the actual side', va.actual_costs === 6700 && va.actual_margin === 0.33, [va.actual_costs, va.actual_margin]);
 ok('order: carries its reports and what is still open', v.expenses.length === 3 && v.cost_reports_open === 500, [v.expenses.length, v.cost_reports_open]);
 const v0 = buildOrderViews([order], [], [])[0];
 ok('order without reports is unchanged', v0.costs === 6500 && v0.cost_reports_paid === 0 && v0.expenses.length === 0);
