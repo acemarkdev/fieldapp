@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.51.2';
+export const APP_VERSION = '1.51.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.51.3', date: '2026-10-23', changes: [
+    'ACE Scaffolding ▸ Enquiries: Export CSV — downloads the enquiries the filters show (all of them, not only the first page): number, received, site / title, customer, status, price, est. profit, follow-up date and estimator / sales. Semicolons and UTF-8, so Excel opens it with the Polish letters right.',
+  ] },
   { version: '1.51.2', date: '2026-10-23', changes: [
     'Fin&Ops \u25b8 Payroll reads the files of the other payroll programs used in 2026: the boxed list (\u201cLista P\u0141AC za: Stycze\u0144 2026\u201d, January) and Varico payslips (\u201cWynagrodzenie za miesi\u0105c kwiecie\u0144 2026\u201d, April \u2014 names turned to surname first to match), the ZUS transfer printed letter by letter, and the PIT-4 period after the NIP type (\u201cN 2 6 M 0 2\u201d). The PIT-4 period may be the month of payment (no warning then).',
   ] },

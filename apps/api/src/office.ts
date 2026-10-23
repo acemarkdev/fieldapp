@@ -4302,7 +4302,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div id="scafEnqView" style="display:none">
     <main style="max-width:1400px">
       <div class="titlerow"><div><h2>Enquiries</h2><div class="sub" id="se_sub">ACE Scaffolding enquiries and estimates (ACE numbers).</div></div>
-        <div style="display:flex;gap:8px;align-self:center"><button class="pobtn" id="se_new" style="display:none">+ New enquiry</button></div></div>
+        <div style="display:flex;gap:8px;align-self:center"><button class="pobtn" id="se_csv">Export CSV</button><button class="pobtn" id="se_new" style="display:none">+ New enquiry</button></div></div>
       <div class="chips" style="gap:8px;margin:14px 0 8px">
         <input id="se_q" class="tinput" style="min-width:240px" placeholder="Search number, site, customer">
         <select id="se_stage" class="tinput"></select>
@@ -7603,6 +7603,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tb.querySelectorAll('tr.scr').forEach(function(tr){ tr.onclick=function(){ scOpenEnq(tr.getAttribute('data-id')); }; });
     var more=document.getElementById('se_more'); more.style.display=all.length>list.length?'':'none'; more.textContent='Show more ('+(all.length-list.length)+' left)';
   }
+  // The enquiries the filters show (all of them, not only the first page) — semicolons and a BOM so Excel reads it right
+  function scEnqCsv(){ if(!SC.enq)return;
+    var q=function(v){ v=v==null?'':String(v); return /[";,]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }, n=function(v){ return v==null?'':String(v).replace('.',','); };
+    var lines=[['Number','Received','Site / title','Customer','Status','Price','Est. profit','Follow up','Estimator / sales'].join(';')].concat(scEnqFiltered().map(function(e){
+      var prof=e.price!=null&&(e.est_cost_up!=null||e.est_cost_down!=null)?Math.round((e.price-(e.est_cost_up||0)-(e.est_cost_down||0))*100)/100:null;
+      return ['ACE'+e.number,scDay(e.received),e.title,e.customer,SC_ENQ_STAGE[e.stage]||e.stage,n(e.price),n(prof),e.next_action&&SC_ENQ_OPEN.indexOf(e.stage)>=0?scDay(e.next_action):'',[e.estimator,e.salesperson].filter(Boolean).join(' / ')].map(q).join(';'); }));
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+lines.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='scaffolding-enquiries '+scToday()+'.csv'; document.body.appendChild(a); a.click(); a.remove(); }
   function scRows(pairs){ return '<table class="fjl" style="margin-top:6px"><tbody>'+pairs.filter(function(p){ return p[1]!=null&&p[1]!==''; }).map(function(p){ return '<tr><td style="width:180px;color:var(--muted)">'+esc(p[0])+'</td><td>'+p[1]+'</td></tr>'; }).join('')+'</tbody></table>'; }
   function scLinks(){ var b=document.getElementById('modalBody');
     b.querySelectorAll('[data-sccust]').forEach(function(a){ a.onclick=function(ev){ ev.preventDefault(); scOpenCust(a.getAttribute('data-sccust')); }; });
@@ -7713,6 +7720,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sc_more').onclick=function(){ SC.shown.c+=300; renderScafCust(); };
     document.getElementById('sc_new').onclick=scNewCust;
     document.getElementById('se_new').onclick=scNewEnq;
+    document.getElementById('se_csv').onclick=scEnqCsv;
     document.getElementById('spl_prev').onclick=function(){ SCP.from=scAdd(SCP.from,-7); loadScafPlan(); };
     document.getElementById('spl_next').onclick=function(){ SCP.from=scAdd(SCP.from,7); loadScafPlan(); };
     document.getElementById('spl_today').onclick=function(){ SCP.from=null; loadScafPlan(); };
