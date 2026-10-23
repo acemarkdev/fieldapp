@@ -4847,6 +4847,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <div class="chips" style="align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px">
         <select id="fp_year" class="tinput"></select>
         <select id="fp_company" class="tinput"><option value="acemark">Acemark</option><option value="ace_group">Ace Group</option><option value="off_balance">Poza bilans</option><option value="">All companies</option></select>
+        <select id="fp_basis" class="tinput" title="How RESULT is worked out: the management sheet (as before), or a first version on a UoR or IFRS basis (Acemark only)"><option value="mgmt">Result: management sheet</option><option value="uor">Result: UoR</option><option value="ifrs">Result: IFRS</option></select>
         <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="fp_dec"> Show decimals</label>
         <span class="sub" style="margin:0 0 0 auto" id="fp_note"></span>
       </div>
@@ -10846,7 +10847,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(first){ document.getElementById('fp_csv').dataset.ready='1';
       document.getElementById('fp_csv').onclick=fpCsv;
       document.getElementById('fp_toggle').onclick=function(){ var any=fpGroups().some(function(tr){ return !FP.shut[tr.getAttribute('data-g')]; }); fpGroups().forEach(function(tr){ FP.shut[tr.getAttribute('data-g')]=any; }); fpApplyShut(); };
-      ['fp_year','fp_company','fp_dec'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
+      ['fp_year','fp_company','fp_dec','fp_basis'].forEach(function(id){ document.getElementById(id).onchange=renderFinPerf; }); }
     var d; try{ var r=await api('/api/finops/costs'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fp_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load costs')+'</td></tr>'; return; }
     FC.rows=d.rows||[]; FC.canManage=!!d.canManage; FC.slug=d.slug; FC.boardId=d.boardId; FC.lastRun=d.lastRun;
     try{ await fsFetch(); }catch(e){ FS.inv=[]; }
@@ -10926,12 +10927,33 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       });
     }
     var tb=document.getElementById('fp_rows');
-    var R=fpResult(M,S); FP.result=R;
+    var R=fpResult(M,S), basis=document.getElementById('fp_basis').value||'mgmt', ST=basis!=='mgmt'&&R?fpStatutory(M.year,basis):null;
+    if(ST)R=ST; FP.result=R;
     if(R&&R.has){
       var tot=function(a){ return a.reduce(function(x,y){return x+y;},0); }, ts=tot(R.sales);
       var pc=function(vals,est){ var t=tot(vals), e=(est||[]).some(function(x){return x;}); return vals.map(function(v,i){ var r=Math.abs(R.sales[i])>0.004?v/R.sales[i]:null; return '<td class="n'+(est&&est[i]?' est':'')+(r!=null&&r<0?' neg':'')+'" data-all="1" style="color:var(--muted)">'+(r==null?'':fjPct(r))+'</td>'; }).join('')+'<td class="n t'+(e?' est':'')+(ts&&t/ts<0?' neg':'')+'" data-all="1" style="color:var(--muted)">'+(Math.abs(ts)>0.004?fjPct(t/ts):'')+'</td>'; };
       var row=function(cls,label,tip,vals,est,ctx,pctLabel){ var o='<tr class="'+cls+'"><td style="padding-left:18px" title="'+av(tip)+'">'+label+'</td>'+pcells(vals,est,ctx||'data-all="1"')+'</tr>'; if(pctLabel)o+='<tr class="line"><td style="color:var(--muted)">'+pctLabel+'</td>'+pc(vals,est)+'</tr>'; return o; };
       var adj=function(label,tip,kind,vals,set){ return '<tr class="sec"><td style="padding-left:18px" title="'+av(tip)+'">'+label+' <span style="color:var(--muted)">\u270e</span></td>'+vals.map(function(v,i){ return '<td class="n" data-adj="'+kind+'" data-m="'+(i+1)+'" data-v="'+(set[i]?v:'')+'" style="cursor:pointer" title="'+av('Click to enter')+'">'+(set[i]?(fmt(v)||'0'):'<span style="color:var(--muted)">\u2013</span>')+'</td>'; }).join('')+'<td class="n t" data-all="1">'+fmt(tot(vals))+'</td></tr>'; };
+      if(ST){
+        var memo=function(label,tip,vals){ return '<tr class="ph"><td style="padding-left:18px" title="'+av(tip)+'">'+label+'</td>'+pcells(vals,[],'data-all="1"')+'</tr>'; };
+        var sub=function(label,vals){ return '<tr class="line"><td>'+label+'</td>'+pcells(vals,[],'data-all="1"')+'</tr>'; };
+        h+='<tr class="dept"><td>RESULT — '+(basis==='uor'?'UoR':'IFRS')+' (Acemark)</td>'+pcells(R.pbt,R.estE,'data-all="1"')+'</tr>';
+        h+=row('sec','Revenue','Sales invoices of the month; a prepayment counts in the month of its job’s final invoice, not when it is invoiced.',R.sales,[],'data-all="1"')+sub('Sales from Orpiszew',R.prod)+sub('Trade from Poland',R.trade);
+        h+=row('sec','Materials (RW)','Material Cost (RW) of the jobs counted in this month — from Job costs (in the job’s month: timing not matched to the sale yet).',R.mat,[],'data-mat="1"','Materials %');
+        h+=row('sec','Cost of trade goods (499.V invoices)','The trade purchase invoices (Podrodzaj kosztu 499.V Handel) — the cost of the goods sold as Trade from Poland.',R.tc,[],'data-all="1"','Trade goods %');
+        h+=row('sec','Sales costs','Sales department invoices + Sales salaries and payroll taxes.',R.sc,R.estS,'','Sales costs %');
+        h+=row('sec','Production overheads (invoices)','Production department invoices except 631 Materials (counted as RW): leasing, maintenance, logistics, improvements…',R.po,[],'data-all="1"','Production overheads %');
+        h+=row('sec','Office and other overheads','Office and every other department’s invoices + Office and Production salaries and payroll taxes.',R.ov,R.estO,'','Overheads %');
+        h+=row('ctrl','EBITDA','Revenue − all the costs above.',R.eb,R.estE,'','EBITDA %');
+        h+=adj('Depreciation','Typed in per month — click a month to enter it.','depreciation',R.dep,R.depSet);
+        h+=row('sec','Operating profit','EBITDA − Depreciation.',R.op,R.estE,'','Operating profit %');
+        h+=adj('Financial cost','Typed in per month — click a month to enter it.','financial_cost',R.fin,R.finSet);
+        h+=row('ctrl','Profit before tax','Operating profit − Financial cost.',R.pbt,R.estE,'','Profit before tax %');
+        h+=memo('Memo, not in the result: prepayments invoiced, not delivered yet','Prepayment invoices of the month whose job has no final invoice yet — a liability until delivery.',R.pre);
+        h+=memo('Memo, not in the result: Poza bilans (costs)','Costs of the company Poza bilans — shown for information, never part of the result.',R.off);
+        h+=memo('Memo, not in the result: material purchases (631)','631 Materials purchase invoices — left out because materials count as RW from Job costs.',R.matP);
+        h+='<tr class="ph"><td colspan="14" style="white-space:normal;padding:8px 18px;line-height:1.5">'+esc(FP_BASIS_NOTE[basis])+'</td></tr>';
+      } else {
       h+='<tr class="dept"><td>RESULT</td>'+pcells(R.pbt,R.estE,'data-all="1"')+'</tr>';
       h+=row('sec','Sales','All sales invoices of the month (Sales results above).',R.sales,[],'data-s="1"');
       h+=row('sec','Materials (RW)','Material Cost (RW) of the jobs counted in this month \u2014 from Job costs.',R.mat,[],'data-mat="1"','Materials %');
@@ -10945,6 +10967,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       h+=adj('Financial cost','Typed in per month \u2014 click a month to enter it.','financial_cost',R.fin,R.finSet);
       h+=row('ctrl','Profit before tax','Operating profit \u2212 Other income \u2212 Financial cost.',R.pbt,R.estE,'','Profit before tax %');
       h+='<tr class="ph"><td style="padding-left:18px" title="'+av('These invoices are not part of the result above: materials are counted there as RW from Job costs instead. The rest (leasing, maintenance, logistics, improvements) is left out, as in the sheet.')+'">Not in the result: Production overheads (invoices)</td>'+pcells(R.prod,[],'data-all="1"')+'</tr>';
+      }
     }
     tb.innerHTML=(M.depts.length||S.count||(R&&R.has))?h:'<tr><td class="sub" style="padding:18px" colspan="14">No costs or sales for this year / company yet.</td></tr>';
     tb.querySelectorAll('td.n').forEach(function(td){ td.onclick=function(e){ e.stopPropagation(); if(td.getAttribute('data-adj')){ if(FY.canEditResult)fpAdj(td,M.year); return; } if(td.getAttribute('data-mat')){ FJ.preset={year:M.year,month:td.getAttribute('data-m')||''}; showTab('finjobs'); return; } if(td.getAttribute('data-pay')){ FY.preYear=M.year; showTab('finpay'); return; } if(td.getAttribute('data-all'))return; if(td.getAttribute('data-s')){ FS.preset={year:M.year,month:td.getAttribute('data-m')||'',channel:td.getAttribute('data-ch')||'',country:td.getAttribute('data-co')||''}; showTab('finsales'); } else fpDrill(td); }; });
@@ -10984,6 +11007,43 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var has=S.total.concat(mat).some(function(v){return Math.abs(v)>0.004;});
     return {has:has,jobs:jobs,sales:S.total,mat:mat,sc:sc,gm:gm,ov:ov,eb:eb,dep:dep,fin:fin,oi:oi,depSet:depSet,finSet:finSet,op:op,pbt:pbt,estS:pS.est,estO:estO,estE:estE,prod:dept('Production')};
   }
+  // RESULT on a UoR or IFRS basis (first version), for Acemark only — the company filter does not apply:
+  //  • revenue: a prepayment invoice counts in the month of its job's first final invoice; with no final invoice yet it
+  //    is not revenue (memo line). Trade sales are revenue, the 499.V Handel purchase invoices their cost.
+  //  • costs: every Acemark invoice — Sales, Production overheads, Office and every other department (leasing included);
+  //    631 Materials purchases are left out because materials count as RW from Job costs. Payroll as in the sheet.
+  //  • Poza bilans: shown under the result, never in it. IFRS uses the same numbers until its own rules are built.
+  function fpStatutory(year,basis){
+    var z=function(){ return [0,0,0,0,0,0,0,0,0,0,0,0]; }, add=function(){ var a=[].slice.call(arguments); return z().map(function(_,i){ return a.reduce(function(s,x){ return s+x[i]; },0); }); };
+    var key=function(r){ return String(r.job_ref||'').toUpperCase().replace(/\s+/g,''); }, finals={};
+    FS.inv.forEach(function(r){ if(r.kind==='prepaid'||!r.period_year||!r.period_month)return; var k=key(r); if(!k)return; var p=r.period_year*100+r.period_month; if(!finals[k]||p<finals[k])finals[k]=p; });
+    var prod=z(), trade=z(), pre=z();
+    FS.inv.forEach(function(r){ if(!r.period_year||!r.period_month)return; var p=r.period_year*100+r.period_month;
+      if(r.kind==='prepaid'){ var f=finals[key(r)]; if(!key(r)||!f){ if(r.period_year===year)pre[r.period_month-1]+=r.net; return; } p=f; }
+      if(Math.floor(p/100)!==year)return; (r.channel==='production'?prod:trade)[p%100-1]+=r.net; });
+    var sInv=z(), pInv=z(), oInv=z(), tc=z(), matP=z(), off=z();
+    FC.rows.forEach(function(r){ if(r.period_year!==year||!r.period_month)return; var i=r.period_month-1, v=r.net||0;
+      if(r.company==='off_balance'){ off[i]+=v; return; } if(r.company!=='acemark')return;
+      var c=String(r.subcategory||'').toUpperCase().trim();
+      if(/^499\.V/.test(c)){ tc[i]+=v; return; } if(/^631/.test(c)){ matP[i]+=v; return; }
+      (r.department==='Sales'?sInv:r.department==='Production'?pInv:oInv)[i]+=v; });
+    var pay=function(n){ var a=fyYear(year,n,'salaries'), b=fyYear(year,n,'taxes'); return {v:add(a.v,b.v),est:a.v.map(function(_,i){return !!(a.est[i]||b.est[i]);})}; };
+    var pS=pay('Sales'), pO=pay('Office'), pP=pay('Production');
+    var mat=z(); FJ.jobs.forEach(function(j){ if(j.period_year===year&&j.period_month)mat[j.period_month-1]+=(j.sums&&j.sums.material)||0; });
+    var dep=z(), fin=z(), depSet=z().map(function(){return false;}), finSet=depSet.slice();
+    (FY.items||[]).forEach(function(x){ if(x.year!==year)return; var i=x.month-1; if(x.depreciation!=null){ dep[i]=x.depreciation; depSet[i]=true; } if(x.financial_cost!=null){ fin[i]=x.financial_cost; finSet[i]=true; } });
+    var rev=add(prod,trade), sc=add(sInv,pS.v), ov=add(oInv,pO.v,pP.v);
+    var eb=rev.map(function(v,i){ return v-mat[i]-tc[i]-sc[i]-pInv[i]-ov[i]; }), op=eb.map(function(v,i){ return v-dep[i]; }), pbt=op.map(function(v,i){ return v-fin[i]; });
+    var estO=pO.est.map(function(e,i){ return e||pP.est[i]; }), estE=pS.est.map(function(e,i){ return e||estO[i]; });
+    var R={basis:basis,has:rev.concat(mat,tc,sInv,pInv,oInv).some(function(v){ return Math.abs(v)>0.004; }),sales:rev,prod:prod,trade:trade,pre:pre,mat:mat,tc:tc,sc:sc,po:pInv,ov:ov,eb:eb,dep:dep,fin:fin,depSet:depSet,finSet:finSet,op:op,pbt:pbt,off:off,matP:matP,estS:pS.est,estO:estO,estE:estE};
+    R.csv=[['Revenue',rev,0],['  Sales from Orpiszew',prod,0],['  Trade from Poland',trade,0],['Materials (RW)',mat,'Materials %'],['Cost of trade goods (499.V invoices)',tc,'Trade goods %'],['Sales costs',sc,'Sales costs %'],['Production overheads (invoices)',pInv,'Production overheads %'],['Office and other overheads',ov,'Overheads %'],['EBITDA',eb,'EBITDA %'],['Depreciation',dep,0],['Operating profit',op,'Operating profit %'],['Financial cost',fin,0],['Profit before tax',pbt,'Profit before tax %'],
+      ['Memo, not in the result: prepayments invoiced, not delivered yet',pre,0],['Memo, not in the result: Poza bilans (costs)',off,0],['Memo, not in the result: material purchases (631), counted as RW',matP,0]];
+    return R;
+  }
+  var FP_BASIS_NOTE={
+    uor:'UoR view, Acemark only (the company filter does not apply). Done: a prepayment counts as revenue in the month of its job’s final invoice (art. 41); trade sales are revenue and the 499.V Handel purchase invoices are the cost of trade goods (Załącznik 1); production overheads and every other department’s invoices are costs, leasing included (art. 28 ust. 3, art. 3 ust. 4); 631 Materials purchases are left out because materials count as RW. Not covered yet: materials fall in the job’s month, not the sale’s (art. 6 ust. 2); no stock write-down (art. 35b); no accruals for holiday, bonuses or commission (art. 39); no exchange differences (art. 30). A trade advance invoice may count twice until it is settled. Poza bilans is shown below and is not in the result.',
+    ifrs:'IFRS view, Acemark only (the company filter does not apply) — the same numbers as UoR for now, on these assumptions to confirm with the accountant: trade as principal (IFRS 15), revenue at the final invoice, i.e. at delivery (point in time), leases as a cost (IFRS 16 right-of-use not applied yet). Not covered yet: materials timing, stock write-down to net realisable value (IAS 2), accruals (IAS 19), exchange differences (IAS 21). Poza bilans is shown below and is not in the result.'
+  };
   async function fpAdj(td,year){
     var kind=td.getAttribute('data-adj'), m=+td.getAttribute('data-m'), cur=td.getAttribute('data-v')||'';
     var v=prompt(TR(kind==='depreciation'?'Depreciation':'Financial cost')+' \u2014 '+FC_MONTHS[m-1]+' '+year+String.fromCharCode(13,10)+TR('Amount in zł. Leave empty to clear.'),cur);
@@ -11005,8 +11065,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     M.depts.forEach(function(D){ L.push(q(D.name.toUpperCase())+','+n(D.total)); D.kinds.forEach(function(K){ L.push(q('  '+TR(K.kind==='fixed'?'Fixed':'Variable'))+','+n(K.total)); K.lines.forEach(function(l){ L.push(q('    '+l.cat)+','+n(l.m)); }); }); });
     L.push(q(TR('Control sum - Monday'))+','+n(M.total));
     var R=FP.result; if(R&&R.has){ var pct=function(a){ var t=a.reduce(function(x,y){return x+y;},0), ts=R.sales.reduce(function(x,y){return x+y;},0); return a.map(function(v,i){ return Math.abs(R.sales[i])>0.004?(v/R.sales[i]*100).toFixed(1)+'%':''; }).concat([Math.abs(ts)>0.004?(t/ts*100).toFixed(1)+'%':'']).join(','); };
-      [['Sales',R.sales,0],['Materials (RW)',R.mat,'Materials %'],['Sales costs',R.sc,'Sales costs %'],['Gross margin',R.gm,'Gross margin %'],['Overheads (Office + Production payroll)',R.ov,'Overheads %'],['EBITDA',R.eb,'EBITDA %'],['Depreciation',R.dep,0],['Operating profit',R.op,'Operating profit %'],['Other income (Trade from Poland)',R.oi,'Other income %'],['Financial cost',R.fin,0],['Profit before tax',R.pbt,'Profit before tax %']].forEach(function(x){ L.push(q(TR(x[0]))+','+n(x[1])); if(x[2])L.push(q('  '+TR(x[2]))+','+pct(x[1])); });
-      L.push(q(TR('Not in the result: Production overheads (invoices)'))+','+n(R.prod)); }
+      if(R.csv){ L.push(q('RESULT - '+(R.basis==='uor'?'UoR':'IFRS')+' (Acemark)')+','+n(R.pbt)); R.csv.forEach(function(x){ L.push(q(TR(x[0]))+','+n(x[1])); if(x[2])L.push(q('  '+TR(x[2]))+','+pct(x[1])); }); L.push(q(FP_BASIS_NOTE[R.basis])); }
+      else { [['Sales',R.sales,0],['Materials (RW)',R.mat,'Materials %'],['Sales costs',R.sc,'Sales costs %'],['Gross margin',R.gm,'Gross margin %'],['Overheads (Office + Production payroll)',R.ov,'Overheads %'],['EBITDA',R.eb,'EBITDA %'],['Depreciation',R.dep,0],['Operating profit',R.op,'Operating profit %'],['Other income (Trade from Poland)',R.oi,'Other income %'],['Financial cost',R.fin,0],['Profit before tax',R.pbt,'Profit before tax %']].forEach(function(x){ L.push(q(TR(x[0]))+','+n(x[1])); if(x[2])L.push(q('  '+TR(x[2]))+','+pct(x[1])); });
+      L.push(q(TR('Not in the result: Production overheads (invoices)'))+','+n(R.prod)); } }
     var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='Performance '+M.year+(M.company?' '+M.company:'')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
   // ---- Operations ▸ Confirmations: shareable report sign-off links ----

@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.54.1';
+export const APP_VERSION = '1.55.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.55.0', date: '2026-10-23', changes: [
+    'Fin&Ops ▸ Performance: a Result switch — management sheet (as before), UoR or IFRS (first version, Acemark only). UoR / IFRS: a prepayment counts as revenue in the month of its job’s final invoice (not yet delivered = a memo line); trade sales are revenue with the 499.V Handel purchase invoices as the cost of trade goods; production overheads and every other department’s invoices are costs (leasing as a cost); 631 Materials purchases are left out because materials count as RW. Poza bilans is shown under the result as a memo line and never changes it.',
+    'IFRS shows the same numbers as UoR for now (trade as principal, revenue at delivery, IFRS 16 not applied) — the assumptions and what is not covered yet (materials timing, stock write-down, accruals, exchange differences) are written under the result and in the CSV.',
+  ] },
   { version: '1.54.1', date: '2026-10-23', changes: [
     'Fin&Ops: a Subiekt sales invoice with no job in its Podtytuł now counts as Sales from Orpiszew, not as Trade from Poland. Before, it was added in Sales and taken out again as “Other income (Trade from Poland)”, so Performance ▸ RESULT came out too low. A Subiekt invoice with an OK (trade) number stays trade; typed and imported invoices keep their producer rule.',
   ] },
