@@ -23,9 +23,10 @@ const MONEY = /^-?\d+,\d{2}$/;
 // ---- reading the files (text as extracted from the PDF) --------------------------------------------
 export type FileKind = 'list' | 'zus' | 'pit4';
 export function fileKind(text: string): FileKind | null {
-  if (/Lista\s+płac/i.test(text)) return 'list';
+  if (/Lista\s+płac/i.test(text) || /Wynagrodzenie\s+za\s+miesiąc/i.test(text)) return 'list';
   if (/PIT-?4R?\b/.test(text) && /Urząd\s+Skarbowy/i.test(text)) return 'pit4';
   if (/Zakład\s+Ubezpieczeń\s+Społecznych/i.test(text)) return 'zus';
+  if (/^\s*Z U S\s*$/m.test(text) && /nazwa\s+odbiorcy/i.test(text)) return 'zus';   // the transfer form printed letter by letter
   return null;
 }
 export interface ListPerson { name: string; key: string; gross: number; net: number }
@@ -33,7 +34,13 @@ export interface PayList { year: number; month: number; payDate: string | null; 
 /** The payroll list: person rows "12 TEODORCZYK KAMIL 10094,97 0,00 … 7464,75". Gross = the first four
  *  amounts (pay components, taxable benefits, sick pay, holiday pay); net = the last ("Do wypłaty").
  *  Checked against the NARASTAJĄCO totals so a changed layout is noticed instead of loaded wrong. */
+/** "4,194.95" (thousands with commas, a dot for decimals) → 4194.95 */
+const dotMoney = (v: string) => { const n = Number(v.replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+/** Three payroll programs have been used in 2026: the table list ("Lista płac za miesiąc …"), the boxed list
+ *  ("Lista PŁAC za: Styczeń 2026", one box per person) and Varico payslips ("Wynagrodzenie za miesiąc …"). */
 export function parseList(text: string): Result<{ list: PayList }> {
+  if (/Lista\s+PŁAC\s+za:/.test(text)) return parseListBoxed(text);
+  if (/Wynagrodzenie\s+za\s+miesiąc/i.test(text) && !/Lista\s+płac\s+za\s+miesiąc/i.test(text)) return parseListVarico(text);
   const mm = /Lista\s+płac\s+za\s+miesiąc\s+(\S+)\s+(\d{4})/i.exec(text);
   const month = mm ? parseMonth(mm[1]) : null;
   if (!mm || !month) return fail(400, 'Payroll list: the month ("Lista płac za miesiąc …") was not found.');
@@ -58,16 +65,71 @@ export function parseList(text: string): Result<{ list: PayList }> {
   const co = /Firma:\s*([^\n]+)/i.exec(text);
   return { ok: true, list: { year: Number(mm[2]), month, payDate: pd ? `${pd[3]}-${pd[2]}-${pd[1]}` : null, company: co ? clean(co[1]) : null, people, gross, net } };
 }
+/** The boxed list (January 2026): per person "WYNAGRODZENIE (brutto) 5,684.40", the amount under "KWOTA DO WYPŁATY"
+ *  (on the line ending "│ 4,194.95 │ suma składek: …") and "Pracownik: BIELAWNY MICHAŁ"; checked against
+ *  "RAZEM WYNAGRODZENIE BRUTTO … 96,016.86". */
+function parseListBoxed(text: string): Result<{ list: PayList }> {
+  const mm = /Lista\s+PŁAC\s+za:\s*(\S+)\s+(\d{4})/.exec(text);
+  const month = mm ? parseMonth(mm[1]) : null;
+  if (!mm || !month) return fail(400, 'Payroll list: the month ("Lista PŁAC za: …") was not found.');
+  const people: ListPerson[] = [];
+  let gross: number | null = null, net: number | null = null;
+  for (const line of text.split('\n')) {
+    const g = /WYNAGRODZENIE\s+\(brutto\)\s+([\d,]+\.\d{2})/.exec(line); if (g) gross = dotMoney(g[1]);
+    const n = /│\s*([\d,]+\.\d{2})\s*│\s*suma składek/.exec(line); if (n) net = dotMoney(n[1]);
+    const w = /Pracownik:\s*(.+?)\s*│/.exec(line);
+    if (w) {
+      if (gross === null || net === null) return fail(400, `Payroll list: the pay of ${clean(w[1])} was not found.`);
+      const name = clean(w[1]); people.push({ name, key: personKey(name), gross: round2(gross), net: round2(net) }); gross = net = null;
+    }
+  }
+  if (!people.length) return fail(400, 'Payroll list: no person boxes were found.');
+  const tg = round2(people.reduce((s, p) => s + p.gross, 0)), tn = round2(people.reduce((s, p) => s + p.net, 0));
+  const tot = /RAZEM\s+WYNAGRODZENIE\s+BRUTTO[^\d]*(?:\(\s*\d+\s+do\s+\d+\s*\))?\s*([\d,]+\.\d{2})/.exec(text);
+  if (tot && Math.abs((dotMoney(tot[1]) ?? 0) - tg) > 0.05) return fail(400, `Payroll list: the people (gross ${tg.toFixed(2)}) do not add up to the list's total (${tot[1]}) — the file layout may have changed.`);
+  const pd = /kwoty w dniu:[\s\S]{0,240}?(\d{4}-\d{2}-\d{2})/.exec(text);   // the date is in the box below the words
+  return { ok: true, list: { year: Number(mm[2]), month, payDate: pd ? pd[1] : null, company: null, people, gross: tg, net: tn } };
+}
+/** Varico payslips (April 2026): "Wynagrodzenie za miesiąc kwiecień 2026 Data wypłaty: 10.05.2026", then
+ *  "ROMAN CEGŁA Do wypłaty: 5379,59" and "Wynagrodzenie 7504,59 Składki ZUS i podatek …". Names are first name
+ *  first there; they are turned round (CEGŁA ROMAN) to match the other lists. Each slip is checked:
+ *  gross − ZUS and tax − other deductions = to pay. */
+function parseListVarico(text: string): Result<{ list: PayList }> {
+  const mm = /Wynagrodzenie\s+za\s+miesiąc\s+(\S+)\s+(\d{4})/i.exec(text);
+  const month = mm ? parseMonth(mm[1]) : null;
+  if (!mm || !month) return fail(400, 'Payslips: the month ("Wynagrodzenie za miesiąc …") was not found.');
+  const lines = text.split('\n').map(clean), people: ListPerson[] = [], warn: string[] = [];
+  lines.forEach((l, i) => {
+    const h = /^(.+?)\s+Do wypłaty:\s*(-?[\d ]+,\d{2})/.exec(l); if (!h) return;
+    const net = parseMoney(h[2].replace(/\s/g, '')) ?? 0;
+    const body = lines.slice(i + 1, i + 4).join(' ');
+    const g = /Wynagrodzenie\s+(-?\d+,\d{2})/.exec(body), zt = /Składki ZUS i podatek\s+(-?\d+,\d{2})/.exec(body), od = /Pozostałe odliczenia\s+(-?\d+,\d{2})/.exec(body);
+    if (!g) { warn.push(h[1]); return; }
+    const gross = parseMoney(g[1]) ?? 0;
+    const words = clean(h[1]).split(' '), name = words.length > 1 ? [words[words.length - 1], ...words.slice(0, -1)].join(' ') : words[0];
+    if (zt && Math.abs(gross - (parseMoney(zt[1]) ?? 0) - (od ? parseMoney(od[1]) ?? 0 : 0) - net) > 0.05) warn.push(name);
+    people.push({ name, key: personKey(name), gross: round2(gross), net: round2(net) });
+  });
+  if (warn.length) return fail(400, `Payslips: the pay of ${warn.join(', ')} does not add up — the file layout may have changed.`);
+  if (!people.length) return fail(400, 'Payslips: no "… Do wypłaty:" lines were found.');
+  const pd = /Data\s+wypłaty:\s*(\d{2})\.(\d{2})\.(\d{4})/i.exec(text);
+  return { ok: true, list: { year: Number(mm[2]), month, payDate: pd ? `${pd[3]}-${pd[2]}-${pd[1]}` : null, company: null, people, gross: round2(people.reduce((s, p) => s + p.gross, 0)), net: round2(people.reduce((s, p) => s + p.net, 0)) } };
+}
 /** A transfer form: the amount stands on a line of its own (the same on every copy of the form). */
 function transferAmount(text: string, what: string): Result<{ amount: number }> {
   const a = [...new Set(text.split('\n').map(clean).filter((l) => MONEY.test(l)))];
   if (a.length !== 1) return fail(400, `${what}: ${a.length ? 'more than one amount' : 'no amount'} found on the transfer.`);
   return { ok: true, amount: parseMoney(a[0])! };
 }
-export const parseZus = (text: string) => transferAmount(text, 'ZUS');
+/** ZUS: as transferAmount; a form printed letter by letter ("4 0 2 8 4 , 9 4") is read without the spaces. */
+export function parseZus(text: string): Result<{ amount: number }> {
+  const plain = transferAmount(text, 'ZUS'); if (plain.ok) return plain;
+  const spaced = [...new Set(text.split('\n').map((l) => l.replace(/\s+/g, '')).filter((l) => MONEY.test(l)))];
+  return spaced.length === 1 ? { ok: true, amount: parseMoney(spaced[0])! } : plain;
+}
 export function parsePit4(text: string): Result<{ amount: number; year: number | null; month: number | null }> {
   const a = transferAmount(text, 'PIT-4'); if (!a.ok) return a;
-  const p = /\bM\s+(\d)\s*(\d)\s+M\s+(\d)\s*(\d)\b/.exec(text);   // "11. okres": RR M MM, e.g. "M 2 6 M 0 9"
+  const p = /\b[A-Z]\s+(\d)\s*(\d)\s+M\s+(\d)\s*(\d)\b/.exec(text);   // "11. okres": RR M MM after the id type, e.g. "M 2 6 M 0 9", "N 2 6 M 0 2"
   return { ok: true, amount: a.amount, year: p ? 2000 + Number(p[1] + p[2]) : null, month: p ? Number(p[3] + p[4]) : null };
 }
 
@@ -102,7 +164,9 @@ export function buildPreview(texts: { name: string; text: string }[], saved: Map
   const z = parseZus(by.zus!.text); if (!z.ok) return z;
   const p = parsePit4(by.pit4!.text); if (!p.ok) return p;
   const warnings: string[] = [];
-  if (p.year && p.month && (p.year !== l.list.year || p.month !== l.list.month)) warnings.push(`The PIT-4 transfer is for ${p.year}-${String(p.month).padStart(2, '0')}, the payroll list for ${l.list.year}-${String(l.list.month).padStart(2, '0')}.`);
+  // the PIT-4 period is the month the pay was paid (the list's month, or the month of its pay date)
+  const paid = l.list.payDate ? { y: Number(l.list.payDate.slice(0, 4)), m: Number(l.list.payDate.slice(5, 7)) } : null;
+  if (p.year && p.month && (p.year !== l.list.year || p.month !== l.list.month) && !(paid && paid.y === p.year && paid.m === p.month)) warnings.push(`The PIT-4 transfer is for ${p.year}-${String(p.month).padStart(2, '0')}, the payroll list for ${l.list.year}-${String(l.list.month).padStart(2, '0')}.`);
   const keys = new Set<string>();
   for (const x of l.list.people) { if (keys.has(x.key)) warnings.push(`${x.name} is on the list twice.`); keys.add(x.key); }
   return { ok: true, preview: { year: l.list.year, month: l.list.month, payDate: l.list.payDate, company: l.list.company, gross: l.list.gross, net: l.list.net, zus: z.amount, pit: p.amount,

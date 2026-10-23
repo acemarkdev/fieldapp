@@ -45,5 +45,33 @@ const v = payrollView(R, { year: 2026, month: 10 });
 ok('lump sum added to salaries, taxes untouched, month marked as from files', v[0].files && v[0].depts.Sales.salaries === 1500 && v[0].depts.Sales.base === 1000 && v[0].depts.Sales.lump === 500 && v[0].depts.Sales.taxes === 300 && v[0].depts.Office.salaries === 1000, v[0]);
 ok('the estimate after it counts the lump sum', v[1].depts.Sales.salaries === 1500 && v[1].depts.Sales.salariesStatus === 'forecast', v[1]);
 
+// 2026 files from the other payroll programs (Acemark PL, January and April) and the letter-by-letter ZUS form
+const BOXED = ['Lista PŁAC za: Styczeń 2026 Nr01/2026',
+  '│ 0.0 h 50%│ inne (+) 0.00 │ Dni chorobowych 0 │ Zaliczka na podatek 257.00│ KWOTA DO WYPŁATY: │ fundusz pracy: 139.27 │',
+  '├────────────┘ Rycz Samoch 0.00 │ Opieki 0 │ (─) multisport 46.61│ 4,194.95 │ suma składek: 1,164.17 │',
+  '│ WYNAGRODZENIE (brutto) 5,684.40 │Nieobecnności kwota 0.00 │ (─) Zaliczki 0.00├──────┴──┤',
+  '├───── U b e z p i e c z o n y ──────┼────┤ (─) PPK Pracownik 0.00│ Pracownik: BIELAWNY MICHAŁ │',
+  '│ Emerytalne 554.80 ┌───────────┼───┘ Porodowy 0.00│ Kwituję odbiór │ │', '│ Rentowe 85.27 │ S U M A │Składka Zdrowotna 441.46 Wychowawczy 0.00│ kwoty w dniu: │ │', '│ Chorobowe 139.27 │ 779.34 │Koszty Uzyskania 300.00 Pielęgnacyjny 0.00│ 2026-02-10 │ │',
+  '├────────────┘ Rycz Samoch 0.00 │ Opieki 0 │ (─) multisport 46.61│ 5,827.07 │ suma składek: 1,654.52 │',
+  '│ WYNAGRODZENIE (brutto) 8,078.71 │Nieobecnności kwota 0.00 │ (─) Zaliczki 0.00├────┴──┤',
+  '├───── U b e z p i e c z o n y ──────┼────┤ (─) PPK Pracownik 0.00│ Pracownik: CEGŁA ROMAN │',
+  '└────── RAZEM WYNAGRODZENIE BRUTTO ( 1 do 7 ) 13,763.11 │'].join('\n');
+const bx: any = parseList(BOXED);
+ok('boxed list (January)', fileKind(BOXED) === 'list' && bx.ok && bx.list.month === 1 && bx.list.year === 2026 && bx.list.payDate === '2026-02-10' && bx.list.people.length === 2 && bx.list.people[0].name === 'BIELAWNY MICHAŁ' && bx.list.people[0].gross === 5684.4 && bx.list.people[0].net === 4194.95 && bx.list.gross === 13763.11, bx);
+ok('boxed list: a wrong total is refused', !parseList(BOXED.replace('13,763.11', '13,000.00')).ok);
+const VARICO = ['Wynagrodzenie za miesiąc kwiecień 2026 Data wypłaty: 10.05.2026', 'ROMAN CEGŁA Do wypłaty: 5379,59 podpis pracownika',
+  'Wynagrodzenie 7504,59 Składki ZUS i podatek 2040,00 Pozostałe odliczenia 85,00 Parametry', 'multisport 63,75 ubezpieczenie emerytalne - płaci',
+  'Wynagrodzenie za miesiąc kwiecień 2026 Data wypłaty: 10.05.2026', 'NATALIA CIELOCH Do wypłaty: 6003,64 podpis pracownika',
+  'Wynagrodzenie 8420,31 Składki ZUS i podatek 2331,67 Pozostałe odliczenia 85,00 Parametry'].join('\n');
+const vr: any = parseList(VARICO);
+ok('Varico payslips (April): names turned round, pay checked', fileKind(VARICO) === 'list' && vr.ok && vr.list.month === 4 && vr.list.payDate === '2026-05-10' && vr.list.people.map((x: any) => x.name).join() === 'CEGŁA ROMAN,CIELOCH NATALIA' && vr.list.people[0].gross === 7504.59 && vr.list.people[0].net === 5379.59 && vr.list.net === 11383.23, vr);
+ok('Varico: a slip that does not add up is refused', !parseList(VARICO.replace('Do wypłaty: 5379,59', 'Do wypłaty: 5000,00')).ok);
+const ZUS2 = 'Z U S\nnazwa odbiorcy\nnr rachunku odbiorcy\nczt*zer*dwa*osi*czt*zł*dzi*czt*gr\nP L N\n0 6\n1 6 6 0 0 0 0 0 0 2 0 2 6 0 0 1 6 2 1 1 8 4 2 7 0 4\n4 0 2 8 4 , 9 4\nA C E M A R K S P . Z O . O .\nZ U S\nnazwa odbiorcy\n4 0 2 8 4 , 9 4\n';
+const z2: any = parseZus(ZUS2);
+ok('ZUS form printed letter by letter', fileKind(ZUS2) === 'zus' && z2.ok && z2.amount === 40284.94, z2);
+const PIT2 = 'Urząd Skarbowy W KROTOSZYNIE\n5724,00\n6211842704 N 2 6 M 0 2\nPIT-4 PODATEK PIT-4\n';
+const p2: any = parsePit4(PIT2);
+ok('PIT-4 period after the NIP type ("N 2 6 M 0 2")', p2.ok && p2.year === 2026 && p2.month === 2 && p2.amount === 5724, p2);
+
 if (fail) { console.error(fail + ' check(s) failed'); process.exit(1); }
 console.log('payrollFiles: all checks passed');

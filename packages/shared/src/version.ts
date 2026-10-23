@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.51.1';
+export const APP_VERSION = '1.51.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.51.2', date: '2026-10-23', changes: [
+    'Fin&Ops \u25b8 Payroll reads the files of the other payroll programs used in 2026: the boxed list (\u201cLista P\u0141AC za: Stycze\u0144 2026\u201d, January) and Varico payslips (\u201cWynagrodzenie za miesi\u0105c kwiecie\u0144 2026\u201d, April \u2014 names turned to surname first to match), the ZUS transfer printed letter by letter, and the PIT-4 period after the NIP type (\u201cN 2 6 M 0 2\u201d). The PIT-4 period may be the month of payment (no warning then).',
+  ] },
   { version: '1.51.1', date: '2026-10-23', changes: [
     'Labels: the phone is per company \u2014 choosing WEM or Acemark shows and saves that company\u2019s number; Acemark labels print it (Tel.) under the email when it is set. WEM keeps its number.',
   ] },
