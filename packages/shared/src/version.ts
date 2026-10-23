@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.54.0';
+export const APP_VERSION = '1.54.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.54.1', date: '2026-10-23', changes: [
+    'Fin&Ops: a Subiekt sales invoice with no job in its Podtytuł now counts as Sales from Orpiszew, not as Trade from Poland. Before, it was added in Sales and taken out again as “Other income (Trade from Poland)”, so Performance ▸ RESULT came out too low. A Subiekt invoice with an OK (trade) number stays trade; typed and imported invoices keep their producer rule.',
+  ] },
   { version: '1.54.0', date: '2026-10-23', changes: [
     'Fin&Ops ▸ Stock value: a new product window — the name with warehouse, supplier and group; tiles for quantity, value, average unit cost and last issue (red when nothing was issued for 6 months); the age bar with its shares; each delivery’s age in the colour of its age bucket. A Cortizo item shows its drawing from the Cortizo catalogue, the reference, description, weight and systems (a profile in no catalogue shows the drawing of its HI version).',
     'Stock value: click an age column (0–90 d … > 2 y) to show only the stock of that age, largest first, in the groups and the products; click it again, or VALUE, for all ages.',

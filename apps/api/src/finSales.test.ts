@@ -11,6 +11,9 @@ ok('date 03.01.2025 and 3/1/2025 are day-first', parseDate('03.01.2025') === '20
 ok('bad dates → null', parseDate('') === null && parseDate('soon') === null && parseDate('2025-13-01') === null);
 ok('channel: Acemark PL = production', saleChannel('Acemark PL') === 'production');
 ok('channel: Eko-okna / no producer / anything else = trade', saleChannel('Eko-okna') === 'trade' && saleChannel(null) === 'trade' && saleChannel('Profal') === 'trade');
+ok('channel: a Subiekt invoice with no job (nothing read from Podtytuł) = production', saleChannel(null, { source: 'subiekt', job_ref: null }) === 'production');
+ok('channel: a Subiekt trade invoice (OK job, supplier unknown) stays trade', saleChannel(null, { source: 'subiekt', job_ref: 'OK PL203173' }) === 'trade');
+ok('channel: a typed invoice with no producer stays trade', saleChannel('', { source: null, job_ref: null }) === 'trade');
 
 const a = F({ date: '2025-01-07', invoice_no: 'FS 2/ACE/01/2025', job: 'Z.164', month: 'Styczeń', year: 2025, producer: 'Acemark PL', buyer: 'ARGlass', net: 51950, gross: 51950, country: 'uk', seller: 'Acemark PL' })!;
 ok('sheet row → fields', a.invoice_no === 'FS 2/ACE/01/2025' && a.invoice_date === '2025-01-07' && a.job_key === 'Z.164' && a.period_month === 1 && a.period_year === 2025 && a.net === 51950 && a.country === 'UK' && a.kind === 'final', a);

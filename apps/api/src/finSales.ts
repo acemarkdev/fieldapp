@@ -6,7 +6,14 @@ import { db } from './supabase';
 import { parseMoney, parseMonth, referenceKey } from './finJobs';
 
 const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
-export const saleChannel = (producer: unknown): 'production' | 'trade' => (/^acemark/i.test(clean(producer)) ? 'production' : 'trade');
+/** Orpiszew (producer Acemark PL) or Trade from Poland. A Subiekt invoice with no job read from its Podtytuł has
+ *  no producer either; it is Acemark's own invoice, so it counts as Orpiszew — not as trade, which Performance
+ *  takes out of the result again. */
+export const saleChannel = (producer: unknown, row?: { source?: unknown; job_ref?: unknown }): 'production' | 'trade' => {
+  if (/^acemark/i.test(clean(producer))) return 'production';
+  if (!clean(producer) && row?.source === 'subiekt' && !clean(row.job_ref)) return 'production';
+  return 'trade';
+};
 /** Dates as typed or pasted from Excel: 2025-01-03, 03.01.2025, 3/1/2025 (day first), or with a time part. */
 export function parseDate(v: unknown): string | null {
   const s = clean(v).split(/[ T]/)[0];
@@ -57,7 +64,7 @@ async function selectAll(cols: string, tenantId: string): Promise<any[]> {
   }
   return out;
 }
-const out = (r: any) => ({ ...r, net: Number(r.net) || 0, gross: r.gross === null || r.gross === undefined ? null : Number(r.gross), channel: saleChannel(r.producer) });
+const out = (r: any) => ({ ...r, net: Number(r.net) || 0, gross: r.gross === null || r.gross === undefined ? null : Number(r.gross), channel: saleChannel(r.producer, r) });
 
 export async function listSales(tenantId: string): Promise<any[]> { return (await selectAll('*', tenantId)).map(out); }
 export async function createSale(tenantId: string, by: string, b: any): Promise<Result<{ id: string }>> {
