@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.51.4';
+export const APP_VERSION = '1.52.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.52.0', date: '2026-10-23', changes: [
+    'Fin&Ops ▸ Sales orders: Z numbers from monday (finance, admin) — reads the board PRODUCTION ACEMARK PL, where an item like “Z.453 -OK PL203173 -PCW - J035030P” says order OK PL203173 is produced as Z.453. A preview lists the orders with no Z number yet (ticked, filled on Load); the rest is listed and never changed: the order has a different Z, several orders share the OK number, the OK number or the Z is on several board items (phases), the Z is already on another order, or no order has that OK number. With the Z number, Subiekt invoices for that Z attach to the order by themselves. No migration.',
+  ] },
   { version: '1.51.4', date: '2026-10-23', changes: [
     'Fin&Ops ▸ Sales: the page description now says the invoices come from Subiekt automatically (every 30 minutes; changed in Subiekt) and that + Add invoice is only for what Subiekt does not have, such as a planned invoice. In English and Polish.',
   ] },
