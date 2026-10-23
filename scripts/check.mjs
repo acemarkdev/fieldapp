@@ -7,10 +7,12 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const bin = (n) => join('node_modules', '.bin', n);
+// Windows: the .bin entries are .cmd files and need the shell; macOS / Linux run them directly.
+const WIN = process.platform === 'win32';
+const bin = (n) => join('node_modules', '.bin', WIN ? n + '.cmd' : n);
 const steps = [
   ['types: server', bin('tsc'), ['-p', 'apps/api']],
-  ['types: mobile', join('apps', 'mobile', 'node_modules', '.bin', 'tsc'), ['--noEmit', '-p', 'apps/mobile']],
+  ['types: mobile', join('apps', 'mobile', 'node_modules', '.bin', WIN ? 'tsc.cmd' : 'tsc'), ['--noEmit', '-p', 'apps/mobile']],
   ['office page', process.execPath, ['scripts/check-office-page.mjs']],
 ];
 for (const dir of ['apps/api/src', 'packages/shared/src', 'apps/mobile/src/lib'])
@@ -20,7 +22,7 @@ for (const dir of ['apps/api/src', 'packages/shared/src', 'apps/mobile/src/lib']
 const failed = [];
 for (const [name, cmd, args] of steps) {
   const t = Date.now();
-  const r = spawnSync(cmd, args, { encoding: 'utf8' });
+  const r = spawnSync(cmd, args, { encoding: 'utf8', shell: WIN && cmd.endsWith('.cmd') });
   const ok = r.status === 0;
   console.log(`${ok ? '✓' : '✗'} ${name}  (${((Date.now() - t) / 1000).toFixed(1)}s)`);
   if (!ok) { failed.push(name); console.log(((r.stdout || '') + (r.stderr || '') + (r.error ? String(r.error) : '')).trim().split('\n').slice(0, 40).map((l) => '    ' + l).join('\n')); }

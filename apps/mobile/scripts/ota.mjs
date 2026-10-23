@@ -14,5 +14,9 @@ const env = { ...process.env, ...p.env };
 console.log(`Publishing to channel "${p.channel}" with ${p.env.EXPO_PUBLIC_SUPABASE_URL}`);
 // --environment is required by eas-cli in non-interactive mode; the database address and key still come from
 // eas.json above (process env), the EAS environment only adds variables set on expo.dev (none for this app).
-const r = spawnSync('npx', ['eas-cli', 'update', '--channel', p.channel, '--environment', profile, '--message', message, '--non-interactive'], { stdio: 'inherit', env });
+// Windows: npx is npx.cmd and needs the shell (the message is quoted for it)
+const WIN = process.platform === 'win32';
+const r = WIN
+  ? spawnSync('npx.cmd', ['eas-cli', 'update', '--channel', p.channel, '--environment', profile, '--message', JSON.stringify(message), '--non-interactive'], { stdio: 'inherit', env, shell: true })
+  : spawnSync('npx', ['eas-cli', 'update', '--channel', p.channel, '--environment', profile, '--message', message, '--non-interactive'], { stdio: 'inherit', env });
 process.exit(r.status ?? 1);
