@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.55.0';
+export const APP_VERSION = '1.56.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.56.0', date: '2026-10-25', changes: [
+    'Fin&Ops ▸ Sales orders: Load from monday (finance, admin) — reads the board Acemark PL Enquiries and compares it with Sales orders by the OK number. A preview lists the OK numbers not in Sales orders yet (ticked; a “created on or after” date narrows them), the ones already there (left alone), the ones on the board more than once — phases and revisions — and names without an OK number (never loaded). Load creates the ticked ones: the name as the order, the customer (My Contacts, CRM Customer or the name), Acemark, the month created, won = Accepted, lost / Dead Enquiries = Lost, otherwise Offer, Produkcja = supplier Acemark PL, the Z number and the sales rep when the board has them. The board has no order value: net stays 0. No migration.',
+  ] },
   { version: '1.55.0', date: '2026-10-23', changes: [
     'Fin&Ops ▸ Performance: a Result switch — management sheet (as before), UoR or IFRS (first version, Acemark only). UoR / IFRS: a prepayment counts as revenue in the month of its job’s final invoice (not yet delivered = a memo line); trade sales are revenue with the 499.V Handel purchase invoices as the cost of trade goods; production overheads and every other department’s invoices are costs (leasing as a cost); 631 Materials purchases are left out because materials count as RW. Poza bilans is shown under the result as a memo line and never changes it.',
     'IFRS shows the same numbers as UoR for now (trade as principal, revenue at delivery, IFRS 16 not applied) — the assumptions and what is not covered yet (materials timing, stock write-down, accruals, exchange differences) are written under the result and in the CSV.',
