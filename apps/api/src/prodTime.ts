@@ -103,19 +103,53 @@ async function all(table: string, cols: string, tenantId: string, order = 'id'):
   return out;
 }
 const missing = (e: any) => /prod_tasks|time_entries|worker_rates/.test(String(e?.message ?? '')) && /(does not exist|schema cache|not find)/i.test(String(e?.message ?? ''));
+
+// ---- companies: Acemark and WEM (migration 0107). Each production person belongs to one; tasks and entries carry it. ----
+export type ProdCompany = 'acemark' | 'wem';
+export const PROD_COMPANIES: { key: ProdCompany; name: string }[] = [{ key: 'acemark', name: 'Acemark' }, { key: 'wem', name: 'WEM' }];
+/** Anything but "wem" is Acemark (an empty setting included). */
+export const prodCompanyOf = (v: unknown): ProdCompany => (String(v ?? '').trim().toLowerCase() === 'wem' ? 'wem' : 'acemark');
+/** Entries that count as labour in Acemark's Job costs: Acemark's only — WEM is kept apart. */
+export const countsForJobCosts = (e: { company?: string | null }) => prodCompanyOf(e.company) === 'acemark';
+// Before migration 0107 there is no company column: then everything is Acemark and nothing is filtered.
+let ready: { at: number; ok: boolean } | null = null;
+export async function companyReady(): Promise<boolean> {
+  if (ready && Date.now() - ready.at < 60_000) return ready.ok;
+  const { error } = await db().from('prod_tasks').select('company').limit(1);
+  ready = { at: Date.now(), ok: !error }; return ready.ok;
+}
+/** Each user's production company (id → company); users without a setting are Acemark. */
+export async function prodCompanyMap(tenantId: string): Promise<Map<string, ProdCompany>> {
+  const { data, error } = await db().from('app_users').select('id,prod_company').eq('tenant_id', tenantId);
+  if (error) return new Map();
+  return new Map((data ?? []).map((u: any) => [u.id, prodCompanyOf(u.prod_company)]));
+}
+export async function userProdCompany(userId: string): Promise<ProdCompany> {
+  const { data, error } = await db().from('app_users').select('prod_company').eq('id', userId).maybeSingle();
+  return error ? 'acemark' : prodCompanyOf(data?.prod_company);
+}
+export async function setUserProdCompany(userId: string, tenantId: string, v: unknown): Promise<void> {
+  const { error } = await db().from('app_users').update({ prod_company: prodCompanyOf(v) === 'wem' ? 'wem' : null }).eq('tenant_id', tenantId).eq('id', userId);
+  if (error) throw error;
+}
 /** Labour from logged time, per job key — [] when migration 0077 has not been run yet. */
 export async function loggedLabour(tenantId: string, cutoff: Map<string, string> = new Map()): Promise<Map<string, { hours: number; cost: number; unrated: number }>> {
   try {
-    const [entries, rows, def] = await Promise.all([all('time_entries', 'user_id,job_key,started_at,ended_at', tenantId), rateRows(tenantId), getLabourRate()]);
-    return labourByJob(entries, rateBook(rows), def, cutoff);
+    const co = await companyReady();
+    const [entries, rows, def] = await Promise.all([all('time_entries', 'user_id,job_key,started_at,ended_at' + (co ? ',company' : ''), tenantId), rateRows(tenantId), getLabourRate()]);
+    return labourByJob(entries.filter(countsForJobCosts), rateBook(rows), def, cutoff);
   } catch (e) { if (missing(e)) return new Map(); throw e; }
 }
 
-export async function listTasks(tenantId: string): Promise<any[]> { return all('prod_tasks', '*', tenantId, 'export_name'); }
+export async function listTasks(tenantId: string, company: ProdCompany = 'acemark'): Promise<any[]> {
+  const rows = await all('prod_tasks', '*', tenantId, 'export_name');
+  return (await companyReady()) ? rows.filter((t) => prodCompanyOf(t.company) === company) : rows;
+}
 /** Every row becomes a task — the same set may be loaded again for an order (a new batch); the
  *  manager closes the old set. `existing` counts the new tasks whose name is already open, as a heads-up. */
-export async function importTasks(tenantId: string, by: string, rows: unknown[][]): Promise<{ added: number; existing: number; invalid: number }> {
-  const open = new Set((await all('prod_tasks', 'export_name,active', tenantId)).filter((t) => t.active).map((t) => t.export_name));
+export async function importTasks(tenantId: string, by: string, rows: unknown[][], company: ProdCompany = 'acemark'): Promise<{ added: number; existing: number; invalid: number }> {
+  const co = await companyReady();
+  const open = new Set((await all('prod_tasks', 'export_name,active' + (co ? ',company' : ''), tenantId)).filter((t) => t.active && (!co || prodCompanyOf(t.company) === company)).map((t) => t.export_name));
   const fresh: TaskRow[] = []; let existing = 0, invalid = 0;
   for (const r of rows) {
     const t = taskFromRow(Array.isArray(r) ? r : []);
@@ -123,26 +157,29 @@ export async function importTasks(tenantId: string, by: string, rows: unknown[][
     if (open.has(t.export_name)) existing++;
     fresh.push(t);
   }
-  for (let i = 0; i < fresh.length; i += 200) { const { error } = await db().from('prod_tasks').insert(fresh.slice(i, i + 200).map((t) => ({ tenant_id: tenantId, created_by: by, ...t }))); if (error) throw error; }
+  for (let i = 0; i < fresh.length; i += 200) { const { error } = await db().from('prod_tasks').insert(fresh.slice(i, i + 200).map((t) => ({ tenant_id: tenantId, created_by: by, ...t, ...(co ? { company } : {}) }))); if (error) throw error; }
   return { added: fresh.length, existing, invalid };
 }
-export async function addTask(tenantId: string, by: string, b: any): Promise<Result<{ id: string }>> {
+export async function addTask(tenantId: string, by: string, b: any, company: ProdCompany = 'acemark'): Promise<Result<{ id: string }>> {
   const job_ref = jobRefOf(b?.job_ref), operation = clean(b?.operation);
   if (!job_ref || !operation) return fail(400, 'Enter the job and the operation.');
   const export_name = (job_ref.replace('.', '_').replace(/\s+/g, '_') + '_' + operation.replace(/\s+/g, '_')).slice(0, 160);
-  const { data, error } = await db().from('prod_tasks').insert({ tenant_id: tenantId, created_by: by, export_name, job_ref, job_key: referenceKey(job_ref).slice(0, 80), op_id: clean(b?.op_id) || null, operation: export_name, alias: operation }).select('id').single();
+  const { data, error } = await db().from('prod_tasks').insert({ tenant_id: tenantId, created_by: by, export_name, job_ref, job_key: referenceKey(job_ref).slice(0, 80), op_id: clean(b?.op_id) || null, operation: export_name, alias: operation, ...((await companyReady()) ? { company } : {}) }).select('id').single();
   if (error) return /duplicate/i.test(error.message) ? fail(409, 'This task already exists.') : (() => { throw error; })();
   return { ok: true, id: data.id };
 }
-export async function setTaskActive(tenantId: string, id: string, active: boolean): Promise<boolean> {
-  return (await setTasksActive(tenantId, [id], active)) > 0;
+export async function setTaskActive(tenantId: string, id: string, active: boolean, company: ProdCompany = 'acemark'): Promise<boolean> {
+  return (await setTasksActive(tenantId, [id], active, company)) > 0;
 }
 /** Close or reopen many tasks at once. */
-export async function setTasksActive(tenantId: string, ids: string[], active: boolean): Promise<number> {
+export async function setTasksActive(tenantId: string, ids: string[], active: boolean, company: ProdCompany = 'acemark'): Promise<number> {
   const uniq = [...new Set(ids.map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+  const co = await companyReady();
   let n = 0;
   for (let i = 0; i < uniq.length; i += 200) {
-    const { data, error } = await db().from('prod_tasks').update({ active }).eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 200)).select('id');
+    let q = db().from('prod_tasks').update({ active }).eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 200));
+    if (co) q = q.eq('company', company);
+    const { data, error } = await q.select('id');
     if (error) throw error; n += (data ?? []).length;
   }
   return n;
@@ -157,17 +194,20 @@ async function logEdit(tenantId: string, action: 'create' | 'update' | 'delete',
   const e = after ?? before;
   const { error } = await db().from('time_edit_log').insert({ tenant_id: tenantId, entry_id: e?.id ?? null, worker_name: e?.user_name ?? null, task_name: e?.task_name ?? null, action,
     old_start: before?.started_at ?? null, old_end: before?.ended_at ?? null, new_start: after?.started_at ?? null, new_end: after?.ended_at ?? null,
-    actor_id: actor.id, actor_name: actor.name, actor_role: actor.role, source: 'office' });
+    actor_id: actor.id, actor_name: actor.name, actor_role: actor.role, source: 'office', ...((await companyReady()) ? { company: prodCompanyOf(e?.company) } : {}) });
   if (error && !/time_edit_log/.test(error.message)) throw error;   // before migration 0078 the log just isn't kept
 }
-export async function listEditLog(tenantId: string, limit = 1000): Promise<any[]> {
-  const { data, error } = await db().from('time_edit_log').select('*').eq('tenant_id', tenantId).order('at', { ascending: false }).limit(limit);
+export async function listEditLog(tenantId: string, limit = 1000, company: ProdCompany | null = null): Promise<any[]> {
+  let q = db().from('time_edit_log').select('*').eq('tenant_id', tenantId);
+  if (company && (await companyReady())) q = q.eq('company', company);
+  const { data, error } = await q.order('at', { ascending: false }).limit(limit);
   if (error) { if (/time_edit_log/.test(error.message)) return []; throw error; }
   return data ?? [];
 }
 
-export async function listEntries(tenantId: string, from: string | null, to: string | null): Promise<any[]> {
+export async function listEntries(tenantId: string, from: string | null, to: string | null, company: ProdCompany = 'acemark'): Promise<any[]> {
   let q = db().from('time_entries').select('*').eq('tenant_id', tenantId).order('started_at', { ascending: false }).limit(5000);
+  if (await companyReady()) q = q.eq('company', company);
   if (from) q = q.gte('started_at', from); if (to) q = q.lt('started_at', to);
   const { data, error } = await q; if (error) throw error; return data ?? [];
 }
@@ -180,34 +220,38 @@ function entryFields(b: any): Result<{ fields: Record<string, any> }> {
   return { ok: true, fields: { started_at: new Date(s).toISOString(), ended_at: Number.isFinite(e) ? new Date(e).toISOString() : null, note: clean(b?.note).slice(0, 300) || null } };
 }
 /** The manager adds an entry for a worker (forgot to start) or corrects one. */
-export async function saveEntry(tenantId: string, actor: Actor, id: string | null, b: any): Promise<Result<{ id: string }>> {
-  const by = actor.name;
+export async function saveEntry(tenantId: string, actor: Actor, id: string | null, b: any, company: ProdCompany = 'acemark'): Promise<Result<{ id: string }>> {
+  const by = actor.name, co = await companyReady();
   const f = entryFields(b); if (!f.ok) return f;
   const fields: Record<string, any> = { ...f.fields, source: 'manual', edited_by: by };
   if (b?.task_id) {
-    const t = await db().from('prod_tasks').select('id,export_name,job_key').eq('tenant_id', tenantId).eq('id', String(b.task_id)).maybeSingle();
-    if (t.error) throw t.error; if (!t.data) return fail(400, 'Choose the task.');
-    Object.assign(fields, { task_id: t.data.id, task_name: t.data.export_name, job_key: t.data.job_key });
+    const t = await db().from('prod_tasks').select('id,export_name,job_key' + (co ? ',company' : '')).eq('tenant_id', tenantId).eq('id', String(b.task_id)).maybeSingle();
+    if (t.error) throw t.error; if (!t.data || (co && prodCompanyOf((t.data as any).company) !== company)) return fail(400, 'Choose the task.');
+    const td = t.data as any;
+    Object.assign(fields, { task_id: td.id, task_name: td.export_name, job_key: td.job_key });
   } else if (!id) return fail(400, 'Choose the task.');
   if (!id) {
-    const u = await db().from('app_users').select('id,name,email').eq('tenant_id', tenantId).eq('id', String(b?.user_id ?? '')).maybeSingle();
-    if (u.error) throw u.error; if (!u.data) return fail(400, 'Choose the worker.');
+    const u = await db().from('app_users').select('id,name,email' + (co ? ',prod_company' : '')).eq('tenant_id', tenantId).eq('id', String(b?.user_id ?? '')).maybeSingle();
+    if (u.error) throw u.error; if (!u.data || (co && prodCompanyOf((u.data as any).prod_company) !== company)) return fail(400, 'Choose the worker.');
     if (!fields.ended_at) return fail(400, 'Enter the end.');
-    const { data, error } = await db().from('time_entries').insert({ tenant_id: tenantId, user_id: u.data.id, user_name: u.data.name, user_email: u.data.email, ...fields }).select('*').single();
+    const w = u.data as any;
+    const { data, error } = await db().from('time_entries').insert({ tenant_id: tenantId, user_id: w.id, user_name: w.name, user_email: w.email, ...fields, ...(co ? { company } : {}) }).select('*').single();
     if (error) throw error;
     await logEdit(tenantId, 'create', null, data, actor);
     return { ok: true, id: data.id };
   }
   const cur = await db().from('time_entries').select('*').eq('tenant_id', tenantId).eq('id', id).maybeSingle();
-  if (cur.error) throw cur.error; if (!cur.data) return fail(404, 'Entry not found.');
+  if (cur.error) throw cur.error; if (!cur.data || (co && prodCompanyOf(cur.data.company) !== company)) return fail(404, 'Entry not found.');
   const { data, error } = await db().from('time_entries').update(fields).eq('tenant_id', tenantId).eq('id', id).select('*');
   if (error) { if (/one_running/.test(error.message)) return fail(409, 'This worker already has a running task.'); throw error; }
   if (!(data ?? []).length) return fail(404, 'Entry not found.');
   if (timesChanged(cur.data, data![0])) await logEdit(tenantId, 'update', cur.data, data![0], actor);
   return { ok: true, id };
 }
-export async function deleteEntry(tenantId: string, id: string, actor: Actor): Promise<boolean> {
-  const { data, error } = await db().from('time_entries').delete().eq('tenant_id', tenantId).eq('id', id).select('*');
+export async function deleteEntry(tenantId: string, id: string, actor: Actor, company: ProdCompany = 'acemark'): Promise<boolean> {
+  let q = db().from('time_entries').delete().eq('tenant_id', tenantId).eq('id', id);
+  if (await companyReady()) q = q.eq('company', company);
+  const { data, error } = await q.select('*');
   if (error) throw error;
   if (!(data ?? []).length) return false;
   await logEdit(tenantId, 'delete', data![0], null, actor);

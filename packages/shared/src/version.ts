@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.57.0';
+export const APP_VERSION = '1.58.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.58.0', date: '2026-10-26', changes: [
+    'Production time for a second company, WEM, besides Acemark. Admin ▸ Users: production workers, leads, managers and warehouse workers get a company (Time: Acemark / WEM, under the role; empty = Acemark). Tasks are loaded per company — the same task file, imported while that company is chosen.',
+    'Each person sees only their company: on the phone a worker sees and starts only their company’s tasks (and “Bez zadania”, moving an entry to another task, stay within it); in the office a production manager or lead sees only their company’s tasks, entries, workers, rates and export. Admin switches between Acemark and WEM in the Production time title.',
+    'WEM hours are kept apart: they are never added as labour to Acemark’s Job costs, even on the same job number. Needs migration 0107; before it, everything stays Acemark as today. No phone update needed.',
+  ] },
   { version: '1.57.0', date: '2026-10-26', changes: [
     'Sales orders ⇄ Job costs, step 1 of the order-to-actuals process. The Z number reaches the sales order by itself: Job costs ▸ Load from monday links the orders of the board items named “Z.453 -OK PL203173 …” in the same step, and every night at 04:00 the safe ones are linked again (only an empty Z is filled, as with the Z numbers from monday button, which stays).',
     'The decision comes back to the order: deciding a budget (produce or trade) gives its sales order(s) the supplier (Acemark PL, or the vendor) and the budget cost of the chosen scenario — purchase cost, and transport as the delivery cost; the installation cost stays as the rep typed it. A Z linked later, or typed by hand by finance, takes an already decided budget too.',

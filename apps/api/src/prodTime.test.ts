@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/prodTime.test.ts   (rows as in the real wejście / wyjście sheets)
-import { jobRefOf, taskFromRow, labourByJob, exportRow, hms, hoursBetween, timesChanged, rateBook, rateFor, rowOn, entryDay } from './prodTime';
+import { jobRefOf, taskFromRow, labourByJob, exportRow, hms, hoursBetween, timesChanged, rateBook, rateFor, rowOn, entryDay, prodCompanyOf, countsForJobCosts } from './prodTime';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -43,5 +43,12 @@ ok('only start or end changes count as a time edit', !timesChanged({ started_at:
 
 const t2 = taskFromRow(['Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1', 'UTWORZONO', 'Z_437', 'A0031', 'cnc cor 70 ind HO', '']);
 ok('the task is named by Eksport_Clockify; the short operation stays as the alias', !!t2 && t2.operation === 'Z_437_cnc_Poz_1_cor_70_ind_ho_012_w1' && t2.alias === 'cnc cor 70 ind HO' && t2.job_ref === 'Z.437', t2);
+// companies: WEM is kept apart from Acemark Job costs; anything but "wem" is Acemark
+ok('company: wem / WEM → wem, empty or unknown → acemark', prodCompanyOf('wem') === 'wem' && prodCompanyOf(' WEM ') === 'wem' && prodCompanyOf(null) === 'acemark' && prodCompanyOf('acemark') === 'acemark' && prodCompanyOf('x') === 'acemark');
+const mixed = [{ company: 'acemark' }, { company: 'wem' }, {}, { company: null }];
+ok('Job costs labour: Acemark entries only (also those from before the company column)', mixed.filter(countsForJobCosts).length === 3);
+const both = labourByJob([{ user_id: 'u', job_key: 'Z.437', started_at: '2026-10-01T06:00:00Z', ended_at: '2026-10-01T08:00:00Z', company: 'acemark' }, { user_id: 'u', job_key: 'Z.437', started_at: '2026-10-01T09:00:00Z', ended_at: '2026-10-01T10:00:00Z', company: 'wem' }].filter(countsForJobCosts) as any, new Map([['u', 50]]), 45);
+ok('a WEM entry on the same job number adds nothing to Acemark Z.437', both.get('Z.437')?.hours === 2 && both.get('Z.437')?.cost === 100, [...both]);
+
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('prodTime: all passed');
