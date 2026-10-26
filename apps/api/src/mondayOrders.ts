@@ -89,9 +89,9 @@ export async function previewZLinks(tenantId: string): Promise<{ rows: ZRow[]; i
 }
 /** Write the ticked rows. The plan is worked out again here and an order is written only while its Z number is
  *  still empty, so a row that changed meanwhile does nothing. */
-export async function applyZLinks(tenantId: string, ids: string[]): Promise<{ filled: string[]; skipped: number }> {
+export async function applyZLinks(tenantId: string, ids: string[]): Promise<{ filled: string[]; skipped: number; links: { orderId: string; z: string }[] }> {
   const { rows } = await previewZLinks(tenantId);
-  const want = new Set(ids.map(String)), filled: string[] = [], done = new Set<string>();
+  const want = new Set(ids.map(String)), filled: string[] = [], done = new Set<string>(), links: { orderId: string; z: string }[] = [];
   let skipped = 0;
   for (const r of rows) {
     if (!want.has(r.id)) continue;
@@ -99,7 +99,7 @@ export async function applyZLinks(tenantId: string, ids: string[]): Promise<{ fi
     const { data, error } = await db().from('fin_orders').update({ job_ref: r.z, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId).eq('id', r.orderId).or('job_ref.is.null,job_ref.eq.').select('id');
     if (error) throw error;
     if (!data?.length) { skipped++; continue; }
-    done.add(r.orderId); filled.push(`${r.orderRef} → ${r.z}`);
+    done.add(r.orderId); filled.push(`${r.orderRef} → ${r.z}`); links.push({ orderId: r.orderId, z: r.z });
   }
-  return { filled, skipped };
+  return { filled, skipped, links };
 }

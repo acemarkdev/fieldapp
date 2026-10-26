@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.56.1';
+export const APP_VERSION = '1.57.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.57.0', date: '2026-10-26', changes: [
+    'Sales orders ⇄ Job costs, step 1 of the order-to-actuals process. The Z number reaches the sales order by itself: Job costs ▸ Load from monday links the orders of the board items named “Z.453 -OK PL203173 …” in the same step, and every night at 04:00 the safe ones are linked again (only an empty Z is filled, as with the Z numbers from monday button, which stays).',
+    'The decision comes back to the order: deciding a budget (produce or trade) gives its sales order(s) the supplier (Acemark PL, or the vendor) and the budget cost of the chosen scenario — purchase cost, and transport as the delivery cost; the installation cost stays as the rep typed it. A Z linked later, or typed by hand by finance, takes an already decided budget too.',
+    'The order shows its Z job: the Z pill in the list carries the decision (Produce / Trade / Rejected); the order window has a Production job block with the offer, both scenarios and the better one, and Open in Job costs.',
+    'Job costs: an empty budget offer is filled from the sales order’s net (save to keep it); when they differ, the budget says what the order has. The job window names its sales order. No migration.',
+  ] },
   { version: '1.56.1', date: '2026-10-26', changes: [
     'Production time ▸ change log: a worker moving an entry to another task on the phone (FitAWindow 0.76.3) is listed — the old task crossed out, the new one in bold. The phone may now correct own entries of the last 7 days and move them to another task; a task whose job is locked in Job costs cannot be moved into or out of. Needs migrations 0104 and 0105.',
   ] },
