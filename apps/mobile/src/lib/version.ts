@@ -56,4 +56,9 @@
 //   (the hire starts, the certificate is made in the office app), delivery / collection notes per item, and the
 //   7-day inspection (safe / not safe, defects, actions, up to 4 photos). Inspections due tab. Talks to the office
 //   server (EXPO_PUBLIC_OFFICE_URL). Over the air on 0.76.0; needs office 1.48.0 and migrations 0101 + 0102.
-export const APP_VERSION = '0.76.1';
+// 0.76.2 — Warehouse: once a Z order is typed, the list under Wydania / Zwroty shows only that order's rows (link
+//   "Pokaż wszystkie zlecenia" for all). Production time: entries of the last 7 days can be corrected (before: only
+//   today; deleting stays today-only) — needs migration 0104; each task in Moje zadania can get the worker's own name
+//   (✎, kept on this phone only — the office and the export keep the real name). Android: the edit sheets and the
+//   warehouse form move above the keyboard (edge-to-edge no longer resizes the window). Over the air on 0.76.0.
+export const APP_VERSION = '0.76.2';

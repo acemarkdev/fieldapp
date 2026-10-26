@@ -25,6 +25,13 @@ export function formProblem(f: WhForm): string | null {
 /** A scanned code → the text for the field: trimmed; a symbol upper-cased. */
 export const scanned = (raw: unknown, field: 'symbol' | 'location') => { const s = clean(raw).slice(0, 80); return field === 'symbol' ? s.toUpperCase() : s; };
 /** Z orders for the quick-pick chips: the worker's own recent ones first, then the open jobs; filtered by what is typed. */
+/** The list under the form: once a Z order is typed (Z.437, z437 …), only that order's rows; otherwise all. */
+export function forJob<T extends { job_ref: string }>(rows: T[], typed: string): { rows: T[]; job: string | null } {
+  const z = zRef(typed);
+  if (!/^Z\.\d+/.test(z)) return { rows, job: null };
+  const k = z.toUpperCase().replace(/\s/g, '');
+  return { rows: rows.filter((r) => zRef(r.job_ref).toUpperCase().replace(/\s/g, '') === k), job: z };
+}
 export function jobChoices(mine: WhIssue[], open: string[], typed: string, n = 8): string[] {
   const t = zRef(typed).toUpperCase().replace(/\s/g, ''), out: string[] = [];
   for (const j of [...mine.map((m) => m.job_ref), ...open]) {

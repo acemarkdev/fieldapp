@@ -1,5 +1,5 @@
 // Run: npx tsx apps/mobile/src/lib/timeLogic.test.ts
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, type ProdTask } from './timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, editableRecent, taskName, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, type ProdTask } from './timeLogic';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -33,6 +33,9 @@ const tbt = [{ id: 'a', task_id: '1', task_name: 'x', started_at: iso(7), ended_
 const byTask = todayByTask(tbt, now);
 ok('today per task: finished + running up to now; across midnight only the part after 00:00; yesterday not at all', byTask.get('1') === 2.5 * 3600000 && byTask.get('2') === 3600000 && !byTask.has('3'), [...byTask]);
 ok('entries started today', countToday(tbt, now) === 2);
+const ER = (d: Date) => ({ id: 'x', task_id: null, task_name: null, started_at: d.toISOString(), ended_at: null });
+ok('editable for 7 days: today and the 6 days before; the 7th day back is locked', editableRecent(ER(new Date(2026, 9, 14, 6)), day) && editableRecent(ER(new Date(2026, 9, 8, 0, 30)), day) && !editableRecent(ER(new Date(2026, 9, 7, 23, 0)), day));
+ok('own task name on the phone wins; empty or blank falls back', taskName({ id: 't', job_ref: 'Z.394', operation: 'szklenie' }, { t: 'Szyby kuchnia' }) === 'Szyby kuchnia' && taskName({ id: 't', job_ref: 'Z.394', operation: 'szklenie' }, { t: '  ' }) === 'Z.394 · szklenie' && taskName({ id: 'u', job_ref: 'Z.394', operation: 'szklenie' }, {}) === 'Z.394 · szklenie');
 
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('timeLogic: all passed');

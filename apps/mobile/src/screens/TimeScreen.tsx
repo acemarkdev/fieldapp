@@ -1,14 +1,17 @@
 // Production time (role "production"): pick a task of a job and start the timer; stop it, or start
 // another task (that stops the running one). "Moje zadania" keeps the last tasks used for one-tap
-// switching. Today's entries can be corrected (time, not date) and commented; older ones only by the
+// switching, and each of them can get the worker's own name (kept on this phone only). Entries of the last
+// 7 days can be corrected (time, not date) and commented, today's also deleted; older ones only by the
 // production manager in the office app. Start/stop/edit go through the database functions prod_start,
 // prod_stop and prod_edit_entry, which stamp and check the time on the server. Polish: production
 // works in Orpiszew.
 import { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, AppState, Modal, KeyboardAvoidingView, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { useKeyboardPad } from '../lib/useKeyboardPad';
 import { C } from '../lib/theme';
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, type ProdTask, type TimeEntry } from '../lib/timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, taskName, editableToday, editableRecent, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, type ProdTask, type TimeEntry } from '../lib/timeLogic';
 
 export default function TimeScreen() {
   const [tasks, setTasks] = useState<ProdTask[]>([]);
@@ -20,6 +23,14 @@ export default function TimeScreen() {
   const [editing, setEditing] = useState<TimeEntry | null>(null);
   // Two tabs under the running task: the tasks (with Moje zadania on top) and the worker's own entries.
   const [tab, setTab] = useState<'tasks' | 'entries'>('tasks');
+  // The worker's own task names (task id → name), on this phone only — the office and the export keep the real name.
+  const [own, setOwn] = useState<Record<string, string>>({});
+  const [renaming, setRenaming] = useState<ProdTask | null>(null);
+  useEffect(() => { AsyncStorage.getItem(NAMES_KEY).then((v) => { try { if (v) setOwn(JSON.parse(v) ?? {}); } catch { /* ignore a broken value */ } }).catch(() => {}); }, []);
+  const saveName = (id: string, name: string) => setOwn((cur) => {
+    const next = { ...cur }; if (name.trim()) next[id] = name.trim().slice(0, 80); else delete next[id];
+    AsyncStorage.setItem(NAMES_KEY, JSON.stringify(next)).catch(() => {}); return next;
+  });
 
   const load = useCallback(async () => {
     try {
@@ -64,7 +75,7 @@ export default function TimeScreen() {
   const fmtT = (iso: string) => hhmm(new Date(iso));
 
   // a plain function, not a component: the clock re-renders every second and must not remount the rows
-  const taskRow = (t: ProdTask, label: string) => {
+  const taskRow = (t: ProdTask, label: string, renamable = false) => {
     const on = running?.task_id === t.id, done = byTask.get(t.id);
     return (
       <View key={t.id} style={s.row}>
@@ -72,6 +83,7 @@ export default function TimeScreen() {
           <Text style={[s.op, { marginRight: 0 }, on && { color: C.green, fontWeight: '800' }]} numberOfLines={2}>{label}</Text>
           {!!done && <Text style={s.today}>dziś {short(done)}</Text>}
         </View>
+        {renamable && <TouchableOpacity style={s.ren} onPress={() => setRenaming(t)} hitSlop={8} accessibilityLabel="Zmień nazwę"><Text style={s.renT}>✎</Text></TouchableOpacity>}
         {on ? <Text style={s.onT}>trwa</Text>
           : <TouchableOpacity style={s.start} onPress={() => start(t)} disabled={busy} activeOpacity={0.85}><Text style={s.startT}>Start</Text></TouchableOpacity>}
       </View>
@@ -87,7 +99,7 @@ export default function TimeScreen() {
         <View style={[s.card, running ? s.cardOn : null]}>
           <View style={{ flex: 1 }}>
             {running ? (<>
-              <Text style={s.task} numberOfLines={2}>{runningTask ? taskLabel(runningTask) : running.task_name}</Text>
+              <Text style={s.task} numberOfLines={2}>{runningTask ? taskName(runningTask, own) : running.task_name}</Text>
               <Text style={s.muted}>od {fmtT(running.started_at)} · dzisiaj {today.toFixed(2).replace('.', ',')} h</Text>
             </>) : (<>
               <Text style={s.small}>NIC NIE TRWA</Text>
@@ -112,7 +124,7 @@ export default function TimeScreen() {
         {recent.length > 0 && (
           <View style={[s.group, { borderColor: C.purple }]}>
             <Text style={s.job}>Moje zadania</Text>
-            {recent.map((t) => taskRow(t, taskLabel(t)))}
+            {recent.map((t) => taskRow(t, taskName(t, own), true))}
           </View>
         )}
 
@@ -130,18 +142,18 @@ export default function TimeScreen() {
         {tab === 'entries' && <>
         {entries.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 20 }]}>Brak wpisów — uruchom zadanie w zakładce Zadania.</Text>}
         {entries.map((e, i) => {
-          const can = editableToday(e, new Date(now));
+          const can = editableRecent(e, new Date(now));
           const t = e.task_id ? tasks.find((x) => x.id === e.task_id) : undefined;   // only open tasks can be continued
           const head = i === 0 || !sameDay(new Date(e.started_at), new Date(entries[i - 1].started_at));
           return (<View key={e.id}>
             {head && <Text style={[s.small, { marginTop: i ? 16 : 4, marginBottom: 2 }]}>{dayLabel(e.started_at).toUpperCase()}</Text>}
-            <TouchableOpacity key={e.id} style={s.entry} onPress={() => (can ? setEditing(e) : Alert.alert('Starszy wpis', 'Wpisy z poprzednich dni zmienia kierownik produkcji.'))} activeOpacity={0.7}>
+            <TouchableOpacity key={e.id} style={s.entry} onPress={() => (can ? setEditing(e) : Alert.alert('Starszy wpis', 'Wpisy starsze niż 7 dni zmienia kierownik produkcji.'))} activeOpacity={0.7}>
               <View style={{ flex: 1 }}>
-                <Text style={s.entryT} numberOfLines={1}>{e.task_name}</Text>
+                <Text style={s.entryT} numberOfLines={1}>{t && own[t.id] ? own[t.id] : e.task_name}</Text>
                 <Text style={s.muted}>{new Date(e.started_at).toLocaleDateString('pl-PL')} {fmtT(e.started_at)}–{e.ended_at ? fmtT(e.ended_at) : 'trwa'}{e.ended_at ? ` · ${clock(Date.parse(e.ended_at) - Date.parse(e.started_at))}` : ''}</Text>
                 {!!e.note && <Text style={s.note} numberOfLines={2}>„{e.note}”</Text>}
               </View>
-              {/* Today: change (delete is inside the edit window) + start the same task again. Earlier days: start again only. */}
+              {/* Last 7 days: change (today also delete, inside the edit window) + start the same task again. Older: start again only. */}
               <View style={{ flexDirection: 'row', gap: 6, paddingLeft: 8, alignItems: 'center' }}>
                 {can && <TouchableOpacity style={s.eBtn} onPress={() => setEditing(e)}><Text style={s.eBtnT}>Zmień</Text></TouchableOpacity>}
                 {t && running?.task_id !== t.id
@@ -154,13 +166,14 @@ export default function TimeScreen() {
         })}
         </>}
       </ScrollView>
-      {editing && <EditEntry entry={editing} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskLabel(t) : editing.task_name ?? ''; })()}
+      {editing && <EditEntry entry={editing} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
         onClose={() => setEditing(null)}
-        onDelete={() => editing && removeEntry(editing)}
+        onDelete={editableToday(editing, new Date(now)) ? () => editing && removeEntry(editing) : null}
         onSave={async (startD, endD, note) => {
           const ok = await act(() => supabase.rpc('prod_edit_entry', { p_entry: editing.id, p_start: startD.toISOString(), p_end: endD ? endD.toISOString() : null, p_note: note }));
           if (ok) setEditing(null);
         }} />}
+      {renaming && <RenameTask task={renaming} current={own[renaming.id] ?? ''} onClose={() => setRenaming(null)} onSave={(name) => { saveName(renaming.id, name); setRenaming(null); }} />}
     </View>
   );
 }
@@ -169,7 +182,8 @@ export default function TimeScreen() {
 function plError(err: any): string {
   const m = String(err?.message ?? err).replace(/^.*?: /, '');
   const map: Record<string, string> = {
-    "Only today's entries can be changed here — ask the production manager.": 'Zmieniać można tylko dzisiejsze wpisy — starsze zmienia kierownik produkcji.',
+    "Only today's entries can be changed here — ask the production manager.": 'Usuwać można tylko dzisiejsze wpisy — starsze zmienia kierownik produkcji.',
+    'Only entries of the last 7 days can be changed here — ask the production manager.': 'Zmieniać można wpisy z ostatnich 7 dni — starsze zmienia kierownik produkcji.',
     'The comment can have at most 100 characters.': 'Komentarz może mieć najwyżej 100 znaków.',
     'The start must stay on the same day.': 'Początek musi zostać tego samego dnia.',
     'The end must stay on the same day.': 'Koniec musi zostać tego samego dnia.',
@@ -199,8 +213,9 @@ function TimeField({ title, d, text, setD, setText }: { title: string; d: Date; 
   );
 }
 
-function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; onClose: () => void; onSave: (start: Date, end: Date | null, note: string) => void; onDelete: () => void }) {
+function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; onClose: () => void; onSave: (start: Date, end: Date | null, note: string) => void; onDelete: (() => void) | null }) {
   const running = !entry.ended_at;
+  const kb = useKeyboardPad();
   const [start, setStart] = useState(new Date(entry.started_at));
   const [end, setEnd] = useState<Date | null>(entry.ended_at ? new Date(entry.ended_at) : null);
   const [startText, setStartText] = useState(hhmm(new Date(entry.started_at)));
@@ -210,7 +225,7 @@ function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEnt
   return (
     <Modal transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheetWrap}>
-        <View style={s.sheet}>
+        <View style={[s.sheet, kb > 0 && { paddingBottom: 30 + kb }]}>
           <Text style={s.task}>{label}</Text>
           <Text style={s.muted}>{new Date(entry.started_at).toLocaleDateString('pl-PL')} — data się nie zmienia</Text>
           <TimeField title="POCZĄTEK" d={start} text={startText} setD={setStart} setText={setStartText} />
@@ -223,7 +238,32 @@ function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEnt
             <TouchableOpacity style={[s.btn, { backgroundColor: C.soft }]} onPress={onClose}><Text style={[s.btnT, { color: C.ink }]}>Anuluj</Text></TouchableOpacity>
             <TouchableOpacity style={[s.btn, !!problem && { opacity: 0.4 }]} disabled={!!problem} onPress={() => onSave(start, running ? null : end, note.trim())}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
           </View>
-          <TouchableOpacity style={s.delLink} onPress={onDelete}><Text style={s.delLinkT}>Usuń ten wpis</Text></TouchableOpacity>
+          {onDelete ? <TouchableOpacity style={s.delLink} onPress={onDelete}><Text style={s.delLinkT}>Usuń ten wpis</Text></TouchableOpacity>
+            : <Text style={[s.muted, { textAlign: 'center', marginTop: 14 }]}>Wpis z poprzedniego dnia — usunąć go może kierownik produkcji.</Text>}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const NAMES_KEY = 'prodTaskNames.v1';
+
+/** The worker's own name for a task in Moje zadania — on this phone only. Empty = back to the real name. */
+function RenameTask({ task, current, onClose, onSave }: { task: ProdTask; current: string; onClose: () => void; onSave: (name: string) => void }) {
+  const [name, setName] = useState(current || taskLabel(task));
+  const kb = useKeyboardPad();
+  return (
+    <Modal transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheetWrap}>
+        <View style={[s.sheet, kb > 0 && { paddingBottom: 30 + kb }]}>
+          <Text style={s.task}>Nazwa zadania</Text>
+          <Text style={s.muted}>Tylko na tym telefonie — biuro i eksport widzą: {taskLabel(task)}</Text>
+          <TextInput style={[s.noteIn, { minHeight: 0, fontSize: 17 }]} value={name} onChangeText={setName} maxLength={80} autoFocus selectTextOnFocus placeholder={taskLabel(task)} placeholderTextColor={C.muted} />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            <TouchableOpacity style={[s.btn, { backgroundColor: C.soft }]} onPress={onClose}><Text style={[s.btnT, { color: C.ink }]}>Anuluj</Text></TouchableOpacity>
+            <TouchableOpacity style={s.btn} onPress={() => onSave(name.trim() === taskLabel(task) ? '' : name)}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
+          </View>
+          {!!current && <TouchableOpacity style={s.delLink} onPress={() => onSave('')}><Text style={[s.delLinkT, { color: C.purple }]}>Przywróć nazwę: {taskLabel(task)}</Text></TouchableOpacity>}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -262,6 +302,8 @@ const s = StyleSheet.create({
   eBtn: { borderWidth: 1, borderColor: C.purple, borderRadius: 9, paddingVertical: 7, paddingHorizontal: 11 },
   eBtnT: { color: C.purple, fontWeight: '800', fontSize: 13 },
   delLink: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
+  ren: { paddingHorizontal: 10, paddingVertical: 6, marginRight: 4 },
+  renT: { fontSize: 18, color: C.purple, fontWeight: '800' },
   delLinkT: { color: C.magenta, fontWeight: '800', fontSize: 15 },
   sheetWrap: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
   sheet: { backgroundColor: C.white, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 18, paddingBottom: 30 },

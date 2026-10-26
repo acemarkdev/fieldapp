@@ -63,8 +63,16 @@ export function todayByTask(entries: TimeEntry[], now: Date): Map<string, number
 /** Entries started today (the number on the "Moje wpisy" tab). */
 export const countToday = (entries: TimeEntry[], now: Date) => entries.filter((e) => sameDay(new Date(e.started_at), now)).length;
 export const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-/** A worker may correct an entry only on the day it was made (older ones: the production manager). */
+/** An entry of today — only these can be deleted on the phone. */
 export const editableToday = (e: TimeEntry, now: Date) => sameDay(new Date(e.started_at), now);
+/** A worker may correct own entries of the last 7 days — today and the 6 days before (older: the production
+ *  manager). prod_edit_entry checks the same on the server. */
+export function editableRecent(e: TimeEntry, now: Date): boolean {
+  const d = new Date(e.started_at), first = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+  return d.getTime() >= first.getTime() && d.getTime() <= now.getTime() + 60000;
+}
+/** The task's name as this worker set it on the phone, otherwise "Z.394 · szklenie". */
+export const taskName = (t: Pick<ProdTask, 'id' | 'job_ref' | 'operation'>, own: Record<string, string>) => (own[t.id]?.trim() || taskLabel(t));
 export const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 /** Move a time by `minutes`, never leaving its day (stops at 00:00 and 23:59). */
 export function shiftWithinDay(d: Date, minutes: number): Date {

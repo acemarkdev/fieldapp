@@ -12,7 +12,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { supabase } from '../lib/supabase';
 import { C } from '../lib/theme';
 import TimeScreen from './TimeScreen';
-import { zRef, parseQty, formProblem, scanned, jobChoices, qtyLabel, type WhIssue, type WhItem, type WhForm } from '../lib/whLogic';
+import { zRef, parseQty, formProblem, scanned, jobChoices, qtyLabel, forJob, type WhIssue, type WhItem, type WhForm } from '../lib/whLogic';
+import { useKeyboardPad } from '../lib/useKeyboardPad';
 
 export default function WarehouseScreen() {
   const [tab, setTab] = useState<'issue' | 'return' | 'time'>('issue');
@@ -43,6 +44,9 @@ function Issues({ kind }: { kind: 'issue' | 'return' }) {
   const [scan, setScan] = useState<null | 'symbol' | 'location'>(null);
   const [bal, setBal] = useState<{ issued: number; returned: number; unit: string | null } | null>(null);   // returns: what went out to this Z
   const qtyRef = useRef<TextInput>(null);
+  const [showAll, setShowAll] = useState(false);   // the list follows the typed Z unless "pokaż wszystkie"
+  useEffect(() => { setShowAll(false); }, [form.job]);
+  const kb = useKeyboardPad();
   const set = (k: keyof WhForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const load = useCallback(async () => {
@@ -126,9 +130,10 @@ function Issues({ kind }: { kind: 'issue' | 'return' }) {
 
   if (loading) return <View style={[s.fill, s.center]}><ActivityIndicator color={C.magenta} /></View>;
   const chips = jobChoices(mine, jobs, form.job);
+  const fj = forJob(mine, form.job), list = showAll || !fj.job ? mine : fj.rows;
   return (
     <>
-      <ScrollView style={s.fill} contentContainerStyle={{ padding: 12, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
+      <ScrollView style={s.fill} contentContainerStyle={{ padding: 12, paddingBottom: 40 + kb }} keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
         <View style={s.card}>
           <Text style={s.title}>{editing ? (ret ? 'Zmień zwrot' : 'Zmień wydanie') : (ret ? 'Nowy zwrot z produkcji' : 'Nowe wydanie')}</Text>
 
@@ -184,9 +189,13 @@ function Issues({ kind }: { kind: 'issue' | 'return' }) {
           </View>
         </View>
 
-        <Text style={s.section}>{ret ? 'Moje zwroty do eksportu' : 'Moje wydania do eksportu'} ({mine.length})</Text>
+        <Text style={s.section}>{ret ? 'Moje zwroty do eksportu' : 'Moje wydania do eksportu'}{fj.job && !showAll ? ` — ${fj.job}` : ''} ({fj.job && !showAll ? `${list.length} z ${mine.length}` : mine.length})</Text>
+        {fj.job && mine.length > 0 && (
+          <TouchableOpacity onPress={() => setShowAll((v) => !v)} style={{ paddingVertical: 4 }}><Text style={s.link}>{showAll ? `Pokaż tylko ${fj.job}` : 'Pokaż wszystkie zlecenia'}</Text></TouchableOpacity>
+        )}
+        {fj.job && !showAll && list.length === 0 && mine.length > 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 8 }]}>{ret ? `Brak zwrotów na ${fj.job}.` : `Brak wydań na ${fj.job}.`}</Text>}
         {mine.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 8 }]}>{ret ? 'Brak — zapisane zwroty pojawią się tutaj, dopóki biuro ich nie wyeksportuje.' : 'Brak — zapisane wydania pojawią się tutaj, dopóki biuro ich nie wyeksportuje.'}</Text>}
-        {mine.map((r) => (
+        {list.map((r) => (
           <View key={r.id} style={[s.entry, editing === r.id && { backgroundColor: C.soft }]}>
             <View style={{ flex: 1 }}>
               <Text style={s.entryT} numberOfLines={1}><Text style={{ fontWeight: '800' }}>{r.job_ref}</Text> · {r.symbol} · {qtyLabel(r.qty, r.unit)}</Text>
@@ -275,6 +284,7 @@ const s = StyleSheet.create({
   btn: { flex: 1, backgroundColor: C.purple, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   btnT: { color: C.white, fontSize: 16, fontWeight: '800' },
   section: { fontSize: 15, fontWeight: '800', color: C.purple, marginTop: 18, marginBottom: 4 },
+  link: { color: C.purple, fontWeight: '700', textDecorationLine: 'underline' },
   muted: { fontSize: 12, color: C.muted, marginTop: 2 },
   entry: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.line },
   entryT: { fontSize: 14, color: C.ink },
