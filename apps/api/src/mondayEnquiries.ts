@@ -10,6 +10,7 @@ import { db } from './supabase';
 import { Monday } from './monday';
 import { orderCode, orderFields } from './finOrders';
 import { zNumber } from './mondayJobs';
+import { colReady } from './schemaReady';
 
 export const ENQUIRY_BOARD = '5555728429';
 export const ECOL = { status: 'status_13', kind: 'color_mkzmrnw1', person: 'person', contact: 'connect_boards1', crm: 'color_mm4c485v', linked: 'board_relation5' } as const;
@@ -101,6 +102,7 @@ export async function previewEnquiries(tenantId: string, reps: Rep[]): Promise<{
 export async function applyEnquiries(tenantId: string, by: string, ids: string[], reps: Rep[]): Promise<{ created: string[]; skipped: number }> {
   const { rows } = await previewEnquiries(tenantId, reps);
   const want = new Set(ids.map(String)), created: string[] = [], seen = new Set<string>();
+  const withIds = await colReady('fin_orders', 'monday_item_id');   // migration 0108
   let skipped = 0;
   const fresh: Record<string, any>[] = [];
   for (const r of rows) {
@@ -112,12 +114,29 @@ export async function applyEnquiries(tenantId: string, by: string, ids: string[]
       net: 0, offer_year: d ? d.getUTCFullYear() : null, offer_month: d ? d.getUTCMonth() + 1 : null, enquiry_month: d ? d.getUTCMonth() + 1 : null,
       note: `From monday (Acemark PL Enquiries): ${r.status ?? ''}${r.kind ? ' · ' + r.kind : ''}`, job_ref: r.order.job }, true);
     if (!f.ok) { skipped++; continue; }
-    fresh.push({ tenant_id: tenantId, created_by: by, rep_user_id: r.order.repId, rep_name: r.order.rep, ...f.fields });
+    fresh.push({ tenant_id: tenantId, created_by: by, rep_user_id: r.order.repId, rep_name: r.order.rep, ...f.fields, ...(withIds ? { monday_item_id: r.id } : {}) });
     created.push(r.code);
   }
   for (let i = 0; i < fresh.length; i += 200) {
     const { error } = await db().from('fin_orders').insert(fresh.slice(i, i + 200));
     if (error) throw error;
   }
+  if (withIds) await linkExistingOrders(tenantId, rows);
   return { created, skipped };
+}
+/** Orders already in Sales orders get the link to their monday item (only where they have none yet). */
+async function linkExistingOrders(tenantId: string, rows: EnqRow[]): Promise<void> {
+  const byCode = new Map<string, string>();
+  for (const r of rows) if (r.state === 'in_office' && r.code) byCode.set(r.code.toUpperCase().replace(/[^A-Z0-9]/g, ''), r.id);
+  if (!byCode.size) return;
+  const out: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db().from('fin_orders').select('id,order_ref').eq('tenant_id', tenantId).is('monday_item_id', null).order('id').range(from, from + 999);
+    if (error) throw error; out.push(...(data ?? [])); if (!data || data.length < 1000) break;
+  }
+  for (const o of out) {
+    const item = byCode.get(orderCode(o.order_ref).toUpperCase().replace(/[^A-Z0-9]/g, '')); if (!item) continue;
+    const { error } = await db().from('fin_orders').update({ monday_item_id: item }).eq('tenant_id', tenantId).eq('id', o.id).is('monday_item_id', null);
+    if (error) throw error;
+  }
 }

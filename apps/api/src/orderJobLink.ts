@@ -5,12 +5,22 @@
 //   • decision → order: once the budget is decided, the order gets the supplier and the budget cost of the chosen
 //     scenario (produce: Acemark PL, cost of producing without transport + transport as delivery; trade: the vendor,
 //     purchase + other, transport as delivery). The installation cost stays the rep's;
-//   • the order shows its Z job (decision, both scenarios); the job's budget offer defaults from the order's net.
+//   • the order shows its Z job (decision, both scenarios); the job's budget offer defaults from the order's net;
+//   • order → job (step 2): the rep's vendor quote on the order (supplier other than Acemark PL, purchase cost, delivery
+//     cost as transport) becomes the job's trade scenario when the Z is linked — only while that side is empty and the
+//     budget undecided;
+//   • monday links: the order's item on Acemark PL Enquiries and the job's item on PRODUCTION ACEMARK PL.
 import { db } from './supabase';
 import { budgetCalc, listBudgets, getBudget, type Budget } from './jobBudget';
 import { referenceKey } from './finJobs';
 import { zNumber } from './mondayJobs';
 import { previewZLinks, applyZLinks } from './mondayOrders';
+import { colReady } from './schemaReady';
+
+export const MONDAY_WS = 'https://ace189144.monday.com';
+export const ENQUIRY_BOARD_ID = '5555728429', PRODUCTION_BOARD_ID = '3576361679';
+/** The link to a monday item, or null without an id. */
+export const mondayItemUrl = (boardId: string, itemId: unknown) => (itemId && /^\d+$/.test(String(itemId)) ? `${MONDAY_WS}/boards/${boardId}/pulses/${itemId}` : null);
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 /** The Job costs key of an order's Z number ("Z.453", "z 453", "Z.0453 phase" → "Z.453"); null without one. */
@@ -30,12 +40,13 @@ export function orderCostsFromBudget(b: Pick<Budget, 'decision' | 'offer_net' | 
 }
 
 /** The Z job summary shown on an order. */
-export interface OrderJob { id: string; reference: string; locked: boolean; decision: string; offer: number | null;
+export interface OrderJob { id: string; reference: string; locked: boolean; decision: string; offer: number | null; monday?: string | null;
   produce: { costs: number; margin: number | null } | null; trade: { costs: number; margin: number | null } | null; better: string | null; advantage: number | null }
-export function orderJobView(job: { id: string; reference: string; locked: boolean }, b: Budget | undefined): OrderJob {
-  if (!b) return { id: job.id, reference: job.reference, locked: !!job.locked, decision: 'none', offer: null, produce: null, trade: null, better: null, advantage: null };
+export function orderJobView(job: { id: string; reference: string; locked: boolean; monday_item_id?: string | null }, b: Budget | undefined): OrderJob {
+  const monday = mondayItemUrl(PRODUCTION_BOARD_ID, job.monday_item_id);
+  if (!b) return { id: job.id, reference: job.reference, locked: !!job.locked, decision: 'none', offer: null, monday, produce: null, trade: null, better: null, advantage: null };
   const c = budgetCalc(b);
-  return { id: job.id, reference: job.reference, locked: !!job.locked, decision: b.decision, offer: c.offer,
+  return { id: job.id, reference: job.reference, locked: !!job.locked, decision: b.decision, offer: c.offer, monday,
     produce: c.produce.costs > 0 ? { costs: c.produce.costs, margin: c.produce.margin } : null,
     trade: c.trade.estimated ? { costs: c.trade.costs, margin: c.trade.margin } : null, better: c.better, advantage: c.advantage };
 }
@@ -54,15 +65,40 @@ async function page<T>(table: string, cols: string, tenantId: string): Promise<T
 /** Attach each order's Z job (by its Z number) — for the Sales orders list and window. */
 export async function attachJobs<T extends { job_ref: string | null }>(tenantId: string, orders: T[]): Promise<(T & { job: OrderJob | null })[]> {
   if (!orders.some((o) => jobKeyOf(o.job_ref))) return orders.map((o) => ({ ...o, job: null }));
-  const [jobs, budgets] = await Promise.all([page<any>('fin_jobs', 'id,reference,reference_key,locked', tenantId), listBudgets(tenantId)]);
+  const [jobs, budgets] = await Promise.all([page<any>('fin_jobs', 'id,reference,reference_key,locked' + ((await colReady('fin_jobs', 'monday_item_id')) ? ',monday_item_id' : ''), tenantId), listBudgets(tenantId)]);
   const byKey = new Map<string, any>(); for (const j of jobs) if (!byKey.has(j.reference_key)) byKey.set(j.reference_key, j);
-  return orders.map((o) => { const k = jobKeyOf(o.job_ref), j = k ? byKey.get(k) : undefined; return { ...o, job: j ? orderJobView(j, budgets.get(j.id)) : null }; });
+  return orders.map((o: any) => { const k = jobKeyOf(o.job_ref), j = k ? byKey.get(k) : undefined; return { ...o, monday: mondayItemUrl(ENQUIRY_BOARD_ID, o.monday_item_id), job: j ? orderJobView(j, budgets.get(j.id)) : null }; });
 }
 /** The orders carrying this job's Z number. */
-async function ordersOfJob(tenantId: string, reference: string): Promise<{ id: string; order_ref: string; net: number; customer: string | null; job_ref: string | null }[]> {
+async function ordersOfJob(tenantId: string, reference: string): Promise<{ id: string; order_ref: string; net: number; customer: string | null; job_ref: string | null; supplier: string | null; cost_purchase: number | null; cost_delivery: number | null; vendor_quote?: string | null; monday?: string | null }[]> {
   const k = jobKeyOf(reference); if (!k) return [];
-  const rows = await page<any>('fin_orders', 'id,order_ref,net,customer,job_ref', tenantId);
-  return rows.filter((o) => jobKeyOf(o.job_ref) === k).map((o) => ({ ...o, net: Number(o.net) || 0 }));
+  const extra = (await colReady('fin_orders', 'monday_item_id')) ? ',vendor_quote,monday_item_id' : '';
+  const rows = await page<any>('fin_orders', 'id,order_ref,net,customer,job_ref,supplier,cost_purchase,cost_delivery' + extra, tenantId);
+  const num = (v: any) => (v === null || v === undefined ? null : Number(v));
+  return rows.filter((o) => jobKeyOf(o.job_ref) === k).map((o) => ({ ...o, net: Number(o.net) || 0, cost_purchase: num(o.cost_purchase), cost_delivery: num(o.cost_delivery), monday: mondayItemUrl(ENQUIRY_BOARD_ID, o.monday_item_id) }));
+}
+/** The trade scenario an order brings to its job's budget: its vendor and quote; null without one. */
+export function tradeFromOrder(o: { supplier: string | null; cost_purchase: number | null; cost_delivery: number | null }): { trade_supplier: string; trade_purchase: number; trade_transport: number | null } | null {
+  const sup = String(o.supplier ?? '').trim();
+  if (!sup || /^acemark/i.test(sup) || !(o.cost_purchase && o.cost_purchase > 0)) return null;
+  return { trade_supplier: sup.slice(0, 120), trade_purchase: round2(o.cost_purchase), trade_transport: o.cost_delivery && o.cost_delivery > 0 ? round2(o.cost_delivery) : null };
+}
+/** Put an order's vendor quote into its job's budget as the trade scenario — only while that side is empty and the
+ *  budget undecided; also the offer from the order's net when the budget has none. Returns whether it wrote. */
+export async function seedTradeFromOrders(tenantId: string, jobId: string, reference: string, by = 'Sales order'): Promise<boolean> {
+  const orders = await ordersOfJob(tenantId, reference);
+  const o = orders.find((x) => tradeFromOrder(x)); if (!o) return false;
+  const t = tradeFromOrder(o)!;
+  const cur = await getBudget(tenantId, jobId);
+  if (cur && (cur.decision !== 'undecided' || cur.trade_purchase !== null)) return false;
+  const now = new Date().toISOString();
+  const fields: Record<string, any> = { ...t, updated_by: by, updated_at: now };
+  if (!cur || cur.offer_net === null) { if (o.net > 0) fields.offer_net = o.net; }
+  const w = cur
+    ? await db().from('fin_job_budgets').update(fields).eq('tenant_id', tenantId).eq('job_id', jobId).eq('decision', 'undecided').is('trade_purchase', null)
+    : await db().from('fin_job_budgets').insert({ job_id: jobId, tenant_id: tenantId, note: `Trade quote from ${o.order_ref}`.slice(0, 500), ...fields });
+  if (w.error) throw w.error;
+  return true;
 }
 /** The order(s) of a job — for the job window (the budget offer defaults from the order's net). */
 export async function jobOrders(tenantId: string, reference: string) { return ordersOfJob(tenantId, reference); }
@@ -95,8 +131,12 @@ export async function autoLinkZ(tenantId: string): Promise<{ filled: string[]; s
 export async function syncAfterLinks(tenantId: string, zs: string[]): Promise<string[]> {
   const keys = [...new Set(zs.map(jobKeyOf).filter((k): k is string => !!k))];
   if (!keys.length) return [];
-  const jobs = await page<any>('fin_jobs', 'id,reference_key', tenantId);
-  const byKey = new Map(jobs.map((j) => [j.reference_key, j.id])), synced: string[] = [];
-  for (const k of keys) { const id = byKey.get(k); if (id) synced.push(...(await syncOrdersFromJob(tenantId, id))); }
+  const jobs = await page<any>('fin_jobs', 'id,reference,reference_key', tenantId);
+  const byKey = new Map(jobs.map((j) => [j.reference_key, j])), synced: string[] = [];
+  for (const k of keys) {
+    const j = byKey.get(k); if (!j) continue;
+    await seedTradeFromOrders(tenantId, j.id, j.reference);          // undecided: the order's vendor quote → the trade side
+    synced.push(...(await syncOrdersFromJob(tenantId, j.id)));        // decided: the budget → the order
+  }
   return synced;
 }

@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/orderJobLink.test.ts
-import { jobKeyOf, orderCostsFromBudget, orderJobView } from './orderJobLink';
+import { jobKeyOf, orderCostsFromBudget, orderJobView, tradeFromOrder, mondayItemUrl } from './orderJobLink';
 import type { Budget } from './jobBudget';
 
 let fail = 0;
@@ -21,6 +21,12 @@ ok('trade without a vendor name keeps the order\'s supplier (null)', orderCostsF
 const v = orderJobView({ id: 'j', reference: 'Z.453', locked: false }, B({ decision: 'produce' }));
 ok('job view: decision, both scenarios and the better one', v.decision === 'produce' && v.produce?.costs === 30850 && v.trade?.costs === 34600 && v.better === 'produce' && v.advantage === 3750, v);
 ok('job view without a budget', orderJobView({ id: 'j', reference: 'Z.1', locked: true }, undefined).decision === 'none');
+
+// order → job: the rep's vendor quote becomes the trade scenario
+ok('a vendor quote on the order → trade side', JSON.stringify(tradeFromOrder({ supplier: 'Eko-okna', cost_purchase: 31500, cost_delivery: 2600 })) === JSON.stringify({ trade_supplier: 'Eko-okna', trade_purchase: 31500, trade_transport: 2600 }));
+ok('no vendor, Acemark PL (produced) or no price → nothing', tradeFromOrder({ supplier: null, cost_purchase: 100, cost_delivery: null }) === null && tradeFromOrder({ supplier: 'Acemark PL', cost_purchase: 100, cost_delivery: null }) === null && tradeFromOrder({ supplier: 'Eko-okna', cost_purchase: 0, cost_delivery: null }) === null);
+ok('no delivery cost → transport left empty', tradeFromOrder({ supplier: 'Profal', cost_purchase: 900, cost_delivery: 0 })?.trade_transport === null);
+ok('monday item link; none without an id', mondayItemUrl('3576361679', '12345') === 'https://ace189144.monday.com/boards/3576361679/pulses/12345' && mondayItemUrl('3576361679', null) === null && mondayItemUrl('3576361679', 'x1') === null);
 
 if (fail) { console.error(`${fail} failed`); process.exit(1); }
 console.log('orderJobLink ok');

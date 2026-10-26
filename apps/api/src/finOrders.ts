@@ -9,6 +9,7 @@ import { loadTrade, allocatePurchases, type OrderPurchase } from './tradeCosts';
 import { db } from './supabase';
 import { parseMoney, referenceKey } from './finJobs';
 import { parseDate } from './finSales';
+import { onlyReady } from './schemaReady';
 
 export type Result<T = {}> = ({ ok: true } & T) | { ok: false; status: number; error: string };
 const fail = (status: number, error: string): Result<any> => ({ ok: false, status, error });
@@ -219,6 +220,8 @@ export function orderFields(b: any, finance: boolean): Result<{ fields: Record<s
     planned_year: py, planned_month: monthFromText(b.planned_month),
     note: clean(b.note).slice(0, 500) || null, comment: clean(b.comment).slice(0, 500) || null,
   };
+  // the vendor's quote for the trade scenario (a link or a note) — only when the form sends it
+  if ('vendor_quote' in (b ?? {})) fields.vendor_quote = clean(b.vendor_quote).slice(0, 500) || null;
   if (finance) {
     const job = clean(b.job_ref).slice(0, 80);
     fields.job_ref = job || null;
@@ -314,7 +317,8 @@ export async function getOrder(tenantId: string, id: string): Promise<any | null
 }
 export async function createOrder(tenantId: string, by: string, b: any, o: { finance: boolean; repUserId: string | null; repName: string | null }): Promise<Result<{ id: string }>> {
   const f = orderFields(b, o.finance); if (!f.ok) return f;
-  const { data, error } = await db().from('fin_orders').insert({ tenant_id: tenantId, created_by: by, rep_user_id: o.repUserId, rep_name: o.repName, ...f.fields }).select('id').single();
+  const fields = await onlyReady('fin_orders', f.fields, ['vendor_quote']);   // before migration 0108 the vendor quote is not kept
+  const { data, error } = await db().from('fin_orders').insert({ tenant_id: tenantId, created_by: by, rep_user_id: o.repUserId, rep_name: o.repName, ...fields }).select('id').single();
   if (error) throw error;
   return { ok: true, id: data.id };
 }
@@ -322,7 +326,7 @@ export async function updateOrder(tenantId: string, id: string, b: any, o: { fin
   const cur = await getOrder(tenantId, id);
   if (!cur || (o.ownerOnly && cur.rep_user_id !== o.ownerOnly)) return fail(404, 'Order not found.');
   const f = orderFields(b, o.finance); if (!f.ok) return f;
-  const patch: Record<string, any> = { ...f.fields, updated_at: new Date().toISOString() };
+  const patch: Record<string, any> = { ...(await onlyReady('fin_orders', f.fields, ['vendor_quote'])), updated_at: new Date().toISOString() };
   if (o.rep) { patch.rep_user_id = o.rep.id; patch.rep_name = o.rep.name; }
   const { error } = await db().from('fin_orders').update(patch).eq('tenant_id', tenantId).eq('id', id);
   if (error) throw error;

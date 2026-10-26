@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.58.0';
+export const APP_VERSION = '1.59.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.59.0', date: '2026-10-26', changes: [
+    'Sales orders ⇄ Job costs, step 2 of the order-to-actuals process. The produce scenario comes from monday: PRODUCTION ACEMARK PL has six new columns — Plan: Materiał, Szyby, Panele, Malowanie, Transport, Inne — and Job costs ▸ Load from monday puts them into the budget line by line (a new Z gets all of them; an existing undecided budget only the lines still empty). The preview shows the planned costs.',
+    'The trade scenario comes from the order: the rep’s vendor (a supplier other than Acemark PL), purchase cost and delivery cost become the Z budget’s trade side when the Z is linked — only while that side is empty and the budget undecided; the offer too, from the order’s net, when the budget has none. The order gets a Vendor quote field (a link or a note).',
+    'monday links: the order window opens its item on Acemark PL Enquiries; the order’s Production job block and the Job costs window open the Z item on PRODUCTION ACEMARK PL. The links are kept by the Load from monday buttons, also for what was loaded before. Needs migration 0108; without it everything works, just without the links and the vendor quote.',
+  ] },
   { version: '1.58.0', date: '2026-10-26', changes: [
     'Production time for a second company, WEM, besides Acemark. Admin ▸ Users: production workers, leads, managers and warehouse workers get a company (Time: Acemark / WEM, under the role; empty = Acemark). Tasks are loaded per company — the same task file, imported while that company is chosen.',
     'Each person sees only their company: on the phone a worker sees and starts only their company’s tasks (and “Bez zadania”, moving an entry to another task, stay within it); in the office a production manager or lead sees only their company’s tasks, entries, workers, rates and export. Admin switches between Acemark and WEM in the Production time title.',

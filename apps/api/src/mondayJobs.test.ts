@@ -43,5 +43,14 @@ ok('one of several Z in a reference → in Job costs', P('k').status === 'in_off
 ok('no Z → no_z', P('l').status === 'no_z');
 ok('new without numbers is still new', P('m').status === 'new');
 
+// the "Plan: …" columns → the produce scenario; only empty lines are filled
+const pb = boardItem({ id: 'p', name: 'Z.460', group: null, cols: { numbers__1: '48000', numeric_mm6rgrgy: '110', numeric_mm8g843q: '14200', numeric_mm8g2969: '6000', numeric_mm8gzcw4: '0', numeric_mm8gq615: '1500' } });
+ok('plan columns read; 0 and empty are not planned', pb.plan?.material === 14200 && pb.plan?.glass === 6000 && pb.plan?.panels === undefined && pb.plan?.transport === 1500 && pb.plan?.painting === undefined, pb.plan);
+const pj = [{ id: 'j460', reference: 'Z.460', reference_key: 'Z.460', locked: false }];
+const pp = planImport([pb], pj, new Map([['j460', B({ offer_net: 48000, labour_hours: 110, produce: { material: 9000 } })]]))[0];
+ok('only the empty produce lines are filled (material already typed stays)', !!pp.fill && JSON.stringify(pp.fill.produce) === JSON.stringify(['glass', 'transport']) && pp.fill.offer_net === false && pp.fill.labour_hours === false, pp.fill);
+const pf = planImport([pb], pj, new Map([['j460', B({ offer_net: 48000, labour_hours: 110, produce: { material: 1, glass: 1, transport: 1 } })]]))[0];
+ok('everything already in the budget → nothing to fill', pf.fill === null && pf.why === 'Budget already filled', pf);
+
 if (fail) { console.error(fail + ' check(s) failed'); process.exit(1); }
 console.log('mondayJobs: all checks passed');
