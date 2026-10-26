@@ -1,7 +1,8 @@
 // Production time (role "production"): pick a task of a job and start the timer; stop it, or start
 // another task (that stops the running one). "Moje zadania" keeps the last tasks used for one-tap
 // switching, and each of them can get the worker's own name (kept on this phone only). Entries of the last
-// 7 days can be corrected (time, not date) and commented, today's also deleted; older ones only by the
+// 7 days can be corrected (time, not date, and the task — moved to another one, as in Clockify) and commented,
+// today's also deleted; older ones only by the
 // production manager in the office app. Start/stop/edit go through the database functions prod_start,
 // prod_stop and prod_edit_entry, which stamp and check the time on the server. Polish: production
 // works in Orpiszew.
@@ -166,11 +167,14 @@ export default function TimeScreen() {
         })}
         </>}
       </ScrollView>
-      {editing && <EditEntry entry={editing} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
+      {editing && <EditEntry entry={editing} tasks={tasks} recent={recent} own={own} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
         onClose={() => setEditing(null)}
         onDelete={editableToday(editing, new Date(now)) ? () => editing && removeEntry(editing) : null}
-        onSave={async (startD, endD, note) => {
-          const ok = await act(() => supabase.rpc('prod_edit_entry', { p_entry: editing.id, p_start: startD.toISOString(), p_end: endD ? endD.toISOString() : null, p_note: note }));
+        onSave={async (startD, endD, note, taskId) => {
+          // p_task only when the task changes (the 5-parameter version needs migration 0105)
+          const args: Record<string, any> = { p_entry: editing.id, p_start: startD.toISOString(), p_end: endD ? endD.toISOString() : null, p_note: note };
+          if (taskId) args.p_task = taskId;
+          const ok = await act(() => supabase.rpc('prod_edit_entry', args));
           if (ok) setEditing(null);
         }} />}
       {renaming && <RenameTask task={renaming} current={own[renaming.id] ?? ''} onClose={() => setRenaming(null)} onSave={(name) => { saveName(renaming.id, name); setRenaming(null); }} />}
@@ -191,6 +195,8 @@ function plError(err: any): string {
     'The end cannot be in the future.': 'Koniec nie może być w przyszłości.',
     'The end is before the start.': 'Koniec jest przed początkiem.',
     'Stop the task before changing its end.': 'Zatrzymaj zadanie, zanim zmienisz jego koniec.',
+    "This entry's job is locked in Job costs — ask the production manager.": 'Zlecenie tego wpisu jest zamknięte w kosztach — zmianę robi kierownik produkcji.',
+    "The chosen task's job is locked in Job costs — ask the production manager.": 'Zlecenie wybranego zadania jest zamknięte w kosztach — zmianę robi kierownik produkcji.',
     'Task not found.': 'Nie znaleziono zadania.', 'Entry not found.': 'Nie znaleziono wpisu.', 'Not allowed.': 'Brak uprawnień.',
   };
   return map[m] ?? m;
@@ -213,9 +219,16 @@ function TimeField({ title, d, text, setD, setText }: { title: string; d: Date; 
   );
 }
 
-function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; onClose: () => void; onSave: (start: Date, end: Date | null, note: string) => void; onDelete: (() => void) | null }) {
+function EditEntry({ entry, label, tasks, recent, own, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; tasks: ProdTask[]; recent: ProdTask[]; own: Record<string, string>; onClose: () => void; onSave: (start: Date, end: Date | null, note: string, taskId: string | null) => void; onDelete: (() => void) | null }) {
   const running = !entry.ended_at;
   const kb = useKeyboardPad();
+  // the task: the entry can be moved to another open task (the server checks it and the Job costs locks)
+  const [taskId, setTaskId] = useState<string | null>(entry.task_id);
+  const [picking, setPicking] = useState(false);
+  const [q, setQ] = useState('');
+  const chosen = taskId ? tasks.find((x) => x.id === taskId) : undefined;
+  const moved = !!taskId && taskId !== entry.task_id;
+  const choices = q.trim() ? groupTasks(tasks, q).flatMap((g) => g.tasks).slice(0, 40) : recent;
   const [start, setStart] = useState(new Date(entry.started_at));
   const [end, setEnd] = useState<Date | null>(entry.ended_at ? new Date(entry.ended_at) : null);
   const [startText, setStartText] = useState(hhmm(new Date(entry.started_at)));
@@ -226,20 +239,41 @@ function EditEntry({ entry, label, onClose, onSave, onDelete }: { entry: TimeEnt
     <Modal transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheetWrap}>
         <View style={[s.sheet, kb > 0 && { paddingBottom: 30 + kb }]}>
-          <Text style={s.task}>{label}</Text>
           <Text style={s.muted}>{new Date(entry.started_at).toLocaleDateString('pl-PL')} — data się nie zmienia</Text>
+          <Text style={[s.small, { marginTop: 10 }]}>ZADANIE</Text>
+          <TouchableOpacity style={s.pickBox} onPress={() => { setPicking((v) => !v); setQ(''); }} activeOpacity={0.8}>
+            <Text style={[s.task, { flex: 1 }]} numberOfLines={2}>{chosen ? taskName(chosen, own) : label}</Text>
+            <Text style={s.pickT}>{picking ? 'Zamknij' : 'Zmień zadanie'}</Text>
+          </TouchableOpacity>
+          {moved && !picking && <Text style={s.muted}>było: {label}</Text>}
+          {picking ? (<>
+            <TextInput style={[s.search, { marginTop: 8, marginBottom: 6 }]} placeholder="Szukaj: numer zlecenia lub operacja" placeholderTextColor={C.muted} value={q} onChangeText={setQ} autoCorrect={false} autoFocus />
+            {!q.trim() && <Text style={[s.small, { marginBottom: 2 }]}>MOJE ZADANIA</Text>}
+            <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
+              {choices.map((t) => (
+                <TouchableOpacity key={t.id} style={s.pickRow} onPress={() => { setTaskId(t.id); setPicking(false); setQ(''); }}>
+                  <Text style={[s.op, t.id === taskId && { color: C.green, fontWeight: '800' }]} numberOfLines={2}>{taskName(t, own)}</Text>
+                  {t.id === taskId && <Text style={s.onT}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+              {choices.length === 0 && <Text style={[s.muted, { paddingVertical: 10 }]}>{q.trim() ? 'Brak zadań dla tego wyszukiwania.' : 'Wpisz numer zlecenia lub operację.'}</Text>}
+            </ScrollView>
+          </>) : (<>
           <TimeField title="POCZĄTEK" d={start} text={startText} setD={setStart} setText={setStartText} />
           {running ? <Text style={[s.muted, { marginTop: 12 }]}>Zadanie trwa — koniec ustawia przycisk STOP.</Text>
             : <TimeField title="KONIEC" d={end ?? start} text={endText} setD={(x) => setEnd(x)} setText={setEndText} />}
           <Text style={[s.small, { marginTop: 14 }]}>KOMENTARZ ({note.length}/100)</Text>
           <TextInput style={s.noteIn} value={note} onChangeText={setNote} maxLength={100} placeholder="np. przerwa na naprawę maszyny" placeholderTextColor={C.muted} multiline />
-          {!!problem && <Text style={s.err}>{problem}</Text>}
+          </>)}
+          {!!problem && !picking && <Text style={s.err}>{problem}</Text>}
+          {!picking && <>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
             <TouchableOpacity style={[s.btn, { backgroundColor: C.soft }]} onPress={onClose}><Text style={[s.btnT, { color: C.ink }]}>Anuluj</Text></TouchableOpacity>
-            <TouchableOpacity style={[s.btn, !!problem && { opacity: 0.4 }]} disabled={!!problem} onPress={() => onSave(start, running ? null : end, note.trim())}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
+            <TouchableOpacity style={[s.btn, !!problem && { opacity: 0.4 }]} disabled={!!problem} onPress={() => onSave(start, running ? null : end, note.trim(), moved ? taskId : null)}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
           </View>
           {onDelete ? <TouchableOpacity style={s.delLink} onPress={onDelete}><Text style={s.delLinkT}>Usuń ten wpis</Text></TouchableOpacity>
             : <Text style={[s.muted, { textAlign: 'center', marginTop: 14 }]}>Wpis z poprzedniego dnia — usunąć go może kierownik produkcji.</Text>}
+          </>}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -303,6 +337,9 @@ const s = StyleSheet.create({
   eBtnT: { color: C.purple, fontWeight: '800', fontSize: 13 },
   delLink: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
   ren: { paddingHorizontal: 10, paddingVertical: 6, marginRight: 4 },
+  pickBox: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 },
+  pickT: { color: C.purple, fontWeight: '800', fontSize: 14 },
+  pickRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.soft },
   renT: { fontSize: 18, color: C.purple, fontWeight: '800' },
   delLinkT: { color: C.magenta, fontWeight: '800', fontSize: 15 },
   sheetWrap: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },

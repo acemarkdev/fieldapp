@@ -61,4 +61,8 @@
 //   today; deleting stays today-only) — needs migration 0104; each task in Moje zadania can get the worker's own name
 //   (✎, kept on this phone only — the office and the export keep the real name). Android: the edit sheets and the
 //   warehouse form move above the keyboard (edge-to-edge no longer resizes the window). Over the air on 0.76.0.
-export const APP_VERSION = '0.76.2';
+// 0.76.3 — Production time: an entry can be moved to another task (as in Clockify) — in Moje wpisy ▸ Zmień, "Zmień
+//   zadanie" picks from Moje zadania or a search of all open tasks; last 7 days and the running entry too. The entry
+//   takes the task's name and job (Job costs labour follows); refused when either job is locked in Job costs. Needs
+//   migration 0105. Over the air on 0.76.0.
+export const APP_VERSION = '0.76.3';
