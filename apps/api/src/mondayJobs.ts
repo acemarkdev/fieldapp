@@ -147,3 +147,41 @@ export async function applyMondayJobs(tenantId: string, by: string, createIds: s
   }
   return { created, filled, skipped };
 }
+
+// ---- the stage of each Z job: the group of its item on the board (shown on the Job costs list) ----------------
+export interface GroupUpdate { jobId: string; group: string | null; color: string | null }
+/** Which jobs get which group: by the monday item kept on the job, else by its Z number — only a Z that is on the
+ *  board once and a job whose reference is exactly that Z. Only changes are returned. */
+export function planGroups(items: { id: string; name: string; group: string | null }[], jobs: { id: string; reference_key: string; monday_item_id?: string | null; monday_group?: string | null; monday_group_color?: string | null }[], colors: Map<string, string | null>): GroupUpdate[] {
+  const byItem = new Map(items.map((i) => [String(i.id), i]));
+  const byZ = new Map<number, typeof items[number] | null>();
+  for (const it of items) { const z = zNumber(it.name); if (z !== null) byZ.set(z, byZ.has(z) ? null : it); }   // null = on the board twice
+  const out: GroupUpdate[] = [];
+  for (const j of jobs) {
+    let it = j.monday_item_id ? byItem.get(String(j.monday_item_id)) : undefined;
+    if (!it) { const m = /^Z\.(\d+)$/.exec(j.reference_key); const hit = m ? byZ.get(Number(m[1])) : undefined; if (hit) it = hit; }
+    if (!it) continue;
+    const group = it.group ?? null, color = group ? colors.get(group) ?? null : null;
+    if (group !== (j.monday_group ?? null) || color !== (j.monday_group_color ?? null)) out.push({ jobId: j.id, group, color });
+  }
+  return out;
+}
+/** Read the board's groups and write each job's stage. Nothing happens before migration 0109. */
+export async function refreshJobGroups(tenantId: string): Promise<{ updated: number }> {
+  if (!(await colReady('fin_jobs', 'monday_group'))) return { updated: 0 };
+  const m = new Monday();
+  const [items, groups] = await Promise.all([m.listItemsDetailed(PRODUCTION_BOARD, []), m.listGroups(PRODUCTION_BOARD)]);
+  const colors = new Map(groups.map((g) => [g.title, g.color ?? null]));
+  const withIds = await colReady('fin_jobs', 'monday_item_id');
+  const jobs: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db().from('fin_jobs').select('id,reference_key,monday_group,monday_group_color' + (withIds ? ',monday_item_id' : '')).eq('tenant_id', tenantId).order('id').range(from, from + 999);
+    if (error) throw error; jobs.push(...(data ?? [])); if (!data || data.length < 1000) break;
+  }
+  const ups = planGroups(items.map((i) => ({ id: String(i.id), name: clean(i.name), group: i.group })), jobs, colors), now = new Date().toISOString();
+  for (const u of ups) {
+    const { error } = await db().from('fin_jobs').update({ monday_group: u.group, monday_group_color: u.color, monday_group_at: now }).eq('tenant_id', tenantId).eq('id', u.jobId);
+    if (error) throw error;
+  }
+  return { updated: ups.length };
+}

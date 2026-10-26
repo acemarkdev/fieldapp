@@ -186,8 +186,8 @@ export class Monday {
   }
 
   /** The board's groups (on the invoices board: one per month). */
-  async listGroups(boardId: string): Promise<{ id: string; title: string }[]> {
-    const d: any = await this.gqlRetry(`query ($b: [ID!]) { boards(ids: $b) { groups { id title } } }`, { b: [boardId] });
+  async listGroups(boardId: string): Promise<{ id: string; title: string; color?: string | null }[]> {
+    const d: any = await this.gqlRetry(`query ($b: [ID!]) { boards(ids: $b) { groups { id title color } } }`, { b: [boardId] });
     return d.boards?.[0]?.groups ?? [];
   }
 

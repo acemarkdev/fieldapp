@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/mondayJobs.test.ts
-import { zNumber, zNumbersIn, planImport, boardItem, type BoardItem } from './mondayJobs';
+import { zNumber, zNumbersIn, planImport, boardItem, planGroups, type BoardItem } from './mondayJobs';
 import type { Budget } from './jobBudget';
 
 let fail = 0;
@@ -51,6 +51,18 @@ const pp = planImport([pb], pj, new Map([['j460', B({ offer_net: 48000, labour_h
 ok('only the empty produce lines are filled (material already typed stays)', !!pp.fill && JSON.stringify(pp.fill.produce) === JSON.stringify(['glass', 'transport']) && pp.fill.offer_net === false && pp.fill.labour_hours === false, pp.fill);
 const pf = planImport([pb], pj, new Map([['j460', B({ offer_net: 48000, labour_hours: 110, produce: { material: 1, glass: 1, transport: 1 } })]]))[0];
 ok('everything already in the budget → nothing to fill', pf.fill === null && pf.why === 'Budget already filled', pf);
+
+// the monday stage: by the kept item, else by a Z on the board once; only changes
+const gi = [{ id: '100', name: 'Z.453 -OK PL203173', group: '4 Produkcja/ Production' }, { id: '101', name: 'Z.102_FAZA_1', group: '1 Zamówienia' }, { id: '102', name: 'Z.102_FAZA_2', group: '1 Zamówienia' }, { id: '103', name: 'Z.460', group: '5 Zakończone/Complete' }];
+const gc = new Map([['4 Produkcja/ Production', '#ff007f'], ['1 Zamówienia', '#579bfc'], ['5 Zakończone/Complete', '#00c875']]);
+const gu = planGroups(gi, [
+  { id: 'a', reference_key: 'Z.453' },
+  { id: 'b', reference_key: 'Z.102' },                                   // on the board twice → not by Z
+  { id: 'c', reference_key: 'Z.999', monday_item_id: '103' },        // the kept item wins over the Z
+  { id: 'd', reference_key: 'Z.460', monday_group: '5 Zakończone/Complete', monday_group_color: '#00c875' },   // unchanged
+  { id: 'e', reference_key: 'Z.262A,Z.262B' },
+], gc);
+ok('stage by Z, by the kept item; a Z on the board twice and an unchanged job are left out', JSON.stringify(gu) === JSON.stringify([{ jobId: 'a', group: '4 Produkcja/ Production', color: '#ff007f' }, { jobId: 'c', group: '5 Zakończone/Complete', color: '#00c875' }]), gu);
 
 if (fail) { console.error(fail + ' check(s) failed'); process.exit(1); }
 console.log('mondayJobs: all checks passed');

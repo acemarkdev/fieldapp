@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.59.0';
+export const APP_VERSION = '1.60.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.60.0', date: '2026-10-26', changes: [
+    'Job costs: the monday stage of each Z job — the group its item is in on PRODUCTION ACEMARK PL (1 Zamówienia … 5 Zakończone, Magazyn) — as a chip next to the reference in the group’s monday colour, with a stripe of that colour on the row, and a filter by stage. Read with Load from monday, every night at 04:00, and with the ↻ monday stages button. A job matches its item by the monday link, else by its Z number (a Z on the board twice is left out). Needs migration 0109.',
+  ] },
   { version: '1.59.0', date: '2026-10-26', changes: [
     'Sales orders ⇄ Job costs, step 2 of the order-to-actuals process. The produce scenario comes from monday: PRODUCTION ACEMARK PL has six new columns — Plan: Materiał, Szyby, Panele, Malowanie, Transport, Inne — and Job costs ▸ Load from monday puts them into the budget line by line (a new Z gets all of them; an existing undecided budget only the lines still empty). The preview shows the planned costs.',
     'The trade scenario comes from the order: the rep’s vendor (a supplier other than Acemark PL), purchase cost and delivery cost become the Z budget’s trade side when the Z is linked — only while that side is empty and the budget undecided; the offer too, from the order’s net, when the budget has none. The order gets a Vendor quote field (a link or a note).',
