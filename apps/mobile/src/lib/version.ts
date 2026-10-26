@@ -65,4 +65,9 @@
 //   zadanie" picks from Moje zadania or a search of all open tasks; last 7 days and the running entry too. The entry
 //   takes the task's name and job (Job costs labour follows); refused when either job is locked in Job costs. Needs
 //   migration 0105. Over the air on 0.76.0.
-export const APP_VERSION = '0.76.3';
+// 0.76.4 — Production time: the first line of Moje zadania, "Bez zadania", starts the clock without a task; the task
+//   is picked later (the running card's "Wybierz zadanie", or the entry in Moje wpisy — it opens on the task list).
+//   Moje wpisy warns about entries still without a task. Such an entry counts in no job's labour until a task is set
+//   (by the worker within 7 days, or by the production manager in the office). Needs migration 0106 (which also gives
+//   the warehouse role back its time corrections). Over the air on 0.76.0.
+export const APP_VERSION = '0.76.4';

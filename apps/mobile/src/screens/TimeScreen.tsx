@@ -1,6 +1,7 @@
 // Production time (role "production"): pick a task of a job and start the timer; stop it, or start
 // another task (that stops the running one). "Moje zadania" keeps the last tasks used for one-tap
-// switching, and each of them can get the worker's own name (kept on this phone only). Entries of the last
+// switching, and each of them can get the worker's own name (kept on this phone only). Its first line, "Bez zadania",
+// starts the clock without a task — the task is picked later in Moje wpisy (prod_start_free). Entries of the last
 // 7 days can be corrected (time, not date, and the task — moved to another one, as in Clockify) and commented,
 // today's also deleted; older ones only by the
 // production manager in the office app. Start/stop/edit go through the database functions prod_start,
@@ -12,7 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useKeyboardPad } from '../lib/useKeyboardPad';
 import { C } from '../lib/theme';
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, taskName, editableToday, editableRecent, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, type ProdTask, type TimeEntry } from '../lib/timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, taskName, isFree, editableToday, editableRecent, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, type ProdTask, type TimeEntry } from '../lib/timeLogic';
 
 export default function TimeScreen() {
   const [tasks, setTasks] = useState<ProdTask[]>([]);
@@ -22,6 +23,8 @@ export default function TimeScreen() {
   const [query, setQuery] = useState('');
   const [now, setNow] = useState(Date.now());
   const [editing, setEditing] = useState<TimeEntry | null>(null);
+  const [pickFirst, setPickFirst] = useState(false);   // open the edit sheet on the task list (an entry with no task yet)
+  const edit = (e: TimeEntry) => { setPickFirst(isFree(e)); setEditing(e); };
   // Two tabs under the running task: the tasks (with Moje zadania on top) and the worker's own entries.
   const [tab, setTab] = useState<'tasks' | 'entries'>('tasks');
   // The worker's own task names (task id → name), on this phone only — the office and the export keep the real name.
@@ -37,7 +40,7 @@ export default function TimeScreen() {
     try {
       const [t, e] = await Promise.all([
         supabase.from('prod_tasks').select('id,job_ref,operation,alias,export_name').eq('active', true).order('job_ref'),
-        supabase.from('time_entries').select('id,task_id,task_name,started_at,ended_at,note').order('started_at', { ascending: false }).limit(60),
+        supabase.from('time_entries').select('id,task_id,task_name,job_key,started_at,ended_at,note').order('started_at', { ascending: false }).limit(60),
       ]);
       if (t.error) throw t.error; if (e.error) throw e.error;
       setTasks((t.data as ProdTask[]) ?? []); setEntries((e.data as TimeEntry[]) ?? []);
@@ -59,6 +62,9 @@ export default function TimeScreen() {
   };
   const start = (t: ProdTask) => act(() => supabase.rpc('prod_start', { p_task: t.id }));
   const stop = () => act(() => supabase.rpc('prod_stop'));
+  const startFree = () => act(() => supabase.rpc('prod_start_free'));
+  const runningFree = !!running && isFree(running);
+  const freeCount = entries.filter((e) => isFree(e) && editableRecent(e, new Date(now))).length;
   const recent = recentTasks(entries, tasks, 6);
   const groups = groupTasks(tasks, query);
   const today = hoursToday(entries, new Date(now));
@@ -102,6 +108,7 @@ export default function TimeScreen() {
             {running ? (<>
               <Text style={s.task} numberOfLines={2}>{runningTask ? taskName(runningTask, own) : running.task_name}</Text>
               <Text style={s.muted}>od {fmtT(running.started_at)} · dzisiaj {today.toFixed(2).replace('.', ',')} h</Text>
+              {runningFree && <TouchableOpacity onPress={() => edit(running)} style={{ marginTop: 4 }}><Text style={s.pickT}>Wybierz zadanie ›</Text></TouchableOpacity>}
             </>) : (<>
               <Text style={s.small}>NIC NIE TRWA</Text>
               <Text style={s.muted}>dzisiaj {today.toFixed(2).replace('.', ',')} h</Text>
@@ -116,18 +123,25 @@ export default function TimeScreen() {
         </View>
 
         <View style={s.tabs}>
-          {([['tasks', 'Zadania'], ['entries', `Moje wpisy${nToday ? ` (${nToday})` : ''}`]] as const).map(([k, l]) => (
+          {([['tasks', 'Zadania'], ['entries', `Moje wpisy${nToday ? ` (${nToday})` : ''}${freeCount ? ` · ⚠${freeCount}` : ''}`]] as const).map(([k, l]) => (
             <TouchableOpacity key={k} style={[s.tab, tab === k && s.tabOn]} onPress={() => setTab(k)} activeOpacity={0.8}><Text style={[s.tabT, tab === k && s.tabTOn]}>{l}</Text></TouchableOpacity>
           ))}
         </View>
 
         {tab === 'tasks' && <>
-        {recent.length > 0 && (
-          <View style={[s.group, { borderColor: C.purple }]}>
-            <Text style={s.job}>Moje zadania</Text>
-            {recent.map((t) => taskRow(t, taskName(t, own), true))}
+        <View style={[s.group, { borderColor: C.purple }]}>
+          <Text style={s.job}>Moje zadania</Text>
+          {/* first line: start now, pick the task later */}
+          <View style={s.row}>
+            <View style={{ flex: 1, marginRight: 10 }}>
+              <Text style={[s.op, { marginRight: 0 }, runningFree && { color: C.green, fontWeight: '800' }]}>⏱ Bez zadania</Text>
+              <Text style={s.today}>start teraz, zadanie wybierzesz później</Text>
+            </View>
+            {runningFree ? <Text style={s.onT}>trwa</Text>
+              : <TouchableOpacity style={s.start} onPress={startFree} disabled={busy} activeOpacity={0.85}><Text style={s.startT}>Start</Text></TouchableOpacity>}
           </View>
-        )}
+          {recent.map((t) => taskRow(t, taskName(t, own), true))}
+        </View>
 
         <TextInput style={s.search} placeholder="Szukaj: numer zlecenia lub operacja" placeholderTextColor={C.muted} value={query} onChangeText={setQuery} autoCorrect={false} />
         {groups.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 20 }]}>{tasks.length ? 'Brak zadań dla tego wyszukiwania.' : 'Brak zadań — kierownik produkcji musi je wczytać.'}</Text>}
@@ -142,21 +156,23 @@ export default function TimeScreen() {
 
         {tab === 'entries' && <>
         {entries.length === 0 && <Text style={[s.muted, { textAlign: 'center', marginTop: 20 }]}>Brak wpisów — uruchom zadanie w zakładce Zadania.</Text>}
+        {freeCount > 0 && <Text style={s.warnBox}>⚠ {freeCount === 1 ? '1 wpis bez zadania' : `${freeCount} wpisy bez zadania`} — dotknij wpisu i wybierz zadanie (do 7 dni; później przypisuje kierownik produkcji).</Text>}
         {entries.map((e, i) => {
           const can = editableRecent(e, new Date(now));
           const t = e.task_id ? tasks.find((x) => x.id === e.task_id) : undefined;   // only open tasks can be continued
           const head = i === 0 || !sameDay(new Date(e.started_at), new Date(entries[i - 1].started_at));
           return (<View key={e.id}>
             {head && <Text style={[s.small, { marginTop: i ? 16 : 4, marginBottom: 2 }]}>{dayLabel(e.started_at).toUpperCase()}</Text>}
-            <TouchableOpacity key={e.id} style={s.entry} onPress={() => (can ? setEditing(e) : Alert.alert('Starszy wpis', 'Wpisy starsze niż 7 dni zmienia kierownik produkcji.'))} activeOpacity={0.7}>
+            <TouchableOpacity key={e.id} style={s.entry} onPress={() => (can ? edit(e) : Alert.alert('Starszy wpis', 'Wpisy starsze niż 7 dni zmienia kierownik produkcji.'))} activeOpacity={0.7}>
               <View style={{ flex: 1 }}>
-                <Text style={s.entryT} numberOfLines={1}>{t && own[t.id] ? own[t.id] : e.task_name}</Text>
+                {isFree(e) ? <Text style={[s.entryT, { color: '#b45309' }]} numberOfLines={1}>Bez zadania — wybierz zadanie</Text>
+                  : <Text style={s.entryT} numberOfLines={1}>{t && own[t.id] ? own[t.id] : e.task_name}</Text>}
                 <Text style={s.muted}>{new Date(e.started_at).toLocaleDateString('pl-PL')} {fmtT(e.started_at)}–{e.ended_at ? fmtT(e.ended_at) : 'trwa'}{e.ended_at ? ` · ${clock(Date.parse(e.ended_at) - Date.parse(e.started_at))}` : ''}</Text>
                 {!!e.note && <Text style={s.note} numberOfLines={2}>„{e.note}”</Text>}
               </View>
               {/* Last 7 days: change (today also delete, inside the edit window) + start the same task again. Older: start again only. */}
               <View style={{ flexDirection: 'row', gap: 6, paddingLeft: 8, alignItems: 'center' }}>
-                {can && <TouchableOpacity style={s.eBtn} onPress={() => setEditing(e)}><Text style={s.eBtnT}>Zmień</Text></TouchableOpacity>}
+                {can && <TouchableOpacity style={s.eBtn} onPress={() => edit(e)}><Text style={s.eBtnT}>{isFree(e) ? 'Wybierz' : 'Zmień'}</Text></TouchableOpacity>}
                 {t && running?.task_id !== t.id
                   ? <TouchableOpacity style={[s.start, { paddingHorizontal: 12, paddingVertical: 7 }]} onPress={() => start(t)} disabled={busy} activeOpacity={0.85}><Text style={[s.startT, { fontSize: 14 }]}>▶ Start</Text></TouchableOpacity>
                   : running?.task_id === t?.id && t ? <Text style={s.onT}>trwa</Text>
@@ -167,7 +183,7 @@ export default function TimeScreen() {
         })}
         </>}
       </ScrollView>
-      {editing && <EditEntry entry={editing} tasks={tasks} recent={recent} own={own} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
+      {editing && <EditEntry entry={editing} pickFirst={pickFirst} tasks={tasks} recent={recent} own={own} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
         onClose={() => setEditing(null)}
         onDelete={editableToday(editing, new Date(now)) ? () => editing && removeEntry(editing) : null}
         onSave={async (startD, endD, note, taskId) => {
@@ -219,12 +235,12 @@ function TimeField({ title, d, text, setD, setText }: { title: string; d: Date; 
   );
 }
 
-function EditEntry({ entry, label, tasks, recent, own, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; tasks: ProdTask[]; recent: ProdTask[]; own: Record<string, string>; onClose: () => void; onSave: (start: Date, end: Date | null, note: string, taskId: string | null) => void; onDelete: (() => void) | null }) {
+function EditEntry({ entry, label, tasks, recent, own, pickFirst, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; pickFirst: boolean; tasks: ProdTask[]; recent: ProdTask[]; own: Record<string, string>; onClose: () => void; onSave: (start: Date, end: Date | null, note: string, taskId: string | null) => void; onDelete: (() => void) | null }) {
   const running = !entry.ended_at;
   const kb = useKeyboardPad();
   // the task: the entry can be moved to another open task (the server checks it and the Job costs locks)
   const [taskId, setTaskId] = useState<string | null>(entry.task_id);
-  const [picking, setPicking] = useState(false);
+  const [picking, setPicking] = useState(pickFirst);
   const [q, setQ] = useState('');
   const chosen = taskId ? tasks.find((x) => x.id === taskId) : undefined;
   const moved = !!taskId && taskId !== entry.task_id;
@@ -337,6 +353,7 @@ const s = StyleSheet.create({
   eBtnT: { color: C.purple, fontWeight: '800', fontSize: 13 },
   delLink: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
   ren: { paddingHorizontal: 10, paddingVertical: 6, marginRight: 4 },
+  warnBox: { backgroundColor: '#fff7ed', color: '#9a3412', borderRadius: 10, padding: 10, marginBottom: 8, fontSize: 13 },
   pickBox: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 },
   pickT: { color: C.purple, fontWeight: '800', fontSize: 14 },
   pickRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.soft },

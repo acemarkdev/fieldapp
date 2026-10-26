@@ -1,6 +1,8 @@
 // Production time on the phone: pure helpers for the time screen (grouping, search, durations).
 export interface ProdTask { id: string; job_ref: string; operation: string; alias: string | null; export_name: string }
-export interface TimeEntry { id: string; task_id: string | null; task_name: string | null; started_at: string; ended_at: string | null; note?: string | null }
+export interface TimeEntry { id: string; task_id: string | null; task_name: string | null; started_at: string; ended_at: string | null; note?: string | null; job_key?: string | null }
+/** Started with "Bez zadania" and no task picked yet (no task and no job — not a removed task, which keeps its job). */
+export const isFree = (e: Pick<TimeEntry, 'task_id' | 'job_key'>) => !e.task_id && !e.job_key;
 
 const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l').replace(/[._\s]+/g, ' ').trim();
 /** Tasks matching the search ("394", "z394 szkl", "szklenie"), grouped by job, newest job first. */
