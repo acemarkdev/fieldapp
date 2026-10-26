@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/orderJobLink.test.ts
-import { jobKeyOf, orderCostsFromBudget, orderJobView, tradeFromOrder, mondayItemUrl } from './orderJobLink';
+import { jobKeyOf, orderCostsFromBudget, orderJobView, tradeFromOrder, mondayItemUrl, costing } from './orderJobLink';
 import type { Budget } from './jobBudget';
 
 let fail = 0;
@@ -27,6 +27,18 @@ ok('a vendor quote on the order → trade side', JSON.stringify(tradeFromOrder({
 ok('no vendor, Acemark PL (produced) or no price → nothing', tradeFromOrder({ supplier: null, cost_purchase: 100, cost_delivery: null }) === null && tradeFromOrder({ supplier: 'Acemark PL', cost_purchase: 100, cost_delivery: null }) === null && tradeFromOrder({ supplier: 'Eko-okna', cost_purchase: 0, cost_delivery: null }) === null);
 ok('no delivery cost → transport left empty', tradeFromOrder({ supplier: 'Profal', cost_purchase: 900, cost_delivery: 0 })?.trade_transport === null);
 ok('monday item link; none without an id', mondayItemUrl('3576361679', '12345') === 'https://ace189144.monday.com/boards/3576361679/pulses/12345' && mondayItemUrl('3576361679', null) === null && mondayItemUrl('3576361679', 'x1') === null);
+
+// one budget against actual for an order and its job
+const job = { sums: { material: 15000, glass: 6400, transport: 1800, extras: 300, labour: 5200 }, totalCost: 28700, sales: 48000 };
+const ord = { net: 48000, cost_purchase: 29350, cost_install: 2000, cost_delivery: 1500, cost_reports_paid: 400, actual_purchase: 0, invoiced: 48000 };
+const cp = costing(B({ decision: 'produce' }), job, ord);
+const row = (c: any, k: string) => c.rows.find((r: any) => r.key === k);
+ok('produce: line by line, labour, installation with paid reports', cp.basis === 'produce' && row(cp, 'material').budget === 14200 && row(cp, 'material').actual === 15000 && row(cp, 'glass').diff === 400 && row(cp, 'labour').budget === 4950 && row(cp, 'install').actual === 2400 && !row(cp, 'bought'), cp.rows);
+ok('produce: totals, profit and margin', cp.budgetCost === 32850 && cp.actualCost === 31100 && cp.budgetProfit === 15150 && cp.actualProfit === 16900 && cp.actualMargin === 0.3521, [cp.budgetCost, cp.actualCost, cp.budgetProfit, cp.actualProfit, cp.actualMargin]);
+const ct = costing(B({ decision: 'trade' }), { sums: { transport: 2500, labour: 300 }, totalCost: 2800, sales: 48000 }, { ...ord, actual_purchase: 31200 });
+ok('trade: vendor purchase from the order invoices, transport and other job costs', ct.basis === 'trade' && row(ct, 'bought').budget === 32000 && row(ct, 'bought').actual === 31200 && row(ct, 'transport').actual === 2500 && row(ct, 'job_other').actual === 300, ct.rows);
+const co = costing(null, null, { ...ord, actual_purchase: 30000 });
+ok('an order without a job: the rep estimate against the supplier invoices', co.basis === 'order' && row(co, 'bought').budget === 29350 && row(co, 'bought').actual === 30000, co.rows);
 
 if (fail) { console.error(`${fail} failed`); process.exit(1); }
 console.log('orderJobLink ok');

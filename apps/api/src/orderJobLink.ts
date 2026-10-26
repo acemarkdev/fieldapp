@@ -140,3 +140,53 @@ export async function syncAfterLinks(tenantId: string, zs: string[]): Promise<st
   }
   return synced;
 }
+
+// ---- one budget against actual for an order and its Z job (step 3): the same table in Sales orders and Job costs ----
+export interface CostingRow { key: string; label: string; budget: number; actual: number; diff: number; source: string }
+export interface Costing {
+  basis: 'produce' | 'trade' | 'order'; decision: string | null;
+  revenue: { budget: number | null; actual: number | null };
+  rows: CostingRow[]; budgetCost: number; actualCost: number; diff: number; overrun: boolean;
+  budgetProfit: number | null; actualProfit: number | null; budgetMargin: number | null; actualMargin: number | null;
+}
+const KIND_LABEL: Record<string, string> = { material: 'Material (RW)', panels: 'Panels', glass: 'Glass', extras: 'Extras', painting: 'Painting', transport: 'Transport', customs: 'Customs', labour: 'Labour' };
+const KIND_SOURCE: Record<string, string> = { material: 'RW from Subiekt', glass: 'glass invoices (monday)', transport: 'transport invoices (monday)', extras: 'invoices (monday) and typed', labour: 'phone time × rate' };
+/** The decided (or, undecided, the produce) scenario against everything booked: the job's cost lines (RW, invoices,
+ *  labour), the order's supplier invoices and its installation (typed + cost reports paid out). */
+export function costing(b: Budget | null, job: { sums: Record<string, number>; totalCost: number; sales: number | null } | null,
+  order: { net: number; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null; cost_reports_paid?: number | null; actual_purchase?: number | null; invoiced?: number | null } | null): Costing {
+  const rows: CostingRow[] = [];
+  const add = (key: string, label: string, budget: number, actual: number, source: string) => { if (Math.abs(budget) >= 0.005 || Math.abs(actual) >= 0.005) rows.push({ key, label, budget: round2(budget), actual: round2(actual), diff: round2(actual - budget), source }); };
+  const sums = job?.sums ?? {};
+  const basis: Costing['basis'] = b ? (b.decision === 'trade' ? 'trade' : 'produce') : job ? 'produce' : 'order';
+  const bought = order?.actual_purchase ?? 0;
+  if (basis === 'produce') {
+    const c = b ? budgetCalc(b) : null;
+    for (const k of ['material', 'panels', 'glass', 'extras', 'painting', 'transport', 'customs']) add(k, KIND_LABEL[k], c ? c.produce.lines[k as keyof typeof c.produce.lines] ?? 0 : 0, sums[k] ?? 0, KIND_SOURCE[k] ?? 'typed in Job costs');
+    add('labour', KIND_LABEL.labour, c ? c.produce.labour : 0, sums.labour ?? 0, KIND_SOURCE.labour);
+    add('bought', 'Bought in (supplier invoices)', 0, bought, 'trade invoices on the order');
+  } else if (basis === 'trade') {
+    add('bought', 'Purchase from the vendor', (b!.trade_purchase ?? 0) + (b!.trade_other ?? 0), bought, 'trade invoices on the order (KSeF)');
+    add('transport', KIND_LABEL.transport, b!.trade_transport ?? 0, sums.transport ?? 0, KIND_SOURCE.transport);
+    const otherJob = (job?.totalCost ?? 0) - (sums.transport ?? 0);
+    add('job_other', 'Other costs on the Z job', 0, otherJob, 'RW, invoices, labour on the job');
+  } else {   // an order without a Z job: the rep's estimate against the supplier invoices
+    add('bought', 'Purchase', order?.cost_purchase ?? 0, bought, 'trade invoices on the order (KSeF)');
+    add('transport', 'Delivery', order?.cost_delivery ?? 0, order?.cost_delivery ?? 0, 'as typed on the order');
+  }
+  if (order) add('install', 'Installation', order.cost_install ?? 0, (order.cost_install ?? 0) + (order.cost_reports_paid ?? 0), 'typed + cost reports paid out');
+  const budgetCost = round2(rows.reduce((s, r) => s + r.budget, 0)), actualCost = round2(rows.reduce((s, r) => s + r.actual, 0));
+  const revB = b?.offer_net ?? (order && order.net > 0 ? order.net : null);
+  const revA = order ? (order.invoiced ?? null) : (job?.sales ?? null);
+  const revActual = revA && revA !== 0 ? revA : (job?.sales ?? null);
+  const bp = revB === null ? null : round2(revB - budgetCost), ap = revActual === null ? null : round2(revActual - actualCost);
+  return { basis, decision: b?.decision ?? null, revenue: { budget: revB, actual: revActual }, rows, budgetCost, actualCost, diff: round2(actualCost - budgetCost),
+    overrun: budgetCost > 0 && actualCost > budgetCost * 1.1, budgetProfit: bp, actualProfit: ap,
+    budgetMargin: revB ? Math.round((bp! / revB) * 10000) / 10000 : null, actualMargin: revActual ? Math.round((ap! / revActual) * 10000) / 10000 : null };
+}
+/** The Z job carrying this Job costs key, or null. */
+export async function jobIdByKey(tenantId: string, key: string | null): Promise<string | null> {
+  if (!key) return null;
+  const { data, error } = await db().from('fin_jobs').select('id').eq('tenant_id', tenantId).eq('reference_key', key).limit(1);
+  if (error) throw error; return data?.[0]?.id ?? null;
+}

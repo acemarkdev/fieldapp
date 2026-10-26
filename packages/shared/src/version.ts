@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.60.0';
+export const APP_VERSION = '1.61.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.61.0', date: '2026-10-26', changes: [
+    'Order-to-actuals step 3. Production invoices are booked to the Z job: after each monday costs sync, an invoice whose Zlecenie names one Z becomes a cost line of that job — glass suppliers (Stan Szkło, Press Glass, A2 Projekt, Binnglass, N&C, Premier) as Glass, 416 Materials Run and 500 Montaż as Extras, 425 Logistics as Transport. 631 profiles and hardware (Cortizo, Aliplast, Aluprof …) are not booked — they come as RW from Subiekt; 499.V Handel stays on the sales order. A line follows the board, moves when the Z is corrected, and a line typed by hand with the same invoice number is replaced. Locked jobs and invoices naming several Z are left out. No migration.',
+    'One budget against actual on both screens: the order window (Sales orders) and the job window (Job costs) show the same table for the order and its Z job — revenue, each cost line of the decided scenario (produce: material RW, glass, transport, extras, labour from the phone …; trade: the vendor purchase from the supplier invoices, transport, other job costs), installation (typed + cost reports paid out), total, profit and margin; budget in amber, actual in green or red under 30 %.',
+  ] },
   { version: '1.60.0', date: '2026-10-26', changes: [
     'Job costs: the monday stage of each Z job — the group its item is in on PRODUCTION ACEMARK PL (1 Zamówienia … 5 Zakończone, Magazyn) — as a chip next to the reference in the group’s monday colour, with a stripe of that colour on the row, and a filter by stage. Read with Load from monday, every night at 04:00, and with the ↻ monday stages button. A job matches its item by the monday link, else by its Z number (a Z on the board twice is left out). Needs migration 0109.',
   ] },

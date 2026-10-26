@@ -9,6 +9,7 @@ import { db } from './supabase';
 import { Monday, withMondayRetry } from './monday';
 import { getConfig, setConfig } from './store';
 import { readTradePdfs } from './tradeCosts';
+import { bookInvoiceLines, type InvoiceBooking } from './jobInvoices';
 
 // The invoices board per environment. Only PROD touches the real board "FAKTURY WSZYSTKIE"; test and
 // local development use its copy "FAKTURY WSZYSTKIE _TEST" (same column ids), so test syncs can never
@@ -248,6 +249,12 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
     try { pdfs = await readTradePdfs(tenantId, new Map(items.map((it) => [it.id, it.cols[C.files] ?? null])), (d, t) => { p.done = d; p.total = t; }); }
     catch (e: any) { console.error('[fin sync] trade PDFs', e?.message ?? e); }
 
+    // Production invoices with a Z in "Zlecenie" → cost lines of that job (glass, transport, extras — see jobInvoices.ts).
+    p.phase = 'Booking production invoices to the Z jobs…'; p.done = 0; p.total = 0;
+    let booked: InvoiceBooking | null = null;
+    try { booked = await bookInvoiceLines(tenantId); console.log(`[fin sync] invoices on Z jobs: ${booked.booked} booked/changed, ${booked.removed} removed, ${booked.typedReplaced} typed replaced, no job: ${booked.noJob.slice(0, 20).join(', ')}`); }
+    catch (e: any) { console.error('[fin sync] booking invoices to jobs', e?.message ?? e); }
+
     // Write the trusted Cost ID to the board wherever the board's column differs. Not recorded row by
     // row here: the next sync re-reads the column, so an interrupted run simply resumes.
     const toWrite = rows.filter((r) => r.cost_id && r.monday_cost_id !== r.cost_id).map((r) => ({ itemId: r.monday_item_id as string, value: r.cost_id as string }));
@@ -259,9 +266,9 @@ async function runCostSync(tenantId: string, boardId: string, startedBy: string,
       written += batch.length; p.done = written;
     }
 
-    const result = { scanned: items.length, added, updated, changed: rows.filter((r) => r.changed).length, removed: gone.length, ids_written: written, pdfs_read: pdfs.read, pdfs_failed: pdfs.failed };
+    const result = { scanned: items.length, added, updated, changed: rows.filter((r) => r.changed).length, removed: gone.length, ids_written: written, pdfs_read: pdfs.read, pdfs_failed: pdfs.failed, jobs_booked: booked?.booked ?? 0, jobs_no_z: booked?.noJob.length ?? 0 };
     p.result = result; p.phase = 'Done';
-    const { pdfs_read: _r, pdfs_failed: _f, ...stored } = result;   // the runs table has no columns for these
+    const { pdfs_read: _r, pdfs_failed: _f, jobs_booked: _b, jobs_no_z: _n, ...stored } = result;   // the runs table has no columns for these
     await finish(stored);
   } catch (e: any) {
     await finish({ error: (e?.message ?? String(e)).slice(0, 1000) });
