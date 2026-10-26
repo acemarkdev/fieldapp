@@ -12,9 +12,8 @@ alter table app_users add constraint app_users_prod_company_check check (prod_co
 alter table prod_tasks add column if not exists company text not null default 'acemark';
 alter table prod_tasks drop constraint if exists prod_tasks_company_check;
 alter table prod_tasks add constraint prod_tasks_company_check check (company in ('acemark', 'wem'));
--- the same task name may exist in both companies
-alter table prod_tasks drop constraint if exists prod_tasks_tenant_id_export_name_key;
-create unique index if not exists prod_tasks_company_name on prod_tasks(tenant_id, company, export_name);
+-- task names are not unique (0078: the same set may be loaded again for an order) — only an index per company
+create index if not exists prod_tasks_company_name on prod_tasks(tenant_id, company, export_name);
 
 alter table time_entries add column if not exists company text not null default 'acemark';
 alter table time_entries drop constraint if exists time_entries_company_check;
