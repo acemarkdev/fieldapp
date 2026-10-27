@@ -77,7 +77,7 @@ export async function readTradePdfs(tenantId: string, fileOf: Map<string, string
 // ---- turning invoices into cost per order ---------------------------------------------------------
 export interface TradeInvoice { id: string; supplier: string | null; invoice_no: string | null; invoice_date: string | null; net: number | null; order_ref: string | null; pdf_type: string | null; pdf_status: string | null; pdf_total: number | null; monday_item_id: string }
 export interface TradeLine { cost_id: string; net: number; advance: boolean; order_code: string | null; ref: string | null; name: string | null }
-export interface OrderPurchase { order_key: string; order_code: string; invoice_no: string | null; supplier: string | null; invoice_date: string | null; net: number; from: 'lines' | 'zlecenie' }
+export interface OrderPurchase { order_key: string; order_code: string; invoice_no: string | null; supplier: string | null; invoice_date: string | null; net: number; from: 'lines' | 'zlecenie'; cost_id?: string }
 export type TradeCheckReason = 'no_reference' | 'mismatch' | 'not_ksef' | 'no_pdf' | 'error' | 'unknown_order' | 'not_read';
 /** The order written in the board's "Zlecenie": an OK number, a Z number (an order produced in Orpiszew), or the text itself. */
 export function zlecenieCode(text: unknown): string | null {
@@ -95,7 +95,7 @@ export function allocatePurchases(invoices: TradeInvoice[], lines: TradeLine[], 
   for (const inv of invoices) {
     if (inv.pdf_type === 'advance') continue;                       // an advance is not a cost
     const zl = zlecenieCode(inv.order_ref);                           // the order written on the board, if any
-    const add = (code: string, net: number, from: OrderPurchase['from']) => purchases.push({ order_key: alnum(code), order_code: code, invoice_no: inv.invoice_no, supplier: inv.supplier, invoice_date: inv.invoice_date, net: round2(net), from });
+    const add = (code: string, net: number, from: OrderPurchase['from']) => purchases.push({ order_key: alnum(code), order_code: code, invoice_no: inv.invoice_no, supplier: inv.supplier, invoice_date: inv.invoice_date, net: round2(net), from, cost_id: inv.id });
     const own = linesBy.get(inv.id) ?? [];
     const readable = inv.pdf_status === 'ok' && own.length > 0;
     if (!readable) {

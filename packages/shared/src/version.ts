@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.62.0';
+export const APP_VERSION = '1.63.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.63.0', date: '2026-10-27', changes: [
+    'Performance ▸ Result, UoR / IFRS views: trade purchases matched to the sale. Each order’s part of a trade purchase invoice (499.V Handel, split by its KSeF lines as in Sales orders) counts in the month of that order’s first final sales invoice; an order not invoiced yet = a new memo line, trade goods bought, not sold yet. A part not placed on any order stays in its invoice month. Exchange differences stay outside the app (they need the payment dates). No migration.',
+  ] },
   { version: '1.62.0', date: '2026-10-27', changes: [
     'Performance ▸ Result, UoR / IFRS views — three more gaps closed. Job costs matched to the sale: a Z job’s material (RW) and the invoices booked to it count in the month of its first final invoice, like its revenue; until then they are work in progress (a memo line, not in the result). The invoices booked to a job are no longer counted again as department invoices.',
     'Stock write-down to net realisable value: the provision is 50 % of the 1–2 y and 100 % of the over-2 y stock at each month end (from the Stock value history; admin can change the % on the line); the month’s cost is the change in the provision, below EBITDA. The provision itself is a memo line.',

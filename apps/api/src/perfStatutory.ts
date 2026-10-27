@@ -5,10 +5,13 @@
 //     are work in progress;
 //   • the stock by age bucket at each month end (the daily history of Stock value) and the write-down % per bucket
 //     → the write-down provision (net realisable value) and its change per month;
-//   • the commission earned per month, all reps (each rep's monthly bands on their own sales).
+//   • the commission earned per month, all reps (each rep's monthly bands on their own sales);
+//   • the trade purchases split by order (the supplier invoices' KSeF lines, as in Sales orders), each with the keys of its
+//     order (OK number, Z number) — the view counts each piece in the month of the order's first final sales invoice.
 import { db } from './supabase';
 import { getConfig, setConfig } from './store';
-import { listOrderViews, commissionYear } from './finOrders';
+import { listOrderViews, commissionYear, orderKeys, tradeAllocation } from './finOrders';
+import { loadTrade } from './tradeCosts';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 async function all<T>(table: string, cols: string, tenantId: string, filter?: (q: any) => any): Promise<T[]> {
@@ -52,6 +55,7 @@ export interface StatutoryData {
   bookedItems: string[];
   stock: { ends: ({ day: string; b: number[] } | null)[]; prevDec: { day: string; b: number[] } | null; writedown: number[] };
   commission: number[];
+  trade: { cost_id: string; net: number; keys: string[] }[];
 }
 export async function statutoryData(tenantId: string, year: number): Promise<StatutoryData> {
   const [jobs, items] = await Promise.all([all<any>('fin_jobs', 'id,reference,reference_key', tenantId), all<any>('fin_job_items', 'id,job_id,kind,amount,source,source_id', tenantId)]);
@@ -77,5 +81,12 @@ export async function statutoryData(tenantId: string, year: number): Promise<Sta
   const commission = Array(12).fill(0);
   for (const list of byRep.values()) commissionYear(list, year).months.forEach((m, i) => { commission[i] = round2(commission[i] + m.commission); });
 
-  return { jobs: jobRows, bookedItems: [...new Set(bookedItems)], stock: { ends, prevDec: pick(`${year - 1}-12`), writedown: await getWritedown() }, commission };
+  // trade purchases by order: the keys of the order each piece belongs to
+  let trade: StatutoryData['trade'] = [];
+  try {
+    const allocated = tradeAllocation(views as any, await loadTrade(tenantId)).purchases;
+    const byKey = new Map<string, string[]>(); for (const o of views) { const ks = orderKeys(o as any); for (const k of ks) if (!byKey.has(k)) byKey.set(k, ks); }
+    trade = allocated.filter((x) => x.cost_id).map((x) => ({ cost_id: String(x.cost_id), net: x.net, keys: byKey.get(x.order_key) ?? [x.order_key] }));
+  } catch (e: any) { console.warn('[performance] trade purchases by order:', e?.message ?? e); }
+  return { jobs: jobRows, bookedItems: [...new Set(bookedItems)], stock: { ends, prevDec: pick(`${year - 1}-12`), writedown: await getWritedown() }, commission, trade };
 }
