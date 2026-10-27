@@ -11,6 +11,7 @@ import { Monday } from './monday';
 import { orderCode, orderFields } from './finOrders';
 import { zNumber } from './mondayJobs';
 import { colReady } from './schemaReady';
+import { customerByName, listCustomers, splitOrderRef, type Customer } from './finCustomers';
 
 export const ENQUIRY_BOARD = '5555728429';
 export const ECOL = { status: 'status_13', kind: 'color_mkzmrnw1', person: 'person', contact: 'connect_boards1', crm: 'color_mm4c485v', linked: 'board_relation5' } as const;
@@ -103,6 +104,8 @@ export async function applyEnquiries(tenantId: string, by: string, ids: string[]
   const { rows } = await previewEnquiries(tenantId, reps);
   const want = new Set(ids.map(String)), created: string[] = [], seen = new Set<string>();
   const withIds = await colReady('fin_orders', 'monday_item_id');   // migration 0108
+  const withCust = await colReady('fin_orders', 'customer_id');      // migration 0111: the customer list and the enquiry date
+  const known: Customer[] = withCust ? await listCustomers(tenantId) : [];
   let skipped = 0;
   const fresh: Record<string, any>[] = [];
   for (const r of rows) {
@@ -114,6 +117,9 @@ export async function applyEnquiries(tenantId: string, by: string, ids: string[]
       net: 0, offer_year: d ? d.getUTCFullYear() : null, offer_month: d ? d.getUTCMonth() + 1 : null, enquiry_month: d ? d.getUTCMonth() + 1 : null,
       note: `From monday (Acemark PL Enquiries): ${r.status ?? ''}${r.kind ? ' · ' + r.kind : ''}`, job_ref: r.order.job }, true);
     if (!f.ok) { skipped++; continue; }
+    // the customer list: found by name, or added with the country of the OK number (OK DE… → Germany)
+    const cust = withCust && r.order.customer ? await customerByName(tenantId, by, r.order.customer, splitOrderRef(r.name)?.cc ?? null, known) : null;
+    if (withCust) Object.assign(f.fields, { customer_id: cust?.id ?? null, enquiry_date: r.created });
     fresh.push({ tenant_id: tenantId, created_by: by, rep_user_id: r.order.repId, rep_name: r.order.rep, ...f.fields, ...(withIds ? { monday_item_id: r.id } : {}) });
     created.push(r.code);
   }

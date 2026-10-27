@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.63.0';
+export const APP_VERSION = '1.64.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.64.0', date: '2026-10-27', changes: [
+    'Sales orders, step A of replacing the monday Enquiries board. The order number is built for you: OK + the customer’s country + the next free number + your own text (OK DE203066 - Mülheim, Krüger). The form shows the next number; it is taken only when the order is saved. An admin can type the number and set the next one while orders still come from monday; once saved, the number and country stay unless an admin changes them.',
+    'Customers: a customer list to pick from — typing filters it, and when nothing matches “+ New customer” opens a short form (two name lines, street, postal code, city, country, phone, e-mail). The order’s country follows the customer. “Same as delivery address” is ticked by default; untick it to type a delivery address for this order only. Load from monday adds the board’s customers to the list (matched by name; country from the OK number).',
+    'Material: tick one or more of PVC, Alu and Timber (old “Wood” shows as Timber). Enquiry received is now a date (dd-mm-yy). Planned realisation is replaced by Requested realisation (a date or just a month) and Confirmed realisation date, which opens once the order is accepted; planning and Performance use the confirmed date, else the requested one. Needs migration 0111 — until then the form works without the customer list and the new dates.',
+  ] },
   { version: '1.63.0', date: '2026-10-27', changes: [
     'Performance ▸ Result, UoR / IFRS views: trade purchases matched to the sale. Each order’s part of a trade purchase invoice (499.V Handel, split by its KSeF lines as in Sales orders) counts in the month of that order’s first final sales invoice; an order not invoiced yet = a new memo line, trade goods bought, not sold yet. A part not placed on any order stays in its invoice month. Exchange differences stay outside the app (they need the payment dates). No migration.',
   ] },

@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/finOrders.test.ts
-import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
+import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, parseDay, materialText, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -100,6 +100,22 @@ const row = (o: Record<number, string>) => { const c: string[] = Array(23).fill(
   ok('an invoice typed any which way finds its order', ['OKDE203065', 'Z431', 'OKDE203102'].every((k) => c.keys.includes(k)) && !c.keys.includes('DRZWI'));
   ok('invoice numbers noted on orders are known', c.invoiceKeys.includes('FP3ACE092025') && c.invoiceKeys.includes('FL198'));
   ok('Job costs references, de-duplicated and in natural order', c.jobs.join('|') === 'Z.9|Z.164|Z.431');
+}
+
+// The order form, step A: dates as dd-mm-yy, several materials, requested and confirmed realisation
+ok('day: dd-mm-yy and the other forms', parseDay('05-11-26') === '2026-11-05' && parseDay('5.11.2026') === '2026-11-05' && parseDay('2026-11-05') === '2026-11-05' && parseDay('31-13-26') === null && parseDay('') === null);
+ok('materials: ticked list in a fixed order; old text kept', materialText(['Timber', 'PVC']) === 'PVC, Timber' && materialText('Wood') === 'Timber' && materialText('alu + pvc') === 'PVC, Alu' && materialText([]) === null && materialText('Drzwi') === 'Drzwi');
+{
+  const base = { order_ref: 'OK DE203066 - X', status: 'offer', net: 100 };
+  const a = orderFields({ ...base, enquiry_date: '03-10-26', requested_date: '2027-02', requested_month_only: true, confirmed_date: '15-03-27' }, false);
+  ok('requested month → its 1st, planning month follows; confirmed ignored while an offer', a.ok && a.fields.enquiry_date === '2026-10-03' && a.fields.enquiry_month === 10 && a.fields.requested_date === '2027-02-01' && a.fields.requested_month_only === true && a.fields.confirmed_date === null && a.fields.planned_year === 2027 && a.fields.planned_month === 2, a);
+  const b = orderFields({ ...base, status: 'accepted', requested_date: '10-02-27', confirmed_date: '15-03-27' }, false);
+  ok('accepted: the confirmed date wins for planning', b.ok && b.fields.requested_month_only === false && b.fields.confirmed_date === '2027-03-15' && b.fields.planned_month === 3, b);
+  ok('a bad date is refused', !orderFields({ ...base, enquiry_date: '99-99-99' }, false).ok && !orderFields({ ...base, requested_date: 'soon' }, false).ok);
+  const c = orderFields({ ...base, planned_year: 2026, planned_month: 12 }, false);
+  ok('the imports (no new fields sent) keep the planned month and touch nothing new', c.ok && c.fields.planned_month === 12 && !('requested_date' in c.fields) && !('customer_id' in c.fields) && !('delivery_address' in c.fields), c);
+  const d = orderFields({ ...base, customer_id: 'nonsense', delivery: { same: false, street: 'A 1', city: 'B' } }, false);
+  ok('customer id checked; own delivery address kept', d.ok && d.fields.customer_id === null && d.fields.delivery_address?.city === 'B', d);
 }
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }

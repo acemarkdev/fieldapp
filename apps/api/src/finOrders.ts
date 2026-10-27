@@ -10,6 +10,7 @@ import { db } from './supabase';
 import { parseMoney, referenceKey } from './finJobs';
 import { parseDate } from './finSales';
 import { onlyReady } from './schemaReady';
+import { deliveryFields } from './finCustomers';
 
 export type Result<T = {}> = ({ ok: true } & T) | { ok: false; status: number; error: string };
 const fail = (status: number, error: string): Result<any> => ({ ok: false, status, error });
@@ -96,6 +97,9 @@ export interface OrderRow {
   net: number; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null;
   planned_year: number | null; planned_month: number | null; first_payment_date: string | null; invoice_refs: string | null;
   note: string | null; comment: string | null;
+  // migration 0111 — missing before it runs
+  customer_id?: string | null; delivery_address?: Record<string, string | null> | null; enquiry_date?: string | null;
+  requested_date?: string | null; requested_month_only?: boolean; confirmed_date?: string | null;
 }
 export interface SaleLite { id: string; invoice_no: string | null; invoice_date: string | null; job_key: string | null; net: number; kind: string; period_year: number | null; period_month: number | null }
 export interface PaymentRow { id: string; order_id: string; paid_date: string; amount: number; note: string | null }
@@ -197,6 +201,26 @@ export function monthFromText(v: unknown): number | null {
   const j = EN_STEMS.findIndex((m) => s.startsWith(m)); return j >= 0 ? j + 1 : null;
 }
 const statusFrom = (v: unknown): OrderStatus => { const s = clean(v).toLowerCase(); return /^(accepted|zaakcept)/.test(s) ? 'accepted' : /^(lost|odrzuc|przegr|anul|rezygn)/.test(s) ? 'lost' : 'offer'; };
+/** A day typed as dd-mm-yy (the form), dd-mm-yyyy, dd.mm.yyyy or yyyy-mm-dd. */
+export function parseDay(v: unknown): string | null {
+  const s = clean(v);
+  const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2})$/.exec(s);
+  return parseDate(m ? `${m[1]}-${m[2]}-20${m[3]}` : s);
+}
+/** The materials ticked on the form → one text, always in the same order: "PVC, Alu". Old "Wood" is Timber. */
+export const MATERIALS = ['PVC', 'Alu', 'Timber'] as const;
+export function materialText(v: unknown): string | null {
+  const list = (Array.isArray(v) ? v : clean(v).split(/\s*[,+/;&]\s*|\s+i\s+|\s+and\s+/i)).map(clean).filter(Boolean);
+  const known: string[] = [], other: string[] = [];
+  for (const x of list) {
+    const k = /^(wood|drewn|timber|drewno)/i.test(x) ? 'Timber' : MATERIALS.find((m) => m.toLowerCase() === x.toLowerCase());
+    if (k) { if (!known.includes(k)) known.push(k); } else if (!other.includes(x)) other.push(x);
+  }
+  const out = [...MATERIALS.filter((m) => known.includes(m)), ...other].join(', ');
+  return out.slice(0, 40) || null;
+}
+/** The columns added by migrations 0108 and 0111 — dropped from a write while their migration has not run. */
+export const ORDER_NEW_COLS = ['vendor_quote', 'customer_id', 'delivery_address', 'enquiry_date', 'requested_date', 'requested_month_only', 'confirmed_date'];
 const intIn = (v: unknown, lo: number, hi: number): number | null => { const n = parseMoney(v); return n !== null && Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
 
 /** Form input → the stored fields. `finance` = may set what only the accountant/admin controls
@@ -212,7 +236,7 @@ export function orderFields(b: any, finance: boolean): Result<{ fields: Record<s
   const oy = intIn(b.offer_year, 2000, 2100), py = intIn(b.planned_year, 2000, 2100);
   const fields: Record<string, any> = {
     order_ref: ref, order_key: referenceKey(ref).slice(0, 200),
-    company: clean(b.company).slice(0, 60) || null, supplier: clean(b.supplier).slice(0, 60) || null, material: clean(b.material).slice(0, 40) || null,
+    company: clean(b.company).slice(0, 60) || null, supplier: clean(b.supplier).slice(0, 60) || null, material: materialText(b.material),
     customer: clean(b.customer).slice(0, 160) || null,
     status: ORDER_STATUSES.includes(b.status) ? b.status : statusFrom(b.status),
     offer_year: oy, offer_month: monthFromText(b.offer_month), enquiry_month: monthFromText(b.enquiry_month),
@@ -222,6 +246,30 @@ export function orderFields(b: any, finance: boolean): Result<{ fields: Record<s
   };
   // the vendor's quote for the trade scenario (a link or a note) — only when the form sends it
   if ('vendor_quote' in (b ?? {})) fields.vendor_quote = clean(b.vendor_quote).slice(0, 500) || null;
+  // the order form (migration 0111) — only when sent, so the imports never clear them
+  if ('customer_id' in b) { const id = clean(b.customer_id); fields.customer_id = /^[0-9a-f-]{36}$/i.test(id) ? id : null; }
+  if ('delivery' in b) { const d = deliveryFields(b.delivery); if (!d.ok) return d; fields.delivery_address = d.address; }
+  if ('enquiry_date' in b) {
+    const raw = clean(b.enquiry_date), d = raw ? parseDay(raw) : null;
+    if (raw && !d) return fail(400, 'The enquiry date is not a date (dd-mm-yy).');
+    fields.enquiry_date = d;
+    if (d) fields.enquiry_month = +d.slice(5, 7);
+  }
+  if ('requested_date' in b || 'confirmed_date' in b) {
+    const monthOnly = b.requested_month_only === true;
+    const rq = clean(b.requested_date);
+    // a month is sent as yyyy-mm and kept as its 1st
+    const req = rq ? (monthOnly && /^\d{4}-\d{1,2}$/.test(rq) ? parseDate(rq + '-01') : parseDay(rq)) : null;
+    if (rq && !req) return fail(400, monthOnly ? 'The requested realisation month is not a month.' : 'The requested realisation date is not a date (dd-mm-yy).');
+    const cf = clean(b.confirmed_date), conf = cf ? parseDay(cf) : null;
+    if (cf && !conf) return fail(400, 'The confirmed realisation date is not a date (dd-mm-yy).');
+    fields.requested_date = req; fields.requested_month_only = !!req && monthOnly;
+    // confirmed only once the order is accepted (step B: once a quote is approved)
+    fields.confirmed_date = fields.status === 'accepted' ? conf : null;
+    // planning (expense window, Performance) reads the month: confirmed first, else requested
+    const when = fields.confirmed_date ?? req;
+    fields.planned_year = when ? +when.slice(0, 4) : null; fields.planned_month = when ? +when.slice(5, 7) : null;
+  }
   if (finance) {
     const job = clean(b.job_ref).slice(0, 80);
     fields.job_ref = job || null;
@@ -317,7 +365,7 @@ export async function getOrder(tenantId: string, id: string): Promise<any | null
 }
 export async function createOrder(tenantId: string, by: string, b: any, o: { finance: boolean; repUserId: string | null; repName: string | null }): Promise<Result<{ id: string }>> {
   const f = orderFields(b, o.finance); if (!f.ok) return f;
-  const fields = await onlyReady('fin_orders', f.fields, ['vendor_quote']);   // before migration 0108 the vendor quote is not kept
+  const fields = await onlyReady('fin_orders', f.fields, ORDER_NEW_COLS);   // before migration 0108 the vendor quote is not kept
   const { data, error } = await db().from('fin_orders').insert({ tenant_id: tenantId, created_by: by, rep_user_id: o.repUserId, rep_name: o.repName, ...fields }).select('id').single();
   if (error) throw error;
   return { ok: true, id: data.id };
@@ -326,7 +374,7 @@ export async function updateOrder(tenantId: string, id: string, b: any, o: { fin
   const cur = await getOrder(tenantId, id);
   if (!cur || (o.ownerOnly && cur.rep_user_id !== o.ownerOnly)) return fail(404, 'Order not found.');
   const f = orderFields(b, o.finance); if (!f.ok) return f;
-  const patch: Record<string, any> = { ...(await onlyReady('fin_orders', f.fields, ['vendor_quote'])), updated_at: new Date().toISOString() };
+  const patch: Record<string, any> = { ...(await onlyReady('fin_orders', f.fields, ORDER_NEW_COLS)), updated_at: new Date().toISOString() };
   if (o.rep) { patch.rep_user_id = o.rep.id; patch.rep_name = o.rep.name; }
   const { error } = await db().from('fin_orders').update(patch).eq('tenant_id', tenantId).eq('id', id);
   if (error) throw error;

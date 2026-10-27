@@ -27,6 +27,7 @@ import { listBudgets, getBudget, saveBudget, decide as decideBudget, budgetCalc,
 import { previewMondayJobs, applyMondayJobs, refreshJobGroups } from './mondayJobs';
 import { previewZLinks, applyZLinks } from './mondayOrders';
 import { previewEnquiries, applyEnquiries } from './mondayEnquiries';
+import { listCustomers as listOrderCustomers, createCustomer, updateCustomer, customersReady, COUNTRIES, countryCode, splitOrderRef, buildOrderRef, peekOrderNumber, takeOrderNumber, setNextOrderNumber, codeTaken } from './finCustomers';
 import { statutoryData, writedownField, setWritedown } from './perfStatutory';
 import { attachJobs, jobOrders, syncOrdersFromJob, autoLinkZ, syncAfterLinks, jobKeyOf, mondayItemUrl as boardItemUrl, PRODUCTION_BOARD_ID, costing, jobIdByKey } from './orderJobLink';
 import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as addProdTask, setTaskActive, setTasksActive, listEditLog, listEntries as listTimeEntries, saveEntry as saveTimeEntry, deleteEntry as deleteTimeEntry, listRates as listWorkerRates, setRate as setWorkerRate, hoursBetween, rateRows, rateBook, rateFor, removeRateRow, recordDefaultRate, todayPL, PROD_COMPANIES, prodCompanyOf, prodCompanyMap, userProdCompany, setUserProdCompany, type ProdCompany } from './prodTime';
@@ -77,7 +78,7 @@ import { JOB_KINDS, JOB_KIND_LABEL, listJobs as listFinJobs, getJob as getFinJob
 import { listPayroll, savePayrollMonth, payrollView, PAYROLL_DEPTS, listResultItems, saveResultItem } from './finPayroll';
 import { PAY_GROUPS, listPeople as listPayPeople, listLoads as listPayLoads, previewFiles as previewPayFiles, applyFiles as applyPayFiles, getLoad as getPayLoad, removeLoad as removePayLoad, saveLump as savePayLump, setPersonGroup as setPayPersonGroup } from './payrollFiles';
 import { listSales, createSale, updateSale, deleteSale, deleteSales, importSales } from './finSales';
-import { listOrderViews, createOrder, updateOrder, deleteOrders, addPayment, deletePayment, importOrders, orderCatalogue, commissionYear, annualBonus, companyTurnover, getOrder, COMMISSION_BANDS, ANNUAL_BANDS , tradeToCheck } from './finOrders';
+import { listOrderViews, createOrder, updateOrder, deleteOrders, addPayment, deletePayment, importOrders, orderCatalogue, commissionYear, annualBonus, companyTurnover, getOrder, COMMISSION_BANDS, ANNUAL_BANDS , tradeToCheck, orderFields } from './finOrders';
 import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS, localDayHour, AUTO_SYNC_TZ } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
@@ -1029,17 +1030,62 @@ const server = createServer(async (req, res) => {
       const isRep = ctx.role === 'sales_rep', finance = !isRep, own = isRep ? ctx.id : null;
       const reps = async () => (await listAppUsers(ctx.tenant_id)).filter((u: any) => u.role === 'sales_rep' && u.active !== false).map((u: any) => ({ id: u.id, name: u.name || u.email }));
       const repFor = async (id: unknown) => { const r = (await reps()).find((x) => x.id === String(id ?? '')); return r ? { id: r.id, name: r.name } : { id: null, name: null }; };
+      const isAdmin = ctx.role === 'admin';
+      // The order number "OK DE203065 - text": the form sends the country, the rep's text and (admin only, during the
+      // move from monday) the number. A new order takes the next number; a saved one keeps its number and country
+      // unless an admin changes them. A reference in another format (old orders, "Z.330") is kept as typed.
+      const okRef = async (b: any, cur: any | null): Promise<{ ok: true; ref?: string } | { ok: false; status: number; error: string }> => {
+        if (!b || !('ok_text' in b)) return { ok: true };
+        const was = cur ? splitOrderRef(cur.order_ref) : null;
+        if (cur && !was) return { ok: true };
+        const typedN = isAdmin && String(b.ok_n ?? '').trim() ? Number(b.ok_n) : null;
+        if (typedN !== null && !(Number.isInteger(typedN) && typedN >= 100000 && typedN <= 999999)) return { ok: false, status: 400, error: 'The order number has six digits, e.g. 203066.' };
+        const cc = (was && !isAdmin ? was.cc : countryCode(b.ok_country)) ?? was?.cc ?? null;
+        if (!cc) return { ok: false, status: 400, error: 'Pick the country — it comes from the customer’s address.' };
+        let n = typedN ?? was?.n ?? null;
+        if (n !== null && n !== was?.n && await codeTaken(ctx.tenant_id, buildOrderRef(cc, n, ''), cur?.id)) return { ok: false, status: 409, error: `OK ${cc}${n} is already used by another order.` };
+        if (n === null) n = await takeOrderNumber(ctx.tenant_id);
+        return { ok: true, ref: buildOrderRef(cc, n, b.ok_text) };
+      };
 
       if (p === '/api/finops/orders' && req.method === 'GET') {
-        send(res, 200, { orders: await attachJobs(ctx.tenant_id, await listOrderViews(ctx.tenant_id, own)), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name } }); return;
+        send(res, 200, { orders: await attachJobs(ctx.tenant_id, await listOrderViews(ctx.tenant_id, own)), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
+          isAdmin, customers: await listOrderCustomers(ctx.tenant_id), customersReady: await customersReady(), countries: COUNTRIES, nextNumber: await peekOrderNumber(ctx.tenant_id) }); return;
       }
       if (p === '/api/finops/orders' && req.method === 'POST') {
         const b = await readJson(req);
         const rep = isRep ? { id: ctx.id as string, name: ctx.name as string } : await repFor(b.rep_user_id);
+        // check the form before a number is taken, so a refused save does not use one up
+        if ('ok_text' in b) { const pre = orderFields({ ...b, order_ref: 'OK' }, finance); if (!pre.ok) { send(res, pre.status, { error: pre.error }); return; } }
+        const nr = await okRef(b, null); if (!nr.ok) { send(res, nr.status, { error: nr.error }); return; }
+        if (nr.ref) b.order_ref = nr.ref;
         const r = await createOrder(ctx.tenant_id, ctx.name, b, { finance, repUserId: rep.id, repName: rep.name });
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
         audit(ctx, 'finorder.create', 'fin_order', r.id, 'Added a sales order');
-        send(res, 200, { ok: true, id: r.id }); return;
+        send(res, 200, { ok: true, id: r.id, order_ref: b.order_ref }); return;
+      }
+      // the customer list the order form picks from (+ New customer); a rep may add and correct customers too
+      if (p === '/api/finops/orders/customers' && req.method === 'GET') { send(res, 200, { customers: await listOrderCustomers(ctx.tenant_id), ready: await customersReady() }); return; }
+      if (p === '/api/finops/orders/customers' && req.method === 'POST') {
+        const r = await createCustomer(ctx.tenant_id, ctx.name, await readJson(req));
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'fincustomer.create', 'fin_customer', r.customer.id, 'Added a customer: ' + r.customer.name1);
+        send(res, 200, { ok: true, customer: r.customer }); return;
+      }
+      if (p.startsWith('/api/finops/orders/customers/') && req.method === 'PUT') {
+        const id = p.split('/')[5] ?? '';
+        const r = await updateCustomer(ctx.tenant_id, id, await readJson(req));
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'fincustomer.update', 'fin_customer', id, 'Edited a customer: ' + r.customer.name1);
+        send(res, 200, { ok: true, customer: r.customer }); return;
+      }
+      // admin, during the move from monday: the number the next order gets
+      if (p === '/api/finops/orders/next-number' && req.method === 'PUT') {
+        if (!isAdmin) { send(res, 403, { error: 'Only an admin can change the next order number.' }); return; }
+        const r = await setNextOrderNumber(ctx.tenant_id, (await readJson(req)).next);
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'finorder.nextnumber', 'fin_order', null, 'Next order number set to ' + r.next);
+        send(res, 200, { ok: true, next: r.next }); return;
       }
       if (p === '/api/finops/orders/import' && req.method === 'POST') {
         if (isRep) { send(res, 403, { error: 'Not allowed.' }); return; }
@@ -1137,7 +1183,12 @@ const server = createServer(async (req, res) => {
       }
       if (oid && !sub && req.method === 'PUT') {
         const b = await readJson(req);
-        const before = finance && 'job_ref' in b ? await getOrder(ctx.tenant_id, oid) : null;
+        const before = (finance && 'job_ref' in b) || 'ok_text' in b ? await getOrder(ctx.tenant_id, oid) : null;
+        if ('ok_text' in b) {
+          if (!before || (own && before.rep_user_id !== own)) { send(res, 404, { error: 'Order not found.' }); return; }
+          const nr = await okRef(b, before); if (!nr.ok) { send(res, nr.status, { error: nr.error }); return; }
+          if (nr.ref) b.order_ref = nr.ref;
+        }
         const r = await updateOrder(ctx.tenant_id, oid, b, { finance, ownerOnly: own, rep: finance && 'rep_user_id' in b ? await repFor(b.rep_user_id) : undefined });
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
         audit(ctx, 'finorder.update', 'fin_order', oid, 'Edited a sales order');
@@ -6499,6 +6550,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       document.getElementById('fo_q').oninput=function(){ FO.limit=300; renderFinOrders(); };
     }
     var d; try{ var r=await api('/api/finops/orders'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fo_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load the orders')+'</td></tr>'; return; }
+    FO.customers=d.customers||[]; FO.customersReady=!!d.customersReady; FO.countries=d.countries||[]; FO.nextNumber=d.nextNumber||null; FO.isAdmin=!!d.isAdmin;
     FO.orders=d.orders||[]; FO.reps=d.reps||[]; FO.isRep=!!d.isRep; FO.canFinance=!!d.canFinance; FO.canManage=!!d.canManage; FO.me=d.me||null;
     fxButton(); pcLoad();
     if(FO.canFinance)fcatLoad();
@@ -6615,6 +6667,112 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{ var r=await api('/api/finops/orders/delete',{method:'POST',body:JSON.stringify({ids:list.map(function(o){return o.id;})})}); var d=await r.json();
       if(r.ok&&d.ok){ FO.sel={}; tShow(T('Deleted {0} sales orders',d.deleted)); loadFinOrders(); } else tShow(d.error||'Could not delete'); }catch(e){ tShow('Could not delete'); }
   }
+  // ---- the order form, step A of replacing monday: the OK number, the customer list, materials, dates ----
+  var FO_MATS=['PVC','Alu','Timber'];
+  function foDmy(d){ if(!d)return ''; var p=String(d).slice(0,10).split('-'); return p.length===3?p[2]+'-'+p[1]+'-'+p[0].slice(2):''; }
+  function foSplitRef(ref){ var m=/^OK[ _-]*([A-Za-z]{2})[ _-]*([0-9]{6})(?![0-9])(.*)$/i.exec(String(ref||'').trim()); if(!m)return null; return {cc:m[1].toUpperCase(),n:Number(m[2]),text:m[3].replace(/^[-–:, ]+/,'').replace(/[-– ]+$/,'').trim()}; }
+  function foCustLabel(c){ return [c.name1,c.name2].filter(Boolean).join(' '); }
+  function foCustAddr(c){ var cn=(FO.countries||[]).filter(function(x){return x[0]===c.country;})[0]; return [c.street,[c.postal_code,c.city].filter(Boolean).join(' '),cn?cn[1]:c.country].filter(Boolean).join(', ')+([c.phone,c.email].filter(Boolean).length?' · '+[c.phone,c.email].filter(Boolean).join(' · '):''); }
+  function foCountryOpts(cur,blank){ return (blank?'<option value="">'+esc(blank)+'</option>':'')+(FO.countries||[]).map(function(c){ return '<option value="'+c[0]+'"'+(cur===c[0]?' selected':'')+'>'+esc(c[1])+' ('+c[0]+')</option>'; }).join('')+(cur&&!(FO.countries||[]).some(function(c){return c[0]===cur;})?'<option value="'+av(cur)+'" selected>'+esc(cur)+'</option>':''); }
+  // the order number: OK + country + number + the rep's text. A new order shows the next free number (taken on save).
+  function foNumBlock(o){
+    var sp=o?foSplitRef(o.order_ref):null;
+    if(o&&!sp)return '<div class="field full"><label>'+esc(TR('Order number / name *'))+'</label><input id="foe_ref" class="tinput" value="'+av(o.order_ref)+'"></div>';
+    var cc=sp?sp.cc:'', n=sp?sp.n:FO.nextNumber, lockN=!FO.isAdmin, lockC=!!sp&&!FO.isAdmin;
+    return '<div class="field full"><label>'+esc(TR('Order number *'))+(sp?'':' <span style="font-weight:400">— '+esc(TR('the next free number, given when the order is saved'))+'</span>')+'</label>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><b style="font-size:14px">OK</b>'
+      +'<select id="foe_cc" style="width:150px"'+(lockC?' disabled':'')+' title="'+av(TR('from the customer’s country'))+'">'+foCountryOpts(cc,TR('country…'))+'</select>'
+      +'<input id="foe_n" class="tinput" style="width:96px;font-weight:700'+(lockN?';background:#f4f3f8':'')+'" inputmode="numeric" value="'+av(n||'')+'"'+(lockN?' readonly':'')+'>'
+      +'<span>–</span><input id="foe_text" class="tinput" style="flex:1;min-width:200px" value="'+av(sp?sp.text:'')+'" placeholder="'+av(TR('your text, e.g. Mülheim an der Ruhr - Krüger'))+'">'
+      +'</div>'+(FO.isAdmin&&!sp?'<div class="sub" style="margin:4px 0 0">'+esc(TR('Admin: the number can be typed while orders still come from monday.'))+' <a class="codelink" id="foe_setnext">'+esc(TR('set the next number'))+'</a></div>':'')+'</div>';
+  }
+  function foCustForm(c,prefix){
+    c=c||{}; var i=function(k,lab,ph){ return '<div class="field"><label>'+esc(TR(lab))+'</label><input id="'+prefix+k+'" class="tinput" value="'+av(c[k]||'')+'"'+(ph?' placeholder="'+av(ph)+'"':'')+'></div>'; };
+    return i('name1','Name *')+i('name2','Name (line 2)')+i('street','Street and number')+i('postal_code','Postal code')+i('city','City')
+      +'<div class="field"><label>'+esc(TR('Country'))+'</label><select id="'+prefix+'country">'+foCountryOpts(c.country||'',' ')+'</select></div>'+i('phone','Phone')+i('email','E-mail');
+  }
+  function foCustBlock(o){
+    if(!FO.customersReady)return '<div class="field full"><label>'+esc(TR('Customer'))+'</label><input id="foe_cust" class="tinput" value="'+av(o?o.customer||'':'')+'"><div class="sub" style="margin:4px 0 0">'+esc(TR('The customer list starts after migration 0111.'))+'</div></div>';
+    var da=o&&o.delivery_address, same=!da;
+    return '<div class="field full" style="position:relative"><label>'+esc(TR('Customer'))+'</label>'
+      +'<input id="foe_cust" class="tinput" autocomplete="off" value="'+av(o?o.customer||'':'')+'" placeholder="'+av(TR('start typing the name…'))+'">'
+      +'<div id="foe_clist" style="display:none;position:absolute;top:58px;left:0;right:0;z-index:5;background:var(--card,#fff);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);max-height:260px;overflow:auto"></div>'
+      +'<div id="foe_caddr" class="sub" style="margin:4px 0 0"></div>'
+      +'<div id="foe_cform" style="display:none;margin-top:8px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px"><div class="fgrid" style="padding:0">'+foCustForm(null,'foc_')+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;align-items:center"><button class="pobtn" id="foc_save">'+esc(TR('Save customer'))+'</button><button class="pobtn" id="foc_cancel">'+esc(TR('Cancel'))+'</button><span class="sub" id="foc_msg" style="margin:0"></span></div></div>'
+      +'<label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-weight:600;color:var(--ink,#222)"><input type="checkbox" id="foe_same"'+(same?' checked':'')+'> '+esc(TR('Same as delivery address'))+'</label>'
+      +'<div id="foe_dform" style="display:'+(same?'none':'block')+';margin-top:6px;padding:10px 12px;border:1px solid var(--line);border-radius:8px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px;margin-bottom:6px">'+esc(TR('DELIVERY ADDRESS FOR THIS ORDER'))+'</div><div class="fgrid" style="padding:0">'
+      +['name','street','postal_code','city'].map(function(k){ var lab={name:'Name / contact',street:'Street and number',postal_code:'Postal code',city:'City'}[k]; return '<div class="field"><label>'+esc(TR(lab))+'</label><input id="fod_'+k+'" class="tinput" value="'+av(da&&da[k]||'')+'"></div>'; }).join('')
+      +'<div class="field"><label>'+esc(TR('Country'))+'</label><select id="fod_country">'+foCountryOpts(da&&da.country||'',' ')+'</select></div><div class="field"><label>'+esc(TR('Phone'))+'</label><input id="fod_phone" class="tinput" value="'+av(da&&da.phone||'')+'"></div>'
+      +'</div></div></div>';
+  }
+  function foMatBlock(o){
+    var have=String(o&&o.material||'').split(/ *, */).filter(Boolean).map(function(x){ return /^(wood|drewn)/i.test(x)?'Timber':x; });
+    var extra=have.filter(function(x){ return FO_MATS.indexOf(x)<0; });
+    return '<div class="field"><label>'+esc(TR('Material'))+'</label><div style="display:flex;gap:14px;flex-wrap:wrap;padding-top:6px">'+FO_MATS.concat(extra).map(function(m){ return '<label style="display:flex;gap:5px;align-items:center;font-size:13px;font-weight:600;color:var(--ink,#222)"><input type="checkbox" class="foe_mat" value="'+av(m)+'"'+(have.indexOf(m)>=0?' checked':'')+'> '+esc(TR(m))+'</label>'; }).join('')+'</div></div>';
+  }
+  function foDatesBlock(o,f){
+    var monthOnly=o?(o.requested_date?!!o.requested_month_only:!!o.planned_month):false;
+    var reqDay=o&&o.requested_date&&!o.requested_month_only?foDmy(o.requested_date):'';
+    var reqMon=o&&o.requested_date&&o.requested_month_only?o.requested_date.slice(0,7):(o&&!o.requested_date&&o.planned_year&&o.planned_month?o.planned_year+'-'+String(o.planned_month).padStart(2,'0'):'');
+    var accepted=(o?o.status:'offer')==='accepted';
+    return f('Requested realisation','<div style="display:flex;gap:6px"><select id="foe_rqm" style="width:120px"><option value="day"'+(monthOnly?'':' selected')+'>'+esc(TR('date'))+'</option><option value="month"'+(monthOnly?' selected':'')+'>'+esc(TR('month only'))+'</option></select>'
+        +'<input id="foe_rqd" class="tinput" placeholder="dd-mm-yy" value="'+av(reqDay)+'" style="display:'+(monthOnly?'none':'block')+'"><input id="foe_rqmo" class="tinput" type="month" value="'+av(reqMon)+'" style="display:'+(monthOnly?'block':'none')+'"></div>')
+      +f('Confirmed realisation date','<input id="foe_cfd" class="tinput" placeholder="dd-mm-yy" value="'+av(o?foDmy(o.confirmed_date):'')+'"'+(accepted?'':' disabled')+'><div class="sub" id="foe_cfh" style="margin:4px 0 0;display:'+(accepted?'none':'block')+'">'+esc(TR('Opens when the order is accepted.'))+'</div>');
+  }
+  // the customer picker: typing filters the list; nothing found → “+ New customer”
+  function foCustWire(o){
+    var inp=document.getElementById('foe_cust'); if(!inp||!FO.customersReady)return;
+    var list=document.getElementById('foe_clist'), addr=document.getElementById('foe_caddr'), form=document.getElementById('foe_cform');
+    FO.pick=o&&o.customer_id?(FO.customers.filter(function(c){return c.id===o.customer_id;})[0]||null):null; FO.editCust=null;
+    var showAddr=function(){ addr.innerHTML=FO.pick?esc(foCustAddr(FO.pick)||TR('no address yet'))+' · <a class="codelink" id="foe_cedit">'+esc(TR('edit customer'))+'</a>':(inp.value.trim()&&FO.customers.length?'<i>'+esc(TR('not in the customer list'))+'</i>':''); var e=document.getElementById('foe_cedit'); if(e)e.onclick=function(){ openForm(FO.pick); }; };
+    var setCc=function(c){ var cc=document.getElementById('foe_cc'); if(cc&&!cc.disabled&&c&&c.country)cc.value=c.country; };
+    var pick=function(c){ FO.pick=c; inp.value=foCustLabel(c); list.style.display='none'; form.style.display='none'; setCc(c); showAddr(); };
+    var openForm=function(c){ FO.editCust=c||null; list.style.display='none'; form.style.display='block'; ['name1','name2','street','postal_code','city','phone','email'].forEach(function(k){ document.getElementById('foc_'+k).value=c?(c[k]||''):(k==='name1'?inp.value.trim():''); }); document.getElementById('foc_country').value=c?(c.country||''):((document.getElementById('foe_cc')||{}).value||''); document.getElementById('foc_save').textContent=TR(c?'Save customer':'Add customer'); document.getElementById('foc_name1').focus(); };
+    var render=function(){
+      var q=inp.value.trim().toLowerCase(); if(!q){ list.style.display='none'; return; }
+      var hits=FO.customers.filter(function(c){ return (foCustLabel(c)+' '+(c.city||'')).toLowerCase().indexOf(q)>=0; }).slice(0,8);
+      list.innerHTML=hits.map(function(c){ return '<div class="foe_copt" data-id="'+av(c.id)+'" style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line)"><b>'+esc(foCustLabel(c))+'</b><div class="sub" style="margin:0">'+esc(foCustAddr(c))+'</div></div>'; }).join('')
+        +(hits.length?'':'<div style="padding:8px 10px"><button class="pobtn" id="foe_cnew">'+esc(T('+ New customer “{0}”',inp.value.trim()))+'</button></div>');
+      list.style.display='block';
+      list.querySelectorAll('.foe_copt').forEach(function(d){ d.onmousedown=function(e){ e.preventDefault(); pick(FO.customers.filter(function(c){return c.id===d.getAttribute('data-id');})[0]); }; });
+      var nb=document.getElementById('foe_cnew'); if(nb)nb.onmousedown=function(e){ e.preventDefault(); openForm(null); };
+    };
+    inp.oninput=function(){ if(FO.pick&&inp.value.trim()!==foCustLabel(FO.pick))FO.pick=null; showAddr(); render(); };
+    inp.onfocus=render; inp.onblur=function(){ setTimeout(function(){ list.style.display='none'; },150); };
+    document.getElementById('foc_cancel').onclick=function(){ form.style.display='none'; };
+    document.getElementById('foc_save').onclick=async function(){
+      var b={}; ['name1','name2','street','postal_code','city','country','phone','email'].forEach(function(k){ b[k]=document.getElementById('foc_'+k).value; });
+      var msg=document.getElementById('foc_msg'); msg.textContent=TR('Saving…');
+      try{ var ed=FO.editCust, r=await api('/api/finops/orders/customers'+(ed?'/'+encodeURIComponent(ed.id):''),{method:ed?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json(); if(!r.ok||!d.ok)throw new Error(d.error||'Could not save');
+        FO.customers=FO.customers.filter(function(c){return c.id!==d.customer.id;}).concat([d.customer]).sort(function(a,b){return foCustLabel(a).localeCompare(foCustLabel(b));}); msg.textContent=''; pick(d.customer); tShow(ed?'Customer saved':'Customer added'); }
+      catch(e){ msg.textContent=TR(e.message||'Could not save'); }
+    };
+    document.getElementById('foe_same').onchange=function(){ document.getElementById('foe_dform').style.display=this.checked?'none':'block'; };
+    showAddr();
+  }
+  function foFormWire(o){
+    var rqm=document.getElementById('foe_rqm'); if(rqm)rqm.onchange=function(){ var m=rqm.value==='month'; document.getElementById('foe_rqd').style.display=m?'none':'block'; document.getElementById('foe_rqmo').style.display=m?'block':'none'; };
+    var st=document.getElementById('foe_status'), cfd=document.getElementById('foe_cfd'); if(st&&cfd)st.addEventListener('change',function(){ var a=st.value==='accepted'; cfd.disabled=!a; document.getElementById('foe_cfh').style.display=a?'none':'block'; });
+    var sn=document.getElementById('foe_setnext'); if(sn)sn.onclick=async function(){ var v=prompt(TR('The number the next new order gets (six digits):'),String(FO.nextNumber||'')); if(v===null)return;
+      try{ var r=await api('/api/finops/orders/next-number',{method:'PUT',body:JSON.stringify({next:Number(v)})}); var d=await r.json(); if(!r.ok||!d.ok)throw new Error(d.error||'Could not save'); FO.nextNumber=d.next; document.getElementById('foe_n').value=d.next; tShow(T('Next order number: {0}',d.next)); }catch(e){ tShow(e.message||'Could not save'); } };
+    foCustWire(o);
+  }
+  // the form's step-A fields → the request body
+  function foFormBody(o,b){
+    var g=function(idn){ var el=document.getElementById(idn); return el?el.value:''; };
+    if(document.getElementById('foe_text')){ b.ok_text=g('foe_text'); b.ok_country=g('foe_cc'); if(FO.isAdmin)b.ok_n=g('foe_n'); b.order_ref='OK'; }
+    else b.order_ref=g('foe_ref');
+    b.material=[].slice.call(document.querySelectorAll('.foe_mat')).filter(function(c){return c.checked;}).map(function(c){return c.value;});
+    if(FO.customersReady){
+      b.customer_id=FO.pick?FO.pick.id:null; if(FO.pick)b.customer=foCustLabel(FO.pick);
+      var same=document.getElementById('foe_same').checked;
+      b.delivery=same?{same:true}:{same:false,name:g('fod_name'),street:g('fod_street'),postal_code:g('fod_postal_code'),city:g('fod_city'),country:g('fod_country'),phone:g('fod_phone')};
+    }
+    b.enquiry_date=g('foe_ed'); if(!b.enquiry_date&&o&&o.enquiry_month)b.enquiry_month=o.enquiry_month;
+    var mo=g('foe_rqm')==='month'; b.requested_month_only=mo; b.requested_date=mo?g('foe_rqmo'):g('foe_rqd'); b.confirmed_date=g('foe_cfd');
+    return b;
+  }
   function foOpen(id){
     var o=id?FO.orders.filter(function(x){return x.id===id;})[0]:null; if(id&&!o)return;
     var now=new Date(), v=function(k){ return o&&o[k]!=null?o[k]:''; };
@@ -6622,15 +6780,14 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var dl=function(k){ var s={}; FO.orders.forEach(function(x){ if(x[k])s[x[k]]=1; }); return Object.keys(s).sort().map(function(c){ return '<option value="'+av(c)+'">'; }).join(''); };
     var f=function(label,inner,full){ return '<div class="field'+(full?' full':'')+'"><label>'+label+'</label>'+inner+'</div>'; };
     var h='<div class="fgrid">'
-      +f('Order number / name *','<input id="foe_ref" class="tinput" value="'+av(v('order_ref'))+'" placeholder="OK DE203065 -Mülheim an der Ruhr- …  or  Z.330">',true)
-      +f('Customer','<input id="foe_cust" class="tinput" value="'+av(v('customer'))+'" list="foe_custs"><datalist id="foe_custs">'+dl('customer')+'</datalist>')
+      +foNumBlock(o)+foCustBlock(o)
       +f('Status','<select id="foe_status">'+['offer','accepted','lost'].map(function(s){ return '<option value="'+s+'"'+((o?o.status:'offer')===s?' selected':'')+'>'+esc(TR(FO_STATUS[s]))+'</option>'; }).join('')+'</select>')
       +f('Company','<input id="foe_company" class="tinput" value="'+av(o?v('company'):'Acemark')+'" list="foe_cos"><datalist id="foe_cos"><option value="Acemark"><option value="WEM"></datalist>')
       +f('Supplier','<input id="foe_supplier" class="tinput" value="'+av(v('supplier'))+'" list="foe_sups"><datalist id="foe_sups">'+dl('supplier')+'</datalist>')
-      +f('Material','<input id="foe_material" class="tinput" value="'+av(v('material'))+'" list="foe_mats"><datalist id="foe_mats"><option value="Alu"><option value="PVC"><option value="Wood"></datalist>')
+      +foMatBlock(o)
       +f('Net value (zł)','<input id="foe_net" class="tinput" inputmode="decimal" value="'+av(v('net'))+'">')
       +f('Offer sent — month','<div style="display:flex;gap:6px">'+mo('foe_om',o?o.offer_month:now.getMonth()+1)+'<input id="foe_oy" class="tinput" type="number" style="width:96px" value="'+av(o?v('offer_year'):now.getFullYear())+'"></div>')
-      +f('Enquiry received — month',mo('foe_em',o?o.enquiry_month:now.getMonth()+1))
+      +f('Enquiry received','<input id="foe_ed" class="tinput" placeholder="dd-mm-yy" value="'+av(o?foDmy(o.enquiry_date):foDmy(now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')))+'">'+(o&&!o.enquiry_date&&o.enquiry_month?'<div class="sub" style="margin:4px 0 0">'+esc(T('Only the month is known: {0}',FC_MONTHS[o.enquiry_month-1]))+'</div>':''))
       +f('Notes','<input id="foe_note" class="tinput" value="'+av(v('note'))+'">',true)
       +f('Comment','<input id="foe_comment" class="tinput" value="'+av(v('comment'))+'">',true)
       // the budget: what the order is expected to cost, typed by the rep — amber, apart from the actuals below
@@ -6639,7 +6796,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +f('Installation cost (zł)','<input id="foe_ci" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_install'))+'">')
       +f('Delivery cost (zł)','<input id="foe_cd" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_delivery'))+'">')
       +f(TR('Vendor quote (link or note)')+(o&&/^https?:/i.test(o.vendor_quote||'')?' <a class="codelink" href="'+av(o.vendor_quote)+'" target="_blank" rel="noopener" style="font-weight:400">'+esc(TR('open'))+' \u203a</a>':''),'<input id="foe_vq" class="tinput" style="background:'+FO_BUD.bg+'" value="'+av(v('vendor_quote'))+'" placeholder="'+av(TR('OneDrive / monday file link, or the vendor and quote number'))+'">',true)
-      +f('Planned realisation — month','<div style="display:flex;gap:6px">'+mo('foe_pm',o?o.planned_month:null)+'<input id="foe_py" class="tinput" type="number" style="width:96px;background:'+FO_BUD.bg+'" value="'+av(v('planned_year'))+'"></div>');
+      +foDatesBlock(o,f);
     if(FO.canFinance){
       h+='<div class="field full" style="border-top:1px solid var(--line);padding-top:12px;font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR('FINANCE'))+'</div>'
         +f('Sales rep','<select id="foe_rep"><option value="">'+esc(TR('(no rep)'))+'</option>'+FO.reps.map(function(r){ return '<option value="'+av(r.id)+'"'+(o&&o.rep_user_id===r.id?' selected':'')+'>'+esc(r.name)+'</option>'; }).join('')+'</select>')
@@ -6665,16 +6822,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal(o?T('Order {0}',esc(o.code||o.order_ref)):TR('New order'),h);
     if(o)costingLoad('order',o.id,'fo_costing');
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='820px';
+    foFormWire(o);
     if(o)fxWire(document.getElementById('modal'),function(){ foOpen(o.id); });
     document.querySelectorAll('#modal [data-fojob]').forEach(function(a){ a.onclick=function(){ FJ.openAfter=a.getAttribute('data-fojob'); closeModal(true); showTab('finjobs'); }; });
     var g=function(idn){ var el=document.getElementById(idn); return el?el.value:undefined; };
     document.getElementById('foe_save').onclick=async function(){
-      var b={order_ref:g('foe_ref'),customer:g('foe_cust'),status:g('foe_status'),company:g('foe_company'),supplier:g('foe_supplier'),material:g('foe_material'),net:g('foe_net'),offer_month:g('foe_om'),offer_year:g('foe_oy'),enquiry_month:g('foe_em'),
-        cost_purchase:g('foe_cp'),cost_install:g('foe_ci'),cost_delivery:g('foe_cd'),planned_month:g('foe_pm'),planned_year:g('foe_py'),note:g('foe_note'),comment:g('foe_comment'),vendor_quote:g('foe_vq')};
+      var b=foFormBody(o,{customer:g('foe_cust'),status:g('foe_status'),company:g('foe_company'),supplier:g('foe_supplier'),net:g('foe_net'),offer_month:g('foe_om'),offer_year:g('foe_oy'),
+        cost_purchase:g('foe_cp'),cost_install:g('foe_ci'),cost_delivery:g('foe_cd'),note:g('foe_note'),comment:g('foe_comment'),vendor_quote:g('foe_vq')});
       if(FO.canFinance){ b.rep_user_id=g('foe_rep'); b.job_ref=g('foe_job'); b.invoice_refs=g('foe_inv'); b.first_payment_date=g('foe_first'); }
       var msg=document.getElementById('foe_msg'); msg.textContent=TR('Saving…');
       try{ var r=await api(o?'/api/finops/orders/'+encodeURIComponent(o.id):'/api/finops/orders',{method:o?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json();
-        if(r.ok&&d.ok){ closeModal(true); tShow(o?'Saved':'Order added'); loadFinOrders(); } else msg.textContent=TR(d.error||'Could not save'); }catch(e){ msg.textContent=TR('Could not save'); }
+        if(r.ok&&d.ok){ closeModal(true); tShow(o?'Saved':T('Order added: {0}',d.order_ref||'')); loadFinOrders(); } else msg.textContent=TR(d.error||'Could not save'); }catch(e){ msg.textContent=TR('Could not save'); }
     };
     var del=document.getElementById('foe_del'); if(del)del.onclick=async function(){ if(!fConfirm('Delete this sales order?'))return; var r=await api('/api/finops/orders/'+encodeURIComponent(o.id),{method:'DELETE'}); var d=await r.json(); if(r.ok&&d.ok){ closeModal(true); tShow('Deleted'); loadFinOrders(); } else tShow(d.error||'Could not delete'); };
     var add=document.getElementById('fop_add'); if(add)add.onclick=async function(){ var r=await api('/api/finops/orders/'+encodeURIComponent(o.id)+'/payments',{method:'POST',body:JSON.stringify({paid_date:g('fop_date'),amount:g('fop_amt'),note:g('fop_note')})}); var d=await r.json();
@@ -6684,8 +6842,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function foCsv(){
     var rows=foFiltered(), q=function(x){ return '"'+String(x==null?'':x).replace(/"/g,'""')+'"'; }, n=function(x){ return x==null?'':Number(x).toFixed(2); };
-    var L=[['Order','Z number','Customer','Company','Supplier','Material','Offer year','Offer month','Status','Net','Purchase cost','Installation cost','Cost reports paid out','Delivery cost','Budget margin %','Actual cost','Actual margin %','Paid','Counts from','Planned year','Planned month','Sales rep','Notes','Comment'].map(function(x){return q(TR(x));}).join(',')];
-    rows.forEach(function(o){ L.push([q(o.order_ref),q(o.job_ref),q(o.customer),q(o.company),q(o.supplier),q(o.material),o.offer_year||'',o.offer_month||'',q(TR(FO_STATUS[o.status]||o.status)),n(o.net),n(o.cost_purchase),n(o.cost_install),n(o.cost_reports_paid),n(o.cost_delivery),o.costs&&o.margin!=null?(o.margin*100).toFixed(1):'',n(o.actual_costs),o.actual_margin!=null?(o.actual_margin*100).toFixed(1):'',n(o.paid),o.counted_date||'',o.planned_year||'',o.planned_month||'',q(o.rep_name),q(o.note),q(o.comment)].join(',')); });
+    var L=[['Order','Z number','Customer','Company','Supplier','Material','Offer year','Offer month','Status','Net','Purchase cost','Installation cost','Cost reports paid out','Delivery cost','Budget margin %','Actual cost','Actual margin %','Paid','Counts from','Planned year','Planned month','Enquiry date','Requested realisation','Confirmed realisation','Sales rep','Notes','Comment'].map(function(x){return q(TR(x));}).join(',')];
+    rows.forEach(function(o){ L.push([q(o.order_ref),q(o.job_ref),q(o.customer),q(o.company),q(o.supplier),q(o.material),o.offer_year||'',o.offer_month||'',q(TR(FO_STATUS[o.status]||o.status)),n(o.net),n(o.cost_purchase),n(o.cost_install),n(o.cost_reports_paid),n(o.cost_delivery),o.costs&&o.margin!=null?(o.margin*100).toFixed(1):'',n(o.actual_costs),o.actual_margin!=null?(o.actual_margin*100).toFixed(1):'',n(o.paid),o.counted_date||'',o.planned_year||'',o.planned_month||'',o.enquiry_date||'',o.requested_date?(o.requested_month_only?o.requested_date.slice(0,7):o.requested_date):'',o.confirmed_date||'',q(o.rep_name),q(o.note),q(o.comment)].join(',')); });
     var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='sales-orders.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
   function foImport(){
