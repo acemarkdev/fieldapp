@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.61.0';
+export const APP_VERSION = '1.62.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.62.0', date: '2026-10-27', changes: [
+    'Performance ▸ Result, UoR / IFRS views — three more gaps closed. Job costs matched to the sale: a Z job’s material (RW) and the invoices booked to it count in the month of its first final invoice, like its revenue; until then they are work in progress (a memo line, not in the result). The invoices booked to a job are no longer counted again as department invoices.',
+    'Stock write-down to net realisable value: the provision is 50 % of the 1–2 y and 100 % of the over-2 y stock at each month end (from the Stock value history; admin can change the % on the line); the month’s cost is the change in the provision, below EBITDA. The provision itself is a memo line.',
+    'Accruals: the reps’ commission in the month it is earned (from Sales orders, each rep’s bands); holiday and bonus accruals typed per month (✎), like depreciation — needs migration 0110. Not covered yet: exchange differences, and trade purchases matched to the sale month.',
+  ] },
   { version: '1.61.0', date: '2026-10-26', changes: [
     'Order-to-actuals step 3. Production invoices are booked to the Z job: after each monday costs sync, an invoice whose Zlecenie names one Z becomes a cost line of that job — glass suppliers (Stan Szkło, Press Glass, A2 Projekt, Binnglass, N&C, Premier) as Glass, 416 Materials Run and 500 Montaż as Extras, 425 Logistics as Transport. 631 profiles and hardware (Cortizo, Aliplast, Aluprof …) are not booked — they come as RW from Subiekt; 499.V Handel stays on the sales order. A line follows the board, moves when the Z is corrected, and a line typed by hand with the same invoice number is replaced. Locked jobs and invoices naming several Z are left out. No migration.',
     'One budget against actual on both screens: the order window (Sales orders) and the job window (Job costs) show the same table for the order and its Z job — revenue, each cost line of the decided scenario (produce: material RW, glass, transport, extras, labour from the phone …; trade: the vendor purchase from the supplier invoices, transport, other job costs), installation (typed + cost reports paid out), total, profit and margin; budget in amber, actual in green or red under 30 %.',

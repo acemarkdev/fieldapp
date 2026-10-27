@@ -87,10 +87,10 @@ export async function savePayrollMonth(tenantId: string, by: string, b: any): Pr
   return { ok: true, year: f.year, month: f.month, actual: f.actual };
 }
 
-// ---- Result items: depreciation and financial cost, typed in per month for the Performance result block. ----
-export const RESULT_ITEMS = ['depreciation', 'financial_cost'] as const;
+// ---- Result items: depreciation, financial cost and (0110) holiday / bonus accruals, typed in per month for the Performance result block. ----
+export const RESULT_ITEMS = ['depreciation', 'financial_cost', 'accruals'] as const;
 export type ResultItem = (typeof RESULT_ITEMS)[number];
-export interface ResultItemRow { year: number; month: number; depreciation: number | null; financial_cost: number | null }
+export interface ResultItemRow { year: number; month: number; depreciation: number | null; financial_cost: number | null; accruals?: number | null }
 
 /** One typed cell → what to store. Empty clears it; depreciation cannot be negative (a financial cost can: net interest income). */
 export function resultItemFields(b: any): Result<{ year: number; month: number; kind: ResultItem; amount: number | null }> {
@@ -105,10 +105,11 @@ export function resultItemFields(b: any): Result<{ year: number; month: number; 
 }
 /** Empty (not an error) while the table is not there yet, so Payroll and Performance keep working before the migration. */
 export async function listResultItems(tenantId: string): Promise<ResultItemRow[]> {
-  const { data, error } = await db().from('fin_result_items').select('period_year,period_month,depreciation,financial_cost').eq('tenant_id', tenantId);
+  let { data, error }: { data: any[] | null; error: any } = await db().from('fin_result_items').select('period_year,period_month,depreciation,financial_cost,accruals').eq('tenant_id', tenantId);
+  if (error && /accruals/.test(error.message)) ({ data, error } = await db().from('fin_result_items').select('period_year,period_month,depreciation,financial_cost').eq('tenant_id', tenantId));   // before 0110
   if (error) { console.warn('[finops] result items not readable:', error.message); return []; }
   const num = (v: any) => (v === null || v === undefined ? null : Number(v));
-  return (data ?? []).map((r: any) => ({ year: r.period_year, month: r.period_month, depreciation: num(r.depreciation), financial_cost: num(r.financial_cost) }));
+  return (data ?? []).map((r: any) => ({ year: r.period_year, month: r.period_month, depreciation: num(r.depreciation), financial_cost: num(r.financial_cost), accruals: num(r.accruals) }));
 }
 export async function saveResultItem(tenantId: string, by: string, b: any): Promise<Result<{ year: number; month: number; kind: ResultItem; amount: number | null }>> {
   const f = resultItemFields(b); if (!f.ok) return f;
