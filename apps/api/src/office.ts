@@ -27,6 +27,7 @@ import { listBudgets, getBudget, saveBudget, decide as decideBudget, budgetCalc,
 import { previewMondayJobs, applyMondayJobs, refreshJobGroups } from './mondayJobs';
 import { previewZLinks, applyZLinks } from './mondayOrders';
 import { previewEnquiries, applyEnquiries } from './mondayEnquiries';
+import { orderPapers, latestQuotes, addDoc, deleteDoc, addQuote, updateQuote, deleteQuote, syncOrder as syncOrderFromQuotes, papersReady } from './finOrderPapers';
 import { listCustomers as listOrderCustomers, createCustomer, updateCustomer, customersReady, COUNTRIES, countryCode, splitOrderRef, buildOrderRef, peekOrderNumber, takeOrderNumber, setNextOrderNumber, codeTaken } from './finCustomers';
 import { statutoryData, writedownField, setWritedown } from './perfStatutory';
 import { attachJobs, jobOrders, syncOrdersFromJob, autoLinkZ, syncAfterLinks, jobKeyOf, mondayItemUrl as boardItemUrl, PRODUCTION_BOARD_ID, costing, jobIdByKey } from './orderJobLink';
@@ -1049,7 +1050,9 @@ const server = createServer(async (req, res) => {
       };
 
       if (p === '/api/finops/orders' && req.method === 'GET') {
-        send(res, 200, { orders: await attachJobs(ctx.tenant_id, await listOrderViews(ctx.tenant_id, own)), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
+        const lq = await latestQuotes(ctx.tenant_id);
+        const withQuotes = (await attachJobs(ctx.tenant_id, await listOrderViews(ctx.tenant_id, own))).map((o: any) => ({ ...o, quote: lq.get(o.id) ?? null }));
+        send(res, 200, { orders: withQuotes, papersReady: await papersReady(), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
           isAdmin, customers: await listOrderCustomers(ctx.tenant_id), customersReady: await customersReady(), countries: COUNTRIES, nextNumber: await peekOrderNumber(ctx.tenant_id) }); return;
       }
       if (p === '/api/finops/orders' && req.method === 'POST') {
@@ -1191,9 +1194,28 @@ const server = createServer(async (req, res) => {
         }
         const r = await updateOrder(ctx.tenant_id, oid, b, { finance, ownerOnly: own, rep: finance && 'rep_user_id' in b ? await repFor(b.rep_user_id) : undefined });
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        // with quotes, the value, budget and status come from the quote in force — not from the form
+        if (await papersReady()) await syncOrderFromQuotes(ctx.tenant_id, oid);
         audit(ctx, 'finorder.update', 'fin_order', oid, 'Edited a sales order');
         if (before && jobKeyOf(b.job_ref) && jobKeyOf(b.job_ref) !== jobKeyOf(before.job_ref)) { try { await syncAfterLinks(ctx.tenant_id, [String(b.job_ref)]); } catch (e: any) { console.warn('[orders] job budget copy failed:', e?.message ?? e); } }
         send(res, 200, { ok: true }); return;
+      }
+      // the order's papers: the customer's documents (versions) and the quotes sent (versions with a budget and a status)
+      if (oid && (sub === 'papers' || sub === 'docs' || sub === 'quotes')) {
+        const ord = await getOrder(ctx.tenant_id, oid);
+        if (!ord || (own && ord.rep_user_id !== own)) { send(res, 404, { error: 'Order not found.' }); return; }
+        const pid = parts[6] ?? '', label = ord.order_ref;
+        if (sub === 'papers' && req.method === 'GET') { send(res, 200, await orderPapers(ctx.tenant_id, oid)); return; }
+        let r: { ok: boolean; status?: number; error?: string; version?: number } | null = null, what = '';
+        if (sub === 'docs' && !pid && req.method === 'POST') { r = await addDoc(ctx.tenant_id, oid, ctx.name, await readJson(req)); what = `Added customer document v${(r as any).version ?? ''} to ${label}`; }
+        else if (sub === 'docs' && pid && req.method === 'DELETE') { if (isRep) { send(res, 403, { error: 'Ask finance to remove a document.' }); return; } r = await deleteDoc(ctx.tenant_id, oid, pid); what = `Removed the newest customer document from ${label}`; }
+        else if (sub === 'quotes' && !pid && req.method === 'POST') { r = await addQuote(ctx.tenant_id, oid, ctx.name, await readJson(req)); what = `Added quote v${(r as any).version ?? ''} to ${label}`; }
+        else if (sub === 'quotes' && pid && req.method === 'PUT') { const b = await readJson(req); r = await updateQuote(ctx.tenant_id, oid, pid, ctx.name, b); what = `Updated a quote on ${label}${b.status ? ' (status: ' + String(b.status).slice(0, 20) + ')' : ''}`; }
+        else if (sub === 'quotes' && pid && req.method === 'DELETE') { r = await deleteQuote(ctx.tenant_id, oid, pid); what = `Removed the newest quote from ${label}`; }
+        if (!r) { send(res, 404, { error: 'Not found.' }); return; }
+        if (!r.ok) { send(res, r.status ?? 400, { error: r.error }); return; }
+        audit(ctx, 'finorder.papers', 'fin_order', oid, what);
+        send(res, 200, { ...r, ok: true }); return;
       }
       if (oid && !sub && req.method === 'DELETE') {
         // a rep may remove their own order while nothing is registered on it; finance/admin any
@@ -6550,7 +6572,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       document.getElementById('fo_q').oninput=function(){ FO.limit=300; renderFinOrders(); };
     }
     var d; try{ var r=await api('/api/finops/orders'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fo_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load the orders')+'</td></tr>'; return; }
-    FO.customers=d.customers||[]; FO.customersReady=!!d.customersReady; FO.countries=d.countries||[]; FO.nextNumber=d.nextNumber||null; FO.isAdmin=!!d.isAdmin;
+    FO.customers=d.customers||[]; FO.customersReady=!!d.customersReady; FO.countries=d.countries||[]; FO.nextNumber=d.nextNumber||null; FO.isAdmin=!!d.isAdmin; FO.papersReady=!!d.papersReady;
     FO.orders=d.orders||[]; FO.reps=d.reps||[]; FO.isRep=!!d.isRep; FO.canFinance=!!d.canFinance; FO.canManage=!!d.canManage; FO.me=d.me||null;
     fxButton(); pcLoad();
     if(FO.canFinance)fcatLoad();
@@ -6645,7 +6667,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       var cb=FO.canManage?'<input type="checkbox" class="focb" data-id="'+av(o.id)+'"'+(FO.sel[o.id]?' checked':'')+' style="margin-right:7px;vertical-align:-2px">':'';
       var A=foAct(o.actual_margin), zd=o.job&&FB_DEC[o.job.decision], zed=o.job_ref?'<span class="pill" style="background:'+(zd?zd[2]:'#ecebf6')+';color:'+(zd?zd[1]:'#3a2b72')+';margin-right:6px" title="'+av(o.job?T('Job costs {0}: {1}',o.job.reference,TR(zd?zd[0]:'No budget yet')):TR('No job in Job costs with this Z number'))+'">'+esc(o.job_ref)+(zd&&o.job.decision!=='undecided'?' · '+esc(TR(zd[0])):'')+'</span>':'';
       h+='<tr class="g" data-id="'+av(o.id)+'"><td style="max-width:340px">'+cb+zed+esc(o.order_ref)+'</td><td>'+esc(o.customer||'')+'</td><td>'+esc(o.company||'')+'</td><td>'+esc([o.supplier,o.material].filter(function(x){return x;}).join(' · '))+'</td>'
-        +'<td style="white-space:nowrap">'+esc(foMon(o.offer_year,o.offer_month))+'</td><td>'+foPill(o.status)+'</td><td class="r" style="font-weight:700">'+(fjNum(o.net)||'0.00')+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(o.costs)+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+(o.costs?fjPct(o.margin):'')+'</td><td class="r" style="background:'+A.bg+'">'+(o.actual_costs==null?'':fjNum(o.actual_costs))+'</td><td class="r" style="font-weight:700;background:'+A.bg+';color:'+A.ink+'">'+(o.actual_margin==null?'':fjPct(o.actual_margin))+'</td>'
+        +'<td style="white-space:nowrap">'+esc(foMon(o.offer_year,o.offer_month))+'</td><td style="white-space:nowrap">'+foPill(o.status)+(o.quote?' <span class="sub" style="margin:0" title="'+av(TR(FO_QST[o.quote.status]||''))+'">v'+o.quote.version+'</span>':'')+'</td><td class="r" style="font-weight:700">'+(fjNum(o.net)||'0.00')+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(o.costs)+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+(o.costs?fjPct(o.margin):'')+'</td><td class="r" style="background:'+A.bg+'">'+(o.actual_costs==null?'':fjNum(o.actual_costs))+'</td><td class="r" style="font-weight:700;background:'+A.bg+';color:'+A.ink+'">'+(o.actual_margin==null?'':fjPct(o.actual_margin))+'</td>'
         +'<td class="r">'+fjNum(o.paid)+'</td><td style="white-space:nowrap">'+(o.counted_date?esc(foDate(o.counted_date)):(o.status==='accepted'?'<i style="color:#b45309">'+esc(TR('not paid yet'))+'</i>':''))+'</td><td style="white-space:nowrap">'+esc(foMon(o.planned_year,o.planned_month))+'</td>'+(FO.canFinance?'<td>'+esc(o.rep_name||'')+'</td>':'')+'</tr>'; });
     if(rows.length)h+='<tr style="background:#fff8eb;font-weight:700"><td>'+esc(T('Total ({0})',rows.length))+'</td><td colspan="5"></td><td class="r">'+fcMoney(sum(function(o){return o.net;}))+'</td><td class="r">'+fjNum(sum(function(o){return o.costs;}))+'</td><td></td><td class="r">'+fjNum(sum(function(o){return o.actual_costs||0;}))+'</td><td></td><td class="r">'+fjNum(sum(function(o){return o.paid;}))+'</td><td colspan="'+(FO.canFinance?3:2)+'"></td></tr>';
     var tb=document.getElementById('fo_rows');
@@ -6718,7 +6740,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var accepted=(o?o.status:'offer')==='accepted';
     return f('Requested realisation','<div style="display:flex;gap:6px"><select id="foe_rqm" style="width:120px"><option value="day"'+(monthOnly?'':' selected')+'>'+esc(TR('date'))+'</option><option value="month"'+(monthOnly?' selected':'')+'>'+esc(TR('month only'))+'</option></select>'
         +'<input id="foe_rqd" class="tinput" placeholder="dd-mm-yy" value="'+av(reqDay)+'" style="display:'+(monthOnly?'none':'block')+'"><input id="foe_rqmo" class="tinput" type="month" value="'+av(reqMon)+'" style="display:'+(monthOnly?'block':'none')+'"></div>')
-      +f('Confirmed realisation date','<input id="foe_cfd" class="tinput" placeholder="dd-mm-yy" value="'+av(o?foDmy(o.confirmed_date):'')+'"'+(accepted?'':' disabled')+'><div class="sub" id="foe_cfh" style="margin:4px 0 0;display:'+(accepted?'none':'block')+'">'+esc(TR('Opens when the order is accepted.'))+'</div>');
+      +f('Confirmed realisation date','<input id="foe_cfd" class="tinput" placeholder="dd-mm-yy" value="'+av(o?foDmy(o.confirmed_date):'')+'"'+(accepted?'':' disabled')+'><div class="sub" id="foe_cfh" style="margin:4px 0 0;display:'+(accepted?'none':'block')+'">'+esc(TR(FO.papersReady?'Opens when a quote is approved.':'Opens when the order is accepted.'))+'</div>');
   }
   // the customer picker: typing filters the list; nothing found → “+ New customer”
   function foCustWire(o){
@@ -6773,28 +6795,138 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var mo=g('foe_rqm')==='month'; b.requested_month_only=mo; b.requested_date=mo?g('foe_rqmo'):g('foe_rqd'); b.confirmed_date=g('foe_cfd');
     return b;
   }
+  // ---- the order's papers, step B: quotes sent to the customer (versions with a budget and a status) and the
+  //      customer's documents (versions; the newest is current) ----
+  var FO_QST={sent:'Quote sent',approved:'Quote approved',rejected:'Rejected',rework:'Rework'};
+  var FO_QCOL={sent:'#fff1e0;color:#b45309',approved:'#dcfce7;color:#15803d',rejected:'#fee4e2;color:#b42318',rework:'#ede9fe;color:#6d28d9'};
+  function foQPill(st){ return '<span class="pill" style="background:'+(FO_QCOL[st]||'#eee')+'">'+esc(TR(FO_QST[st]||st))+'</span>'; }
+  function foWhen(ts){ return ts?foDmy(String(ts).slice(0,10)):''; }
+  function foFileLink(r){ return r.url?'<a class="codelink" href="'+av(r.url)+'" target="_blank" rel="noopener">'+esc(r.file_name||TR('file'))+'</a>':esc(r.file_name||''); }
+  function foQuoteForm(base){
+    base=base||{}; var n=function(k){ return base[k]==null?'':base[k]; };
+    var inp=function(id,lab,val,bud){ return '<div class="field"><label>'+esc(TR(lab))+'</label><input id="'+id+'" class="tinput" inputmode="decimal" value="'+av(val)+'"'+(bud?' style="background:'+FO_BUD.bg+'"':'')+'></div>'; };
+    return '<div class="fgrid" style="padding:0">'
+      +inp('foq_amt','Quote amount to the customer (zł net) *',n('amount'))
+      +'<div class="field"><label>'+esc(TR('Scope'))+'</label><select id="foq_scope"><option value="install"'+(base.scope==='delivery'?'':' selected')+'>'+esc(TR('Deliver and install'))+'</option><option value="delivery"'+(base.scope==='delivery'?' selected':'')+'>'+esc(TR('Delivery only'))+'</option></select></div>'
+      +inp('foq_cp','Purchase cost (zł)',n('cost_purchase'),1)+inp('foq_ci','Installation cost (zł)',n('cost_install'),1)+inp('foq_cd','Delivery cost (zł)',n('cost_delivery'),1)
+      +'<div class="field"><label>'+esc(TR('Total cost · margin'))+'</label><div id="foq_sum" style="padding-top:8px;font-weight:700"></div></div>'
+      +'<div class="field"><label>'+esc(TR('Status'))+'</label><select id="foq_st">'+['sent','approved','rejected','rework'].map(function(s){ return '<option value="'+s+'">'+esc(TR(FO_QST[s]))+'</option>'; }).join('')+'</select></div>'
+      +'<div class="field"><label>'+esc(TR('Quote file sent to the customer *'))+'</label><input id="foq_file" type="file"></div>'
+      +'<div class="field full"><label>'+esc(TR('Comment'))+'</label><input id="foq_cm" class="tinput" value=""></div></div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;align-items:center"><button class="add" id="foq_save">'+esc(TR('Save quote'))+'</button><button class="pobtn" id="foq_cancel">'+esc(TR('Cancel'))+'</button><span class="sub" id="foq_msg" style="margin:0"></span></div>';
+  }
+  function foQuoteSum(){
+    var v=function(id){ var x=parseFloat(String((document.getElementById(id)||{}).value||'').replace(/ /g,'').replace(',','.')); return isNaN(x)?0:x; };
+    var inst=document.getElementById('foq_scope').value==='install', ci=document.getElementById('foq_ci'); ci.disabled=!inst;
+    var amt=v('foq_amt'), cost=v('foq_cp')+(inst?v('foq_ci'):0)+v('foq_cd'), m=amt?(amt-cost)/amt:null, A=foAct(m);
+    document.getElementById('foq_sum').innerHTML=fcMoney(cost)+' · <span style="color:'+A.ink+'">'+(m==null?'–':fjPct(m))+'</span>';
+  }
+  function foQuotesHtml(o,P){
+    var Q=P.quotes||[], force=Q.filter(function(q){return q.status==='approved';})[0]||Q[Q.length-1]||null, newest=Q[Q.length-1]||null;
+    var h='<div style="padding:4px 22px 10px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR('QUOTES TO THE CUSTOMER'))+'</div>'
+      +'<span class="sub" style="margin:0">'+esc(TR('the approved version — else the newest — sets the order value, budget and status'))+'</span><span style="flex:1"></span><button class="pobtn" id="foq_new">'+esc(Q.length?T('+ New version (v{0})',newest.version+1):TR('+ Quote v1'))+'</button></div>';
+    if(Q.length){
+      h+='<table class="fjl"><thead><tr><th>VER</th><th>STATUS</th><th style="text-align:right">QUOTE</th><th>SCOPE</th><th style="text-align:right;background:'+FO_BUD.head+'">PURCHASE</th><th style="text-align:right;background:'+FO_BUD.head+'">INSTALL</th><th style="text-align:right;background:'+FO_BUD.head+'">DELIVERY</th><th style="text-align:right;background:'+FO_BUD.head+'">COST</th><th style="text-align:right">MARGIN</th><th>FILE</th><th></th></tr></thead><tbody>';
+      Q.slice().reverse().forEach(function(q){
+        var cur=q===force, A=foAct(q.margin);
+        h+='<tr style="'+(cur?'font-weight:700;box-shadow:inset 3px 0 0 #15803d':'color:#6b6880')+'"><td>v'+q.version+(cur?' <span class="sub" style="margin:0;font-weight:700;color:#15803d">'+esc(TR('in force'))+'</span>':'')+'</td>'
+          +'<td><select class="foq_rowst" data-id="'+av(q.id)+'" data-was="'+av(q.status)+'" style="font-weight:600">'+['sent','approved','rejected','rework'].map(function(s){ return '<option value="'+s+'"'+(q.status===s?' selected':'')+'>'+esc(TR(FO_QST[s]))+'</option>'; }).join('')+'</select><div class="sub" style="margin:2px 0 0">'+esc(foWhen(q.status_at))+(q.status_by?' · '+esc(q.status_by):'')+'</div></td>'
+          +'<td class="r">'+fcMoney(q.amount)+'</td><td>'+esc(TR(q.scope==='delivery'?'Delivery only':'Deliver and install'))+'</td>'
+          +'<td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(q.cost_purchase)+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+(q.scope==='delivery'?'–':fjNum(q.cost_install))+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(q.cost_delivery)+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(q.cost)+'</td>'
+          +'<td class="r" style="background:'+A.bg+';color:'+A.ink+'">'+(q.margin==null?'':fjPct(q.margin))+'</td><td>'+foFileLink(q)+(q.comment?'<div class="sub" style="margin:2px 0 0">'+esc(q.comment)+'</div>':'')+'</td>'
+          +'<td style="white-space:nowrap"><a class="codelink" data-foqed="'+av(q.id)+'">'+esc(TR('budget'))+'</a>'+(q===newest&&q.status!=='approved'?' · <a class="codelink" style="color:#b42318" data-foqdel="'+av(q.id)+'">'+esc(TR('delete'))+'</a>':'')+'</td></tr>';
+      });
+      h+='</tbody></table>';
+      if(newest&&newest.status==='rework')h+='<div class="sub" style="margin:6px 0 0;color:#6d28d9">'+esc(T('v{0} is to be reworked — add the next version with “+ New version”.',newest.version))+'</div>';
+    } else h+='<div class="sub" style="margin:0">'+esc(TR('No quote yet. Add v1 with the amount, the file sent to the customer and the budget behind it.'))+'</div>';
+    h+='<div id="foq_form" style="display:none;margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:8px"></div><div id="foq_edit" style="display:none;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:8px"></div></div>';
+    return h;
+  }
+  function foDocsHtml(o,P){
+    var D=P.docs||[], top=D.length?D[D.length-1].version:0;
+    var h='<div style="padding:4px 22px 10px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR('CUSTOMER DOCUMENTS'))+'</div><span style="flex:1"></span><button class="pobtn" id="fod_new">'+esc(D.length?T('+ New version (v{0})',top+1):TR('+ Document v1'))+'</button></div>';
+    if(D.length){
+      h+='<table class="fjl"><tbody>'+D.slice().reverse().map(function(d){ var cur=d.version===top;
+        return '<tr style="'+(cur?'font-weight:700':'color:#9a97ad')+'"><td style="white-space:nowrap">v'+d.version+' '+(cur?'<span class="pill" style="background:#dcfce7;color:#15803d">'+esc(TR('current'))+'</span>':'<span class="pill" style="background:#f1f0f5;color:#9a97ad">'+esc(TR('outdated'))+'</span>')+'</td>'
+          +'<td>'+foFileLink(d)+'</td><td style="font-weight:'+(cur?'600':'400')+'">'+esc(d.comment)+'</td><td class="sub" style="white-space:nowrap">'+esc(foWhen(d.created_at))+(d.created_by?' · '+esc(d.created_by):'')+'</td>'
+          +'<td>'+(cur&&FO.canFinance?'<a class="codelink" style="color:#b42318" data-foddel="'+av(d.id)+'">'+esc(TR('delete'))+'</a>':'')+'</td></tr>'; }).join('')+'</tbody></table>';
+    } else h+='<div class="sub" style="margin:0">'+esc(TR('No documents yet. The first note with its file becomes v1; every later file is the next version and needs a comment.'))+'</div>';
+    h+='<div id="fod_form" style="display:none;margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:8px"><div class="fgrid" style="padding:0">'
+      +'<div class="field"><label id="fod_cml">'+esc(TR(D.length?'What changed? *':'Note *'))+'</label><input id="fod_cm" class="tinput"></div><div class="field"><label>'+esc(TR('File *'))+'</label><input id="fod_file" type="file"></div></div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;align-items:center"><button class="add" id="fod_save">'+esc(TR('Save document'))+'</button><button class="pobtn" id="fod_cancel">'+esc(TR('Cancel'))+'</button><span class="sub" id="fod_msg" style="margin:0"></span></div></div></div>';
+    return h;
+  }
+  async function foPapersLoad(o){
+    var box=document.getElementById('fo_papers'); if(!box)return;
+    var P; try{ var r=await api('/api/finops/orders/'+encodeURIComponent(o.id)+'/papers'); P=await r.json(); if(!r.ok)throw new Error(P.error||'Could not load'); }catch(e){ box.innerHTML='<div class="sub" style="padding:4px 22px">'+esc(e.message||'Could not load the quotes')+'</div>'; return; }
+    if(!document.getElementById('fo_papers'))return;
+    box.innerHTML=foQuotesHtml(o,P)+foDocsHtml(o,P);
+    var url='/api/finops/orders/'+encodeURIComponent(o.id);
+    // after a quote change the order's value, budget and status may have moved: reload the list and reopen the window
+    var done=function(msg){ tShow(msg); FO.openAfter=o.id; closeModal(true); loadFinOrders(); };
+    var send=async function(path,method,body,msgEl){ if(msgEl)msgEl.textContent=TR('Saving…'); try{ var r=await api(url+path,{method:method,body:body?JSON.stringify(body):undefined}); var d=await r.json(); if(!r.ok||!d.ok)throw new Error(d.error||'Could not save'); return d; }catch(e){ if(msgEl)msgEl.textContent=TR(e.message||'Could not save'); else tShow(e.message||'Could not save'); return null; } };
+    var Q=P.quotes||[], newest=Q[Q.length-1]||null;
+    document.getElementById('foq_new').onclick=function(){
+      var fm=document.getElementById('foq_form'); fm.innerHTML=foQuoteForm(newest?{amount:newest.amount,scope:newest.scope,cost_purchase:newest.cost_purchase,cost_install:newest.cost_install,cost_delivery:newest.cost_delivery}:null); fm.style.display='block';
+      ['foq_amt','foq_cp','foq_ci','foq_cd'].forEach(function(id){ document.getElementById(id).oninput=foQuoteSum; }); document.getElementById('foq_scope').onchange=foQuoteSum; foQuoteSum();
+      document.getElementById('foq_cancel').onclick=function(){ fm.style.display='none'; };
+      document.getElementById('foq_save').onclick=async function(){
+        var msg=document.getElementById('foq_msg'), files=await readFilesAsDataUrls(document.getElementById('foq_file'));
+        if(!files.length){ msg.textContent=TR('Attach the quote sent to the customer.'); return; }
+        var g=function(id){ return document.getElementById(id).value; };
+        var d=await send('/quotes','POST',{amount:g('foq_amt'),scope:g('foq_scope'),cost_purchase:g('foq_cp'),cost_install:g('foq_ci'),cost_delivery:g('foq_cd'),status:g('foq_st'),comment:g('foq_cm'),file:files[0]},msg);
+        if(d)done(T('Quote v{0} saved',d.version));
+      };
+    };
+    document.querySelectorAll('.foq_rowst').forEach(function(sel){ sel.onchange=async function(){
+      var to=sel.value, was=sel.getAttribute('data-was');
+      if(to==='approved'&&!fConfirm(TR('Mark this version as approved by the customer? Its amount and budget become the order’s, and the order becomes Accepted.'))){ sel.value=was; return; }
+      var d=await send('/quotes/'+encodeURIComponent(sel.getAttribute('data-id')),'PUT',{status:to},null); if(d)done(TR('Quote status saved')); else sel.value=was; }; });
+    document.querySelectorAll('[data-foqed]').forEach(function(a){ a.onclick=function(){
+      var q=Q.filter(function(x){return x.id===a.getAttribute('data-foqed');})[0], ed=document.getElementById('foq_edit'), inp=function(id,lab,val){ return '<div class="field"><label>'+esc(TR(lab))+'</label><input id="'+id+'" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(val==null?'':val)+'"'+(id==='foqe_ci'&&q.scope==='delivery'?' disabled':'')+'></div>'; };
+      ed.innerHTML='<div style="font-weight:700;margin-bottom:8px">'+esc(T('Budget behind quote v{0} ({1})',q.version,fcMoney(q.amount)))+'</div><div class="fgrid" style="padding:0">'+inp('foqe_cp','Purchase cost (zł)',q.cost_purchase)+inp('foqe_ci','Installation cost (zł)',q.cost_install)+inp('foqe_cd','Delivery cost (zł)',q.cost_delivery)
+        +'<div class="field full"><label>'+esc(TR('Comment'))+'</label><input id="foqe_cm" class="tinput" value="'+av(q.comment||'')+'"></div></div><div class="sub" style="margin:6px 0 0">'+esc(TR('The amount and the file stay as sent — a change to them is a new version.'))+'</div>'
+        +'<div style="display:flex;gap:8px;margin-top:10px;align-items:center"><button class="add" id="foqe_save">'+esc(TR('Save budget'))+'</button><button class="pobtn" id="foqe_cancel">'+esc(TR('Cancel'))+'</button><span class="sub" id="foqe_msg" style="margin:0"></span></div>';
+      ed.style.display='block';
+      document.getElementById('foqe_cancel').onclick=function(){ ed.style.display='none'; };
+      document.getElementById('foqe_save').onclick=async function(){ var g=function(id){ return document.getElementById(id).value; };
+        var d=await send('/quotes/'+encodeURIComponent(q.id),'PUT',{cost_purchase:g('foqe_cp'),cost_install:g('foqe_ci'),cost_delivery:g('foqe_cd'),comment:g('foqe_cm')},document.getElementById('foqe_msg')); if(d)done(TR('Budget saved')); };
+    }; });
+    document.querySelectorAll('[data-foqdel]').forEach(function(a){ a.onclick=async function(){ if(!fConfirm(TR('Remove the newest quote version and its file?')))return; var d=await send('/quotes/'+encodeURIComponent(a.getAttribute('data-foqdel')),'DELETE',null,null); if(d)done(TR('Quote removed')); }; });
+    document.getElementById('fod_new').onclick=function(){ document.getElementById('fod_form').style.display='block'; document.getElementById('fod_cm').focus(); };
+    document.getElementById('fod_cancel').onclick=function(){ document.getElementById('fod_form').style.display='none'; };
+    document.getElementById('fod_save').onclick=async function(){
+      var msg=document.getElementById('fod_msg'), files=await readFilesAsDataUrls(document.getElementById('fod_file'));
+      if(!files.length){ msg.textContent=TR('Attach the file.'); return; }
+      var d=await send('/docs','POST',{comment:document.getElementById('fod_cm').value,file:files[0]},msg); if(d){ tShow(T('Document v{0} saved',d.version)); foPapersLoad(o); }
+    };
+    document.querySelectorAll('[data-foddel]').forEach(function(a){ a.onclick=async function(){ if(!fConfirm(TR('Remove the newest document version and its file?')))return; var d=await send('/docs/'+encodeURIComponent(a.getAttribute('data-foddel')),'DELETE',null,null); if(d){ tShow(TR('Document removed')); foPapersLoad(o); } }; });
+  }
   function foOpen(id){
     var o=id?FO.orders.filter(function(x){return x.id===id;})[0]:null; if(id&&!o)return;
     var now=new Date(), v=function(k){ return o&&o[k]!=null?o[k]:''; };
+    // with quotes (migration 0112) the value, budget and status come from the quote in force
+    var QM=FO.papersReady&&(!o||!!o.quote);
     var mo=function(idn,cur){ return '<select id="'+idn+'"><option value=""></option>'+FC_MONTHS.map(function(m,i){ return '<option value="'+(i+1)+'"'+(cur===i+1?' selected':'')+'>'+m+'</option>'; }).join('')+'</select>'; };
     var dl=function(k){ var s={}; FO.orders.forEach(function(x){ if(x[k])s[x[k]]=1; }); return Object.keys(s).sort().map(function(c){ return '<option value="'+av(c)+'">'; }).join(''); };
     var f=function(label,inner,full){ return '<div class="field'+(full?' full':'')+'"><label>'+label+'</label>'+inner+'</div>'; };
     var h='<div class="fgrid">'
       +foNumBlock(o)+foCustBlock(o)
-      +f('Status','<select id="foe_status">'+['offer','accepted','lost'].map(function(s){ return '<option value="'+s+'"'+((o?o.status:'offer')===s?' selected':'')+'>'+esc(TR(FO_STATUS[s]))+'</option>'; }).join('')+'</select>')
+      +f('Status','<select id="foe_status"'+(QM&&o?' disabled':'')+'>'+['offer','accepted','lost'].map(function(s){ return '<option value="'+s+'"'+((o?o.status:'offer')===s?' selected':'')+'>'+esc(TR(FO_STATUS[s]))+'</option>'; }).join('')+'</select>'+(QM&&o?'<div class="sub" style="margin:4px 0 0">'+esc(TR('from the quotes: approved → Accepted, newest rejected → Lost'))+'</div>':''))
       +f('Company','<input id="foe_company" class="tinput" value="'+av(o?v('company'):'Acemark')+'" list="foe_cos"><datalist id="foe_cos"><option value="Acemark"><option value="WEM"></datalist>')
       +f('Supplier','<input id="foe_supplier" class="tinput" value="'+av(v('supplier'))+'" list="foe_sups"><datalist id="foe_sups">'+dl('supplier')+'</datalist>')
       +foMatBlock(o)
-      +f('Net value (zł)','<input id="foe_net" class="tinput" inputmode="decimal" value="'+av(v('net'))+'">')
+      +(QM?f('Net value (zł)','<div style="padding-top:8px;font-weight:700">'+(o?fcMoney(o.net)+' <span class="sub" style="margin:0;font-weight:400">'+esc(T('from quote v{0}',o.quote.version))+'</span>':'<span class="sub" style="margin:0;font-weight:400">'+esc(TR('set by quote v1 — add it after saving the order'))+'</span>')+'</div>'):f('Net value (zł)','<input id="foe_net" class="tinput" inputmode="decimal" value="'+av(v('net'))+'">'))
       +f('Offer sent — month','<div style="display:flex;gap:6px">'+mo('foe_om',o?o.offer_month:now.getMonth()+1)+'<input id="foe_oy" class="tinput" type="number" style="width:96px" value="'+av(o?v('offer_year'):now.getFullYear())+'"></div>')
       +f('Enquiry received','<input id="foe_ed" class="tinput" placeholder="dd-mm-yy" value="'+av(o?foDmy(o.enquiry_date):foDmy(now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')))+'">'+(o&&!o.enquiry_date&&o.enquiry_month?'<div class="sub" style="margin:4px 0 0">'+esc(T('Only the month is known: {0}',FC_MONTHS[o.enquiry_month-1]))+'</div>':''))
       +f('Notes','<input id="foe_note" class="tinput" value="'+av(v('note'))+'">',true)
       +f('Comment','<input id="foe_comment" class="tinput" value="'+av(v('comment'))+'">',true)
-      // the budget: what the order is expected to cost, typed by the rep — amber, apart from the actuals below
+      // the budget: typed on the order only while it has no quote — then it lives in each quote version
+      +(QM?'':(''
       +'<div class="field full" style="margin-top:4px;padding:8px 12px;border-radius:8px;background:'+FO_BUD.bg+';color:'+FO_BUD.ink+';font-size:11px;font-weight:800;letter-spacing:.5px">'+esc(TR('BUDGET — planned costs'))+'<span style="font-weight:400;letter-spacing:0;margin-left:8px">'+esc(TR('what the order is expected to cost'))+'</span></div>'
       +f('Purchase cost (zł)','<input id="foe_cp" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_purchase'))+'">')
       +f('Installation cost (zł)','<input id="foe_ci" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_install'))+'">')
-      +f('Delivery cost (zł)','<input id="foe_cd" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_delivery'))+'">')
+      +f('Delivery cost (zł)','<input id="foe_cd" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_delivery'))+'">')))
       +f(TR('Vendor quote (link or note)')+(o&&/^https?:/i.test(o.vendor_quote||'')?' <a class="codelink" href="'+av(o.vendor_quote)+'" target="_blank" rel="noopener" style="font-weight:400">'+esc(TR('open'))+' \u203a</a>':''),'<input id="foe_vq" class="tinput" style="background:'+FO_BUD.bg+'" value="'+av(v('vendor_quote'))+'" placeholder="'+av(TR('OneDrive / monday file link, or the vendor and quote number'))+'">',true)
       +foDatesBlock(o,f);
     if(FO.canFinance){
@@ -6805,6 +6937,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +f('Counts for commission from (leave empty = first invoice or cash payment)','<input id="foe_first" class="tinput" type="date" value="'+av(v('first_payment_date'))+'">');
     }
     h+='</div>';
+    if(FO.papersReady)h+=o?'<div id="fo_papers"><div class="sub" style="padding:4px 22px">'+esc(TR('Loading the quotes…'))+'</div></div>':'<div class="sub" style="padding:0 22px 10px">'+esc(TR('After saving the order, add quote v1 (amount, file, budget) and the customer’s documents.'))+'</div>';
     if(o)h+='<div id="fo_costing" style="padding:4px 22px 10px">'+foBudgetActual(o).replace(/^<div style="padding:4px 22px 10px">/,'<div>')+'</div>'+foJobBlock(o);
     if(o){
       h+='<div style="padding:0 22px 6px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px;margin-bottom:6px">'+esc(TR('INVOICES AND PAYMENTS'))+'</div>';
@@ -6823,6 +6956,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(o)costingLoad('order',o.id,'fo_costing');
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='820px';
     foFormWire(o);
+    if(o&&FO.papersReady)foPapersLoad(o);
     if(o)fxWire(document.getElementById('modal'),function(){ foOpen(o.id); });
     document.querySelectorAll('#modal [data-fojob]').forEach(function(a){ a.onclick=function(){ FJ.openAfter=a.getAttribute('data-fojob'); closeModal(true); showTab('finjobs'); }; });
     var g=function(idn){ var el=document.getElementById(idn); return el?el.value:undefined; };
