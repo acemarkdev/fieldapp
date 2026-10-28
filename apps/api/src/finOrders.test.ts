@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/finOrders.test.ts
-import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, parseDay, materialText, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
+import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, parseDay, materialText, extraBonuses, extraRepsFields, extraPay, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -116,6 +116,25 @@ ok('materials: ticked list in a fixed order; old text kept', materialText(['Timb
   ok('the imports (no new fields sent) keep the planned month and touch nothing new', c.ok && c.fields.planned_month === 12 && !('requested_date' in c.fields) && !('customer_id' in c.fields) && !('delivery_address' in c.fields), c);
   const d = orderFields({ ...base, customer_id: 'nonsense', delivery: { same: false, street: 'A 1', city: 'B' } }, false);
   ok('customer id checked; own delivery address kept', d.ok && d.fields.customer_id === null && d.fields.delivery_address?.city === 'B', d);
+}
+
+// Step C: the main rep's bonus tick and other reps' lump sums
+{
+  const pays: PaymentRow[] = [{ id: 'p1', order_id: 'a', paid_date: '2026-10-05', amount: 100, note: null }, { id: 'p2', order_id: 'b', paid_date: '2026-10-07', amount: 100, note: null }];
+  const views = buildOrderViews([
+    O({ id: 'a', order_ref: 'OK DE1', net: 400000, extra_reps: [{ user_id: 'R2', name: 'Ola', kind: 'pct', value: 1.5, note: null }, { user_id: null, name: 'Agent', kind: 'amount', value: 500, note: null }] }),
+    O({ id: 'b', order_ref: 'OK DE2', net: 100000, rep_bonus: false }),
+  ], [], pays);
+  const c = commissionYear(views, 2026);
+  ok('bonus off: not in the main rep bands, listed apart', c.months[9].sales === 400000 && c.months[9].rate === 0.01 && c.noBonus.count === 1 && c.noBonus.net === 100000, c.months[9]);
+  const all = extraBonuses(views, 2026, null), mine = extraBonuses(views, 2026, 'R2');
+  ok('extra reps: % of the net and a fixed amount, in the month it counts', all.length === 2 && mine.length === 1 && mine[0].amount === 6000 && mine[0].month === 10 && all.some((x) => x.rep === 'Agent' && x.amount === 500), all);
+  ok('extra reps: nothing for another year or an offer', extraBonuses(views, 2025, null).length === 0 && extraBonuses(buildOrderViews([O({ id: 'x', status: 'offer', extra_reps: [{ user_id: null, name: 'A', kind: 'amount', value: 1, note: null }] })], [], []), 2026, null).length === 0);
+  ok('pay: % rounds to grosze', extraPay({ kind: 'pct', value: 2.5 }, 1234.56) === 30.86 && extraPay({ kind: 'amount', value: 70 }, 9) === 70);
+  const reps = [{ id: 'R2', name: 'Ola Nowak' }];
+  const f = extraRepsFields([{ name: 'ola nowak', kind: 'pct', value: '2,5' }, { name: '', value: '' }, { name: 'Agent X', value: '300' }], reps);
+  ok('form: a known rep is linked, empty rows dropped, others kept by name', f.ok && f.rows.length === 2 && f.rows[0].user_id === 'R2' && f.rows[0].name === 'Ola Nowak' && f.rows[0].value === 2.5 && f.rows[1].user_id === null && f.rows[1].kind === 'amount', f);
+  ok('form: missing name or value, or over 100 %, refused', !extraRepsFields([{ name: '', value: '5' }], reps).ok && !extraRepsFields([{ name: 'A' }], reps).ok && !extraRepsFields([{ name: 'A', kind: 'pct', value: '120' }], reps).ok);
 }
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }

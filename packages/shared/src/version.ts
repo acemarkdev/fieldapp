@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.65.0';
+export const APP_VERSION = '1.66.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.66.0', date: '2026-10-28', changes: [
+    'Sales orders, step C of replacing the monday Enquiries board — more than one sales rep. Finance section: Sales rep (main) with a “Bonus applies” tick, on by default; unticked, the order does not count in that rep’s monthly commission bands. “+ Add sales rep” adds any number of other reps — a rep from the app or any other name — each paid a fixed amount or a % of the order’s net value (the approved quote), shown as you type with the order’s total.',
+    'The other reps’ lump sums are due in the month the order starts to count (its first payment), like commission. Commission page: a new card lists the lump sums of the rep picked (also on orders that belong to another rep) and notes the orders whose main-rep bonus is switched off. Performance ▸ commission accrual now includes the lump sums. CSV export: main rep bonus and other reps. Needs migration 0113.',
+  ] },
   { version: '1.65.0', date: '2026-10-27', changes: [
     'Sales orders, step B of replacing the monday Enquiries board — quotes to the customer. Each quote is a version: the amount, the file sent, deliver and install or delivery only, and the budget behind it (purchase, installation, delivery — installation left out for delivery only), with the total cost and the margin against the 30 % rule. Status per version: Quote sent, Quote approved, Rejected, Rework; “+ New version” copies the previous one. Amount and file stay as sent — a change is a new version; the budget can be corrected.',
     'The quote in force — the approved version, else the newest — sets the order’s net value, budget and status: approved → Accepted (the confirmed realisation date opens), newest rejected → Lost, otherwise Offer. Only one version can be approved. Once the order has its Z job, the budget costs come from the job as before. Orders without a quote keep their typed value and budget. The list shows the quote version next to the status.',

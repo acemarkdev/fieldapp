@@ -9,7 +9,7 @@ import { loadTrade, allocatePurchases, type OrderPurchase } from './tradeCosts';
 import { db } from './supabase';
 import { parseMoney, referenceKey } from './finJobs';
 import { parseDate } from './finSales';
-import { onlyReady } from './schemaReady';
+import { onlyReady, colReady } from './schemaReady';
 import { deliveryFields } from './finCustomers';
 
 export type Result<T = {}> = ({ ok: true } & T) | { ok: false; status: number; error: string };
@@ -100,7 +100,12 @@ export interface OrderRow {
   // migration 0111 — missing before it runs
   customer_id?: string | null; delivery_address?: Record<string, string | null> | null; enquiry_date?: string | null;
   requested_date?: string | null; requested_month_only?: boolean; confirmed_date?: string | null;
+  // migration 0113 — the main rep's commission applies (false = not in their bands); other reps paid a lump sum
+  rep_bonus?: boolean; extra_reps?: ExtraRep[];
 }
+export interface ExtraRep { id?: string; user_id: string | null; name: string; kind: 'amount' | 'pct'; value: number; note: string | null }
+/** What an extra rep is paid on an order: the amount, or the % of the order's net value. */
+export const extraPay = (r: { kind: string; value: number }, net: number) => round2(r.kind === 'pct' ? (net * r.value) / 100 : r.value);
 export interface SaleLite { id: string; invoice_no: string | null; invoice_date: string | null; job_key: string | null; net: number; kind: string; period_year: number | null; period_month: number | null }
 export interface PaymentRow { id: string; order_id: string; paid_date: string; amount: number; note: string | null }
 export interface OrderView extends OrderRow {
@@ -170,20 +175,62 @@ export interface CommissionYear {
   year: number; months: CommissionMonth[]; total: { sales: number; commission: number };
   waiting: { count: number; net: number };       // accepted, nothing paid yet — will count when the first payment is booked
   open: { count: number; net: number };          // offers still to be accepted
+  noBonus: { count: number; net: number };       // accepted in the year, main rep's bonus switched off on the order
 }
 /** A rep's commission, month by month. An order counts only when it is accepted and has started to count. */
 export function commissionYear(orders: OrderView[], year: number): CommissionYear {
   const buckets: CommissionMonth['orders'][] = Array.from({ length: 12 }, () => []);
-  const waiting = { count: 0, net: 0 }, open = { count: 0, net: 0 };
+  const waiting = { count: 0, net: 0 }, open = { count: 0, net: 0 }, noBonus = { count: 0, net: 0 };
   for (const o of orders) {
     if (o.status === 'offer') { if (o.offer_year === year) { open.count++; open.net = round2(open.net + o.net); } continue; }
     if (o.status !== 'accepted') continue;
+    if (o.rep_bonus === false) { if (o.counted_date && +o.counted_date.slice(0, 4) === year) { noBonus.count++; noBonus.net = round2(noBonus.net + o.net); } continue; }
     if (!o.counted_date) { waiting.count++; waiting.net = round2(waiting.net + o.net); continue; }
     if (+o.counted_date.slice(0, 4) !== year) continue;
     buckets[+o.counted_date.slice(5, 7) - 1].push({ id: o.id, code: o.code, customer: o.customer, net: o.net, date: o.counted_date });
   }
   const months = buckets.map((list, i) => ({ month: i + 1, orders: list.sort((a, b) => a.date.localeCompare(b.date) || b.net - a.net), ...monthlyCommission(list.reduce((s, x) => s + x.net, 0)) }));
-  return { year, months, waiting, open, total: { sales: round2(months.reduce((s, m) => s + m.sales, 0)), commission: round2(months.reduce((s, m) => s + m.commission, 0)) } };
+  return { year, months, waiting, open, noBonus, total: { sales: round2(months.reduce((s, m) => s + m.sales, 0)), commission: round2(months.reduce((s, m) => s + m.commission, 0)) } };
+}
+
+export interface ExtraBonus { order_id: string; code: string; customer: string | null; rep: string; user_id: string | null; net: number; kind: 'amount' | 'pct'; value: number; amount: number; date: string; month: number }
+/** The other reps' lump sums due in the year: an accepted order's extra reps, in the month it starts to count.
+ *  `userId` = one rep's only; null = everyone's. */
+export function extraBonuses(orders: OrderView[], year: number, userId: string | null): ExtraBonus[] {
+  const out: ExtraBonus[] = [];
+  for (const o of orders) {
+    if (o.status !== 'accepted' || !o.counted_date || +o.counted_date.slice(0, 4) !== year) continue;
+    for (const r of o.extra_reps ?? []) {
+      if (userId && r.user_id !== userId) continue;
+      out.push({ order_id: o.id, code: o.code, customer: o.customer, rep: r.name, user_id: r.user_id, net: o.net, kind: r.kind, value: r.value, amount: extraPay(r, o.net), date: o.counted_date, month: +o.counted_date.slice(5, 7) });
+    }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.rep.localeCompare(b.rep));
+}
+
+/** The form's other reps → rows to store. A name that is a sales rep in the app is linked to that user. */
+export function extraRepsFields(list: unknown, reps: { id: string; name: string }[]): Result<{ rows: ExtraRep[] }> {
+  const rows: ExtraRep[] = [];
+  for (const x of Array.isArray(list) ? list.slice(0, 20) : []) {
+    const name = clean((x as any)?.name).slice(0, 120);
+    const raw = clean((x as any)?.value);
+    if (!name && !raw) continue;                                   // an empty row on the form
+    if (!name) return fail(400, 'Enter the name of each extra sales rep.');
+    const kind = (x as any)?.kind === 'pct' ? 'pct' : 'amount';
+    const value = parseMoney(raw);
+    if (value === null || value < 0) return fail(400, `Enter the bonus for ${name} — an amount or a %.`);
+    if (kind === 'pct' && value > 100) return fail(400, `${name}: the % cannot be above 100.`);
+    const u = reps.find((r) => r.id === clean((x as any)?.user_id)) ?? reps.find((r) => clean(r.name).toLowerCase() === name.toLowerCase());
+    rows.push({ user_id: u?.id ?? null, name: u?.name ?? name, kind, value, note: clean((x as any)?.note).slice(0, 300) || null });
+  }
+  return { ok: true, rows };
+}
+export async function saveExtraReps(tenantId: string, orderId: string, by: string, rows: ExtraRep[]): Promise<void> {
+  const { error } = await db().from('fin_order_reps').delete().eq('tenant_id', tenantId).eq('order_id', orderId);
+  if (error) throw error;
+  if (!rows.length) return;
+  const { error: e2 } = await db().from('fin_order_reps').insert(rows.map((r) => ({ tenant_id: tenantId, order_id: orderId, created_by: by, user_id: r.user_id, name: r.name, kind: r.kind, value: r.value, note: r.note })));
+  if (e2) throw e2;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -220,7 +267,7 @@ export function materialText(v: unknown): string | null {
   return out.slice(0, 40) || null;
 }
 /** The columns added by migrations 0108 and 0111 — dropped from a write while their migration has not run. */
-export const ORDER_NEW_COLS = ['vendor_quote', 'customer_id', 'delivery_address', 'enquiry_date', 'requested_date', 'requested_month_only', 'confirmed_date'];
+export const ORDER_NEW_COLS = ['vendor_quote', 'customer_id', 'delivery_address', 'enquiry_date', 'requested_date', 'requested_month_only', 'confirmed_date', 'rep_bonus'];
 const intIn = (v: unknown, lo: number, hi: number): number | null => { const n = parseMoney(v); return n !== null && Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
 
 /** Form input → the stored fields. `finance` = may set what only the accountant/admin controls
@@ -271,6 +318,7 @@ export function orderFields(b: any, finance: boolean): Result<{ fields: Record<s
     fields.planned_year = when ? +when.slice(0, 4) : null; fields.planned_month = when ? +when.slice(5, 7) : null;
   }
   if (finance) {
+    if ('rep_bonus' in b) fields.rep_bonus = b.rep_bonus !== false;
     const job = clean(b.job_ref).slice(0, 80);
     fields.job_ref = job || null;
     fields.invoice_refs = clean(b.invoice_refs).slice(0, 300) || null;
@@ -340,6 +388,12 @@ export async function listOrderViews(tenantId: string, repUserId?: string | null
     loadTrade(tenantId),
   ]);
   const mine = repUserId ? orders.filter((o) => o.rep_user_id === repUserId) : orders;
+  // the other reps on each order (migration 0113)
+  if (await colReady('fin_order_reps', 'id')) {
+    const extra = await page<any>('fin_order_reps', 'id,order_id,user_id,name,kind,value,note', tenantId), by = new Map<string, ExtraRep[]>();
+    for (const r of extra) (by.get(r.order_id) ?? by.set(r.order_id, []).get(r.order_id)!).push({ id: r.id, user_id: r.user_id, name: r.name, kind: r.kind, value: Number(r.value) || 0, note: r.note });
+    for (const o of mine) o.extra_reps = by.get(o.id) ?? [];
+  }
   return buildOrderViews(mine.map(rowOut), sales.map((s) => ({ ...s, net: Number(s.net) || 0 })), pays.map((p) => ({ ...p, amount: Number(p.amount) || 0 })), exps, tradeAllocation(orders.map(rowOut), trade).purchases);
 }
 /** Trade purchase invoices split by order, judged against the whole register (not one rep's part of it). */

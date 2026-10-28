@@ -27,6 +27,7 @@ import { listBudgets, getBudget, saveBudget, decide as decideBudget, budgetCalc,
 import { previewMondayJobs, applyMondayJobs, refreshJobGroups } from './mondayJobs';
 import { previewZLinks, applyZLinks } from './mondayOrders';
 import { previewEnquiries, applyEnquiries } from './mondayEnquiries';
+import { colReady } from './schemaReady';
 import { orderPapers, latestQuotes, addDoc, deleteDoc, addQuote, updateQuote, deleteQuote, syncOrder as syncOrderFromQuotes, papersReady } from './finOrderPapers';
 import { listCustomers as listOrderCustomers, createCustomer, updateCustomer, customersReady, COUNTRIES, countryCode, splitOrderRef, buildOrderRef, peekOrderNumber, takeOrderNumber, setNextOrderNumber, codeTaken } from './finCustomers';
 import { statutoryData, writedownField, setWritedown } from './perfStatutory';
@@ -79,7 +80,7 @@ import { JOB_KINDS, JOB_KIND_LABEL, listJobs as listFinJobs, getJob as getFinJob
 import { listPayroll, savePayrollMonth, payrollView, PAYROLL_DEPTS, listResultItems, saveResultItem } from './finPayroll';
 import { PAY_GROUPS, listPeople as listPayPeople, listLoads as listPayLoads, previewFiles as previewPayFiles, applyFiles as applyPayFiles, getLoad as getPayLoad, removeLoad as removePayLoad, saveLump as savePayLump, setPersonGroup as setPayPersonGroup } from './payrollFiles';
 import { listSales, createSale, updateSale, deleteSale, deleteSales, importSales } from './finSales';
-import { listOrderViews, createOrder, updateOrder, deleteOrders, addPayment, deletePayment, importOrders, orderCatalogue, commissionYear, annualBonus, companyTurnover, getOrder, COMMISSION_BANDS, ANNUAL_BANDS , tradeToCheck, orderFields } from './finOrders';
+import { listOrderViews, createOrder, updateOrder, deleteOrders, addPayment, deletePayment, importOrders, orderCatalogue, commissionYear, annualBonus, companyTurnover, getOrder, COMMISSION_BANDS, ANNUAL_BANDS , tradeToCheck, orderFields, extraRepsFields, saveExtraReps, extraBonuses } from './finOrders';
 import { FIN_BOARD_DEFAULT, FIN_BOARD_PROD, listCosts, lastSyncRun, startCostSync, syncProgress, acceptCostChange, getAutoSyncSettings, setAutoSyncSettings, autoSyncTick, parseScope, scopeLabel, AUTO_SYNC_MONTHS, localDayHour, AUTO_SYNC_TZ } from './finCosts';
 import { readReport, createConfirmation, listConfirmations, getConfirmation, getConfirmationByToken, loadConfirmationHtml, deleteConfirmation,
   mergeState, saveState, approveConfirmation, renderReportPage, renderFilledPage, renderWrapper, buildConfirmationPdf, REPORT_HEADERS, WRAPPER_HEADERS } from './confirmations';
@@ -1052,7 +1053,7 @@ const server = createServer(async (req, res) => {
       if (p === '/api/finops/orders' && req.method === 'GET') {
         const lq = await latestQuotes(ctx.tenant_id);
         const withQuotes = (await attachJobs(ctx.tenant_id, await listOrderViews(ctx.tenant_id, own))).map((o: any) => ({ ...o, quote: lq.get(o.id) ?? null }));
-        send(res, 200, { orders: withQuotes, papersReady: await papersReady(), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
+        send(res, 200, { orders: withQuotes, papersReady: await papersReady(), repsReady: await colReady('fin_order_reps', 'id'), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
           isAdmin, customers: await listOrderCustomers(ctx.tenant_id), customersReady: await customersReady(), countries: COUNTRIES, nextNumber: await peekOrderNumber(ctx.tenant_id) }); return;
       }
       if (p === '/api/finops/orders' && req.method === 'POST') {
@@ -1060,10 +1061,13 @@ const server = createServer(async (req, res) => {
         const rep = isRep ? { id: ctx.id as string, name: ctx.name as string } : await repFor(b.rep_user_id);
         // check the form before a number is taken, so a refused save does not use one up
         if ('ok_text' in b) { const pre = orderFields({ ...b, order_ref: 'OK' }, finance); if (!pre.ok) { send(res, pre.status, { error: pre.error }); return; } }
+        const xr = finance && 'extra_reps' in b && await colReady('fin_order_reps', 'id') ? extraRepsFields(b.extra_reps, await reps()) : null;
+        if (xr && !xr.ok) { send(res, xr.status, { error: xr.error }); return; }
         const nr = await okRef(b, null); if (!nr.ok) { send(res, nr.status, { error: nr.error }); return; }
         if (nr.ref) b.order_ref = nr.ref;
         const r = await createOrder(ctx.tenant_id, ctx.name, b, { finance, repUserId: rep.id, repName: rep.name });
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        if (xr?.ok) await saveExtraReps(ctx.tenant_id, r.id, ctx.name, xr.rows);
         audit(ctx, 'finorder.create', 'fin_order', r.id, 'Added a sales order');
         send(res, 200, { ok: true, id: r.id, order_ref: b.order_ref }); return;
       }
@@ -1116,7 +1120,9 @@ const server = createServer(async (req, res) => {
         const repId = isRep ? ctx.id : (url.searchParams.get('rep') || null);
         const views = await listOrderViews(ctx.tenant_id, repId);
         const today = localDayHour(new Date(), AUTO_SYNC_TZ).day;
-        send(res, 200, { year, today, rep: repId, reps: finance ? await reps() : [], isRep, commission: commissionYear(views, year), annual: annualBonus(await companyTurnover(ctx.tenant_id, year)),
+        // lump sums as another rep on an order — also on orders that belong to someone else
+        const extras = extraBonuses(repId ? await listOrderViews(ctx.tenant_id, null) : views, year, repId);
+        send(res, 200, { year, today, rep: repId, reps: finance ? await reps() : [], isRep, commission: commissionYear(views, year), extras, annual: annualBonus(await companyTurnover(ctx.tenant_id, year)),
           rules: { monthly: COMMISSION_BANDS, annual: ANNUAL_BANDS } }); return;
       }
       const parts = p.split('/'), oid = parts[4] ?? '', sub = parts[5] ?? '';
@@ -1192,8 +1198,11 @@ const server = createServer(async (req, res) => {
           const nr = await okRef(b, before); if (!nr.ok) { send(res, nr.status, { error: nr.error }); return; }
           if (nr.ref) b.order_ref = nr.ref;
         }
+        const xr = finance && 'extra_reps' in b && await colReady('fin_order_reps', 'id') ? extraRepsFields(b.extra_reps, await reps()) : null;
+        if (xr && !xr.ok) { send(res, xr.status, { error: xr.error }); return; }
         const r = await updateOrder(ctx.tenant_id, oid, b, { finance, ownerOnly: own, rep: finance && 'rep_user_id' in b ? await repFor(b.rep_user_id) : undefined });
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        if (xr?.ok) await saveExtraReps(ctx.tenant_id, oid, ctx.name, xr.rows);
         // with quotes, the value, budget and status come from the quote in force — not from the form
         if (await papersReady()) await syncOrderFromQuotes(ctx.tenant_id, oid);
         audit(ctx, 'finorder.update', 'fin_order', oid, 'Edited a sales order');
@@ -6572,7 +6581,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       document.getElementById('fo_q').oninput=function(){ FO.limit=300; renderFinOrders(); };
     }
     var d; try{ var r=await api('/api/finops/orders'); d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); }catch(e){ document.getElementById('fo_rows').innerHTML='<tr><td class="sub" style="padding:18px">'+esc(e.message||'Could not load the orders')+'</td></tr>'; return; }
-    FO.customers=d.customers||[]; FO.customersReady=!!d.customersReady; FO.countries=d.countries||[]; FO.nextNumber=d.nextNumber||null; FO.isAdmin=!!d.isAdmin; FO.papersReady=!!d.papersReady;
+    FO.customers=d.customers||[]; FO.customersReady=!!d.customersReady; FO.countries=d.countries||[]; FO.nextNumber=d.nextNumber||null; FO.isAdmin=!!d.isAdmin; FO.papersReady=!!d.papersReady; FO.repsReady=!!d.repsReady;
     FO.orders=d.orders||[]; FO.reps=d.reps||[]; FO.isRep=!!d.isRep; FO.canFinance=!!d.canFinance; FO.canManage=!!d.canManage; FO.me=d.me||null;
     fxButton(); pcLoad();
     if(FO.canFinance)fcatLoad();
@@ -6902,6 +6911,54 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     };
     document.querySelectorAll('[data-foddel]').forEach(function(a){ a.onclick=async function(){ if(!fConfirm(TR('Remove the newest document version and its file?')))return; var d=await send('/docs/'+encodeURIComponent(a.getAttribute('data-foddel')),'DELETE',null,null); if(d){ tShow(TR('Document removed')); foPapersLoad(o); } }; });
   }
+  // ---- step C: the main rep's bonus tick and other reps paid a lump sum (an amount or a % of the order net) ----
+  function foRepRow(r){
+    r=r||{kind:'amount'};
+    return '<div class="fox_row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">'
+      +'<input class="tinput fox_name" list="fox_reps" style="flex:1;min-width:160px" placeholder="'+av(TR('sales rep'))+'" value="'+av(r.name||'')+'">'
+      +'<select class="fox_kind" style="width:150px"><option value="amount"'+(r.kind==='pct'?'':' selected')+'>'+esc(TR('amount (zł)'))+'</option><option value="pct"'+(r.kind==='pct'?' selected':'')+'>'+esc(TR('% of order net'))+'</option></select>'
+      +'<input class="tinput fox_val" inputmode="decimal" style="width:100px" value="'+av(r.value==null?'':r.value)+'">'
+      +'<span class="fox_pay sub" style="margin:0;min-width:90px;text-align:right;font-weight:700"></span>'
+      +'<input class="tinput fox_note" style="flex:1;min-width:120px" placeholder="'+av(TR('note'))+'" value="'+av(r.note||'')+'">'
+      +'<a class="codelink fox_del" style="color:#b42318">×</a></div>';
+  }
+  function foRepsBlock(o){
+    var main='<div class="field"><label>'+esc(TR('Sales rep (main)'))+'</label><select id="foe_rep"><option value="">'+esc(TR('(no rep)'))+'</option>'+FO.reps.map(function(r){ return '<option value="'+av(r.id)+'"'+(o&&o.rep_user_id===r.id?' selected':'')+'>'+esc(r.name)+'</option>'; }).join('')+'</select>'
+      +(FO.repsReady?'<label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-weight:600;color:var(--ink,#222)"><input type="checkbox" id="foe_rbonus"'+(o&&o.rep_bonus===false?'':' checked')+'> '+esc(TR('Bonus applies (counts in the rep’s monthly commission)'))+'</label>':'')+'</div>';
+    if(!FO.repsReady)return main;
+    return main+'<div class="field full"><label>'+esc(TR('Other sales reps — bonus or lump sum on this order'))+'</label><datalist id="fox_reps">'+FO.reps.map(function(r){ return '<option value="'+av(r.name)+'">'; }).join('')+'</datalist>'
+      +'<div id="fox_list">'+((o&&o.extra_reps)||[]).map(foRepRow).join('')+'</div>'
+      +'<div style="display:flex;gap:10px;align-items:center;margin-top:6px"><button class="pobtn" id="fox_add" type="button">'+esc(TR('+ Add sales rep'))+'</button><span class="sub" id="fox_total" style="margin:0"></span></div>'
+      +'<div class="sub" style="margin:4px 0 0">'+esc(TR('Paid in the month the order starts to count (its first payment); a % is of the order’s net value — the approved quote.'))+'</div></div>';
+  }
+  function foRepsWire(o){
+    var list=document.getElementById('fox_list'); if(!list)return;
+    var net=o?Number(o.net)||0:0;
+    var calc=function(){ var tot=0; list.querySelectorAll('.fox_row').forEach(function(row){ var v=parseFloat(String(row.querySelector('.fox_val').value).replace(/ /g,'').replace(',','.')); if(isNaN(v))v=0; var pay=row.querySelector('.fox_kind').value==='pct'?net*v/100:v; tot+=pay; row.querySelector('.fox_pay').textContent=v?fcMoney(pay)+' zł':''; });
+      document.getElementById('fox_total').textContent=tot?T('Lump sums on this order: {0} zł',fcMoney(tot)):''; };
+    var wire=function(){ list.querySelectorAll('.fox_row').forEach(function(row){ row.querySelector('.fox_val').oninput=calc; row.querySelector('.fox_kind').onchange=calc; row.querySelector('.fox_del').onclick=function(){ row.remove(); calc(); }; }); };
+    document.getElementById('fox_add').onclick=function(){ list.insertAdjacentHTML('beforeend',foRepRow(null)); wire(); calc(); list.lastElementChild.querySelector('.fox_name').focus(); };
+    wire(); calc();
+  }
+  function foRepsBody(b){
+    var rb=document.getElementById('foe_rbonus'); if(rb)b.rep_bonus=rb.checked;
+    var list=document.getElementById('fox_list'); if(!list)return;
+    b.extra_reps=[].slice.call(list.querySelectorAll('.fox_row')).map(function(row){ return {name:row.querySelector('.fox_name').value,kind:row.querySelector('.fox_kind').value,value:row.querySelector('.fox_val').value,note:row.querySelector('.fox_note').value}; });
+  }
+  // Commission page: lump sums as another rep on an order, and orders whose main-rep bonus is switched off
+  function fmExtras(d){
+    var X=d.extras||[], nb=d.commission&&d.commission.noBonus;
+    if(!X.length&&!(nb&&nb.count))return '';
+    var h='<div class="card2" style="padding:18px 20px;margin-bottom:18px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(T('BONUSES AS ANOTHER REP ON AN ORDER {0}',d.year))+'</div>';
+    if(X.length){
+      var tot=X.reduce(function(s,x){return s+x.amount;},0);
+      h+='<table class="fjl" style="margin-top:8px"><thead><tr><th>MONTH</th><th>ORDER</th><th>CUSTOMER</th><th>REP</th><th>BASIS</th><th style="text-align:right">AMOUNT</th></tr></thead><tbody>'
+        +X.map(function(x){ return '<tr><td>'+esc(FC_MONTHS[x.month-1])+'</td><td>'+esc(x.code)+'</td><td>'+esc(x.customer||'')+'</td><td>'+esc(x.rep)+'</td><td class="sub">'+esc(x.kind==='pct'?T('{0}% of {1} zł',x.value,fcMoney(x.net)):TR('fixed amount'))+'</td><td class="r" style="font-weight:700">'+fcMoney(x.amount)+'</td></tr>'; }).join('')
+        +'<tr style="font-weight:800;background:#fff8eb"><td colspan="5">'+esc(TR('Total'))+'</td><td class="r" style="color:#15803d">'+fcMoney(tot)+'</td></tr></tbody></table>';
+    }
+    if(nb&&nb.count)h+='<div class="sub" style="margin:8px 0 0">'+esc(T('{0} accepted orders ({1} zł) counted this year with the main rep’s bonus switched off — not in the monthly bands above.',nb.count,fcMoney(nb.net)))+'</div>';
+    return h+'</div>';
+  }
   function foOpen(id){
     var o=id?FO.orders.filter(function(x){return x.id===id;})[0]:null; if(id&&!o)return;
     var now=new Date(), v=function(k){ return o&&o[k]!=null?o[k]:''; };
@@ -6931,7 +6988,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +foDatesBlock(o,f);
     if(FO.canFinance){
       h+='<div class="field full" style="border-top:1px solid var(--line);padding-top:12px;font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR('FINANCE'))+'</div>'
-        +f('Sales rep','<select id="foe_rep"><option value="">'+esc(TR('(no rep)'))+'</option>'+FO.reps.map(function(r){ return '<option value="'+av(r.id)+'"'+(o&&o.rep_user_id===r.id?' selected':'')+'>'+esc(r.name)+'</option>'; }).join('')+'</select>')
+        +foRepsBlock(o)
         +f('Production job in Orpiszew (Z number)','<input id="foe_job" class="tinput" value="'+av(v('job_ref'))+'" placeholder="Z.330" list="foe_jobs"><datalist id="foe_jobs">'+FCAT.jobs.map(function(j){ return '<option value="'+av(j)+'">'; }).join('')+'</datalist>')
         +f('Invoice numbers (to match invoices on the Sales tab)','<input id="foe_inv" class="tinput" value="'+av(v('invoice_refs'))+'" placeholder="FP 3/ACE/09/2025; FL 198">')
         +f('Counts for commission from (leave empty = first invoice or cash payment)','<input id="foe_first" class="tinput" type="date" value="'+av(v('first_payment_date'))+'">');
@@ -6955,7 +7012,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     openModal(o?T('Order {0}',esc(o.code||o.order_ref)):TR('New order'),h);
     if(o)costingLoad('order',o.id,'fo_costing');
     var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='820px';
-    foFormWire(o);
+    foFormWire(o); foRepsWire(o);
     if(o&&FO.papersReady)foPapersLoad(o);
     if(o)fxWire(document.getElementById('modal'),function(){ foOpen(o.id); });
     document.querySelectorAll('#modal [data-fojob]').forEach(function(a){ a.onclick=function(){ FJ.openAfter=a.getAttribute('data-fojob'); closeModal(true); showTab('finjobs'); }; });
@@ -6963,7 +7020,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('foe_save').onclick=async function(){
       var b=foFormBody(o,{customer:g('foe_cust'),status:g('foe_status'),company:g('foe_company'),supplier:g('foe_supplier'),net:g('foe_net'),offer_month:g('foe_om'),offer_year:g('foe_oy'),
         cost_purchase:g('foe_cp'),cost_install:g('foe_ci'),cost_delivery:g('foe_cd'),note:g('foe_note'),comment:g('foe_comment'),vendor_quote:g('foe_vq')});
-      if(FO.canFinance){ b.rep_user_id=g('foe_rep'); b.job_ref=g('foe_job'); b.invoice_refs=g('foe_inv'); b.first_payment_date=g('foe_first'); }
+      if(FO.canFinance){ b.rep_user_id=g('foe_rep'); b.job_ref=g('foe_job'); b.invoice_refs=g('foe_inv'); b.first_payment_date=g('foe_first'); foRepsBody(b); }
       var msg=document.getElementById('foe_msg'); msg.textContent=TR('Saving…');
       try{ var r=await api(o?'/api/finops/orders/'+encodeURIComponent(o.id):'/api/finops/orders',{method:o?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json();
         if(r.ok&&d.ok){ closeModal(true); tShow(o?'Saved':T('Order added: {0}',d.order_ref||'')); loadFinOrders(); } else msg.textContent=TR(d.error||'Could not save'); }catch(e){ msg.textContent=TR('Could not save'); }
@@ -6976,8 +7033,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   function foCsv(){
     var rows=foFiltered(), q=function(x){ return '"'+String(x==null?'':x).replace(/"/g,'""')+'"'; }, n=function(x){ return x==null?'':Number(x).toFixed(2); };
-    var L=[['Order','Z number','Customer','Company','Supplier','Material','Offer year','Offer month','Status','Net','Purchase cost','Installation cost','Cost reports paid out','Delivery cost','Budget margin %','Actual cost','Actual margin %','Paid','Counts from','Planned year','Planned month','Enquiry date','Requested realisation','Confirmed realisation','Sales rep','Notes','Comment'].map(function(x){return q(TR(x));}).join(',')];
-    rows.forEach(function(o){ L.push([q(o.order_ref),q(o.job_ref),q(o.customer),q(o.company),q(o.supplier),q(o.material),o.offer_year||'',o.offer_month||'',q(TR(FO_STATUS[o.status]||o.status)),n(o.net),n(o.cost_purchase),n(o.cost_install),n(o.cost_reports_paid),n(o.cost_delivery),o.costs&&o.margin!=null?(o.margin*100).toFixed(1):'',n(o.actual_costs),o.actual_margin!=null?(o.actual_margin*100).toFixed(1):'',n(o.paid),o.counted_date||'',o.planned_year||'',o.planned_month||'',o.enquiry_date||'',o.requested_date?(o.requested_month_only?o.requested_date.slice(0,7):o.requested_date):'',o.confirmed_date||'',q(o.rep_name),q(o.note),q(o.comment)].join(',')); });
+    var L=[['Order','Z number','Customer','Company','Supplier','Material','Offer year','Offer month','Status','Net','Purchase cost','Installation cost','Cost reports paid out','Delivery cost','Budget margin %','Actual cost','Actual margin %','Paid','Counts from','Planned year','Planned month','Enquiry date','Requested realisation','Confirmed realisation','Sales rep','Main rep bonus','Other reps','Notes','Comment'].map(function(x){return q(TR(x));}).join(',')];
+    rows.forEach(function(o){ L.push([q(o.order_ref),q(o.job_ref),q(o.customer),q(o.company),q(o.supplier),q(o.material),o.offer_year||'',o.offer_month||'',q(TR(FO_STATUS[o.status]||o.status)),n(o.net),n(o.cost_purchase),n(o.cost_install),n(o.cost_reports_paid),n(o.cost_delivery),o.costs&&o.margin!=null?(o.margin*100).toFixed(1):'',n(o.actual_costs),o.actual_margin!=null?(o.actual_margin*100).toFixed(1):'',n(o.paid),o.counted_date||'',o.planned_year||'',o.planned_month||'',o.enquiry_date||'',o.requested_date?(o.requested_month_only?o.requested_date.slice(0,7):o.requested_date):'',o.confirmed_date||'',q(o.rep_name),o.rep_bonus===false?'no':'yes',q((o.extra_reps||[]).map(function(r){ return r.name+' '+(r.kind==='pct'?r.value+'%':r.value); }).join('; ')),q(o.note),q(o.comment)].join(',')); });
     var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='sales-orders.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
   function foImport(){
@@ -7508,7 +7565,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     tb.querySelectorAll('tr.g').forEach(function(tr){ tr.onclick=function(){ var i=+tr.getAttribute('data-mi'); FM.open[i]=!FM.open[i]; renderFinComm(); }; });
     var a=d.annual, asteps=a.steps.map(function(s){ return {from:s.from,reached:s.reached,label:esc(T('up to {0}',pctTxt(s.max)))+' · '+(s.from/1000000).toLocaleString(FLOC())+' M'}; });
     var anext=a.steps.filter(function(s){return !s.reached;})[0];
-    document.getElementById('fm_year_box').innerHTML='<div class="card2" style="padding:18px 20px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(T('YEARLY BONUS {0}',d.year))+'</div>'
+    document.getElementById('fm_year_box').innerHTML=fmExtras(d)+'<div class="card2" style="padding:18px 20px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(T('YEARLY BONUS {0}',d.year))+'</div>'
       +'<div style="display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;margin-top:4px"><div><div style="font-size:26px;font-weight:800;color:var(--ink)">'+fcMoney(a.turnover)+' zł</div><div class="sub" style="margin:0">'+esc(TR('Company turnover this year (net sales invoices on the Sales tab)'))+'</div></div>'
       +'<div><div style="font-size:20px;font-weight:800;color:'+(a.max?'#15803d':'#b45309')+'">'+(a.max?esc(T('Bonus possible: up to {0} of yearly gross pay',pctTxt(a.max))):esc(TR('Below the first yearly threshold')))+'</div><div class="sub" style="margin:0">'+(anext?esc(T('{0} zł more turnover to reach “up to {1}”',fcMoney(anext.missing),pctTxt(anext.max))):esc(TR('Top threshold reached.')))+'</div></div></div>'
       +fmBar(a.turnover,asteps,10000000)

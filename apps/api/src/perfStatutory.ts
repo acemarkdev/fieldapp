@@ -5,12 +5,12 @@
 //     are work in progress;
 //   • the stock by age bucket at each month end (the daily history of Stock value) and the write-down % per bucket
 //     → the write-down provision (net realisable value) and its change per month;
-//   • the commission earned per month, all reps (each rep's monthly bands on their own sales);
+//   • the commission earned per month, all reps (each rep's monthly bands on their own sales, plus other reps' lump sums);
 //   • the trade purchases split by order (the supplier invoices' KSeF lines, as in Sales orders), each with the keys of its
 //     order (OK number, Z number) — the view counts each piece in the month of the order's first final sales invoice.
 import { db } from './supabase';
 import { getConfig, setConfig } from './store';
-import { listOrderViews, commissionYear, orderKeys, tradeAllocation } from './finOrders';
+import { listOrderViews, commissionYear, extraBonuses, orderKeys, tradeAllocation } from './finOrders';
 import { loadTrade } from './tradeCosts';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -80,6 +80,8 @@ export async function statutoryData(tenantId: string, year: number): Promise<Sta
   for (const o of views) { const k = (o as any).rep_user_id || '~'; (byRep.get(k) ?? byRep.set(k, []).get(k)!).push(o); }
   const commission = Array(12).fill(0);
   for (const list of byRep.values()) commissionYear(list, year).months.forEach((m, i) => { commission[i] = round2(commission[i] + m.commission); });
+  // plus the lump sums to other reps on an order, in the month it starts to count
+  for (const x of extraBonuses(views, year, null)) commission[x.month - 1] = round2(commission[x.month - 1] + x.amount);
 
   // trade purchases by order: the keys of the order each piece belongs to
   let trade: StatutoryData['trade'] = [];
