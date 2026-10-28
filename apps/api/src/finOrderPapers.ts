@@ -9,6 +9,7 @@
 import { db } from './supabase';
 import { parseMoney } from './finJobs';
 import { colReady } from './schemaReady';
+import { repFees } from './finOrders';
 
 export type Result<T = {}> = ({ ok: true } & T) | { ok: false; status: number; error: string };
 const fail = (status: number, error: string): Result<any> => ({ ok: false, status, error });
@@ -35,12 +36,13 @@ export function quoteInForce<T extends { version: number; status: string }>(quot
   if (!quotes.length) return null;
   return quotes.find((q) => q.status === 'approved') ?? quotes.reduce((a, b) => (b.version > a.version ? b : a));
 }
-/** A quote's total cost; installation does not count when we only deliver. */
-export function quoteCost(q: { scope: QuoteScope; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null }): number {
-  return round2((q.cost_purchase ?? 0) + (q.scope === 'install' ? q.cost_install ?? 0 : 0) + (q.cost_delivery ?? 0));
+/** A quote's total cost; installation does not count when we only deliver. `fees` = the other reps' fees at this
+ *  quote's amount (a % of it, or a fixed sum). */
+export function quoteCost(q: { scope: QuoteScope; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null }, fees = 0): number {
+  return round2((q.cost_purchase ?? 0) + (q.scope === 'install' ? q.cost_install ?? 0 : 0) + (q.cost_delivery ?? 0) + fees);
 }
-export function quoteMargin(q: Parameters<typeof quoteCost>[0] & { amount: number }): number | null {
-  return q.amount ? round2((q.amount - quoteCost(q)) / q.amount) : null;
+export function quoteMargin(q: Parameters<typeof quoteCost>[0] & { amount: number }, fees = 0): number | null {
+  return q.amount ? round2((q.amount - quoteCost(q, fees)) / q.amount) : null;
 }
 /** What the quotes set on the order; null when the order has no quotes (it is then left as typed). */
 export function orderFromQuotes(quotes: QuoteRow[]): { net: number; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null; status: 'offer' | 'accepted' | 'lost' } | null {
@@ -125,10 +127,16 @@ export async function listDocs(tenantId: string, orderId: string): Promise<DocRo
 /** The order's papers for the order window, with links to open the files (valid for an hour). */
 export async function orderPapers(tenantId: string, orderId: string) {
   if (!(await papersReady())) return { ready: false, docs: [], quotes: [] };
-  const [docs, quotes] = await Promise.all([listDocs(tenantId, orderId), listQuotes(tenantId, orderId)]);
+  const [docs, quotes, reps] = await Promise.all([listDocs(tenantId, orderId), listQuotes(tenantId, orderId), orderReps(tenantId, orderId)]);
   const urls = await signed([...docs.map((d) => d.storage_path), ...quotes.map((q) => q.storage_path)]);
   const strip = <T extends { storage_path: string | null }>(r: T) => { const { storage_path, ...rest } = r; return { ...rest, url: storage_path ? urls.get(storage_path) ?? null : null }; };
-  return { ready: true, docs: docs.map(strip), quotes: quotes.map((q) => ({ ...strip(q), cost: quoteCost(q), margin: quoteMargin(q) })) };
+  return { ready: true, docs: docs.map(strip), quotes: quotes.map((q) => { const fees = repFees(reps, q.amount); return { ...strip(q), fees, cost: quoteCost(q, fees), margin: quoteMargin(q, fees) }; }) };
+}
+/** The other reps' fees on the order (migration 0113) — they are part of each quote's cost. */
+async function orderReps(tenantId: string, orderId: string): Promise<{ kind: string; value: number }[]> {
+  if (!(await colReady('fin_order_reps', 'id'))) return [];
+  const { data, error } = await db().from('fin_order_reps').select('kind,value').eq('tenant_id', tenantId).eq('order_id', orderId);
+  if (error) throw error; return (data ?? []).map((r: any) => ({ kind: r.kind, value: Number(r.value) || 0 }));
 }
 /** The newest quote of every order (version and status) — for the list. */
 export async function latestQuotes(tenantId: string): Promise<Map<string, { version: number; status: QuoteStatus; count: number }>> {

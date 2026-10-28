@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.66.0';
+export const APP_VERSION = '1.66.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.66.1', date: '2026-10-28', changes: [
+    'Sales orders: the other sales reps’ fees are part of the budget. The order’s budget cost and margin include them (a % is of the order net); on the actual side they count once due, with the order’s first payment. Budget against actual shows them as their own line, “Other sales reps (fees)”. Each quote version counts the fees at its own amount — a new REP FEES column, and the quote form’s live total and margin include them. CSV: an “Other reps fees” column.',
+  ] },
   { version: '1.66.0', date: '2026-10-28', changes: [
     'Sales orders, step C of replacing the monday Enquiries board — more than one sales rep. Finance section: Sales rep (main) with a “Bonus applies” tick, on by default; unticked, the order does not count in that rep’s monthly commission bands. “+ Add sales rep” adds any number of other reps — a rep from the app or any other name — each paid a fixed amount or a % of the order’s net value (the approved quote), shown as you type with the order’s total.',
     'The other reps’ lump sums are due in the month the order starts to count (its first payment), like commission. Commission page: a new card lists the lump sums of the rep picked (also on orders that belong to another rep) and notes the orders whose main-rep bonus is switched off. Performance ▸ commission accrual now includes the lump sums. CSV export: main rep bonus and other reps. Needs migration 0113.',

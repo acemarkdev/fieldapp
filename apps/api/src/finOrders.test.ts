@@ -130,6 +130,10 @@ ok('materials: ticked list in a fixed order; old text kept', materialText(['Timb
   const all = extraBonuses(views, 2026, null), mine = extraBonuses(views, 2026, 'R2');
   ok('extra reps: % of the net and a fixed amount, in the month it counts', all.length === 2 && mine.length === 1 && mine[0].amount === 6000 && mine[0].month === 10 && all.some((x) => x.rep === 'Agent' && x.amount === 500), all);
   ok('extra reps: nothing for another year or an offer', extraBonuses(views, 2025, null).length === 0 && extraBonuses(buildOrderViews([O({ id: 'x', status: 'offer', extra_reps: [{ user_id: null, name: 'A', kind: 'amount', value: 1, note: null }] })], [], []), 2026, null).length === 0);
+  const fv = views.find((v) => v.id === 'a')!;
+  ok('fees: in the budget cost and margin; actual once the order counts', fv.rep_fees === 6500 && fv.costs === 50000 + 6500 && fv.margin === Math.round((400000 - 56500) / 400000 * 100) / 100, fv);
+  const nv = buildOrderViews([O({ id: 'n', net: 1000, extra_reps: [{ user_id: null, name: 'A', kind: 'amount', value: 100, note: null }] })], [], [])[0];
+  ok('fees: budget only while nothing is paid', nv.rep_fees === 100 && nv.costs === 50100 && nv.counted_date === null, nv);
   ok('pay: % rounds to grosze', extraPay({ kind: 'pct', value: 2.5 }, 1234.56) === 30.86 && extraPay({ kind: 'amount', value: 70 }, 9) === 70);
   const reps = [{ id: 'R2', name: 'Ola Nowak' }];
   const f = extraRepsFields([{ name: 'ola nowak', kind: 'pct', value: '2,5' }, { name: '', value: '' }, { name: 'Agent X', value: '300' }], reps);

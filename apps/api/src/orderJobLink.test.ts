@@ -39,6 +39,8 @@ const ct = costing(B({ decision: 'trade' }), { sums: { transport: 2500, labour: 
 ok('trade: vendor purchase from the order invoices, transport and other job costs', ct.basis === 'trade' && row(ct, 'bought').budget === 32000 && row(ct, 'bought').actual === 31200 && row(ct, 'transport').actual === 2500 && row(ct, 'job_other').actual === 300, ct.rows);
 const co = costing(null, null, { ...ord, actual_purchase: 30000 });
 ok('an order without a job: the rep estimate against the supplier invoices', co.basis === 'order' && row(co, 'bought').budget === 29350 && row(co, 'bought').actual === 30000, co.rows);
+const cf = costing(null, null, { ...ord, rep_fees: 1200, counted_date: null }), cg = costing(null, null, { ...ord, rep_fees: 1200, counted_date: '2026-10-01' });
+ok('costing: other reps fees — budget always, actual once due', cf.rows.some((r) => r.key === 'rep_fees' && r.budget === 1200 && r.actual === 0) && cg.rows.some((r) => r.key === 'rep_fees' && r.actual === 1200), cf.rows);
 
 if (fail) { console.error(`${fail} failed`); process.exit(1); }
 console.log('orderJobLink ok');

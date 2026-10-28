@@ -106,10 +106,13 @@ export interface OrderRow {
 export interface ExtraRep { id?: string; user_id: string | null; name: string; kind: 'amount' | 'pct'; value: number; note: string | null }
 /** What an extra rep is paid on an order: the amount, or the % of the order's net value. */
 export const extraPay = (r: { kind: string; value: number }, net: number) => round2(r.kind === 'pct' ? (net * r.value) / 100 : r.value);
+/** All the other reps' fees on an order of this net value. */
+export const repFees = (reps: { kind: string; value: number }[] | null | undefined, net: number) => round2((reps ?? []).reduce((s, r) => s + extraPay(r, net), 0));
 export interface SaleLite { id: string; invoice_no: string | null; invoice_date: string | null; job_key: string | null; net: number; kind: string; period_year: number | null; period_month: number | null }
 export interface PaymentRow { id: string; order_id: string; paid_date: string; amount: number; note: string | null }
 export interface OrderView extends OrderRow {
   code: string; costs: number; margin: number | null;
+  rep_fees: number;                    // other reps' bonuses / lump sums on the order — a budget cost, actual once due
   invoices: SaleLite[]; payments: PaymentRow[]; invoiced: number; cash: number; paid: number;
   counted_date: string | null;         // the day the order starts counting for commission (null = not yet)
   counted_from: 'manual' | 'invoice' | 'cash' | null;
@@ -153,18 +156,20 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
     const exps = (expBy.get(o.id) ?? []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
     const sumOf = (st: string[]) => round2(exps.filter((e) => st.includes(e.status)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
     const cost_reports_paid = sumOf(['paid']);
-    const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + (o.cost_delivery ?? 0));
-    return { ...o, code: orderCode(o.job_ref) || orderCode(o.order_ref), costs, margin: o.net ? round2((o.net - costs) / o.net) : null,
+    const rep_fees = repFees(o.extra_reps, o.net);
+    const costs = round2((o.cost_purchase ?? 0) + (o.cost_install ?? 0) + (o.cost_delivery ?? 0) + rep_fees);
+    return { ...o, code: orderCode(o.job_ref) || orderCode(o.order_ref), costs, margin: o.net ? round2((o.net - costs) / o.net) : null, rep_fees,
       invoices, payments: pays, invoiced, cash, paid: round2(invoiced + cash), counted_date, counted_from,
-      expenses: exps, cost_reports_paid, cost_reports_open: sumOf(['submitted', 'approved']), ...actual(o, cost_reports_paid) };
+      expenses: exps, cost_reports_paid, cost_reports_open: sumOf(['submitted', 'approved']), ...actual(o, cost_reports_paid, counted_date ? rep_fees : 0) };
   });
   // the actual side: what the suppliers invoiced for this order (matched by the order's own codes)
-  function actual(o: OrderRow, paidReports: number) {
+  // the reps' fees count on the actual side once due (the order has started to count)
+  function actual(o: OrderRow, paidReports: number, feesDue: number) {
     const seen = new Set<OrderPurchase>(); const mine: OrderPurchase[] = [];
     for (const k of orderKeys(o)) for (const pu of purBy.get(k) ?? []) if (!seen.has(pu)) { seen.add(pu); mine.push(pu); }
     if (!mine.length) return { purchases: [], actual_purchase: null, actual_costs: null, actual_margin: null };
     const actual_purchase = round2(mine.reduce((s, x) => s + x.net, 0));
-    const actual_costs = round2(actual_purchase + (o.cost_install ?? 0) + paidReports + (o.cost_delivery ?? 0));
+    const actual_costs = round2(actual_purchase + (o.cost_install ?? 0) + paidReports + (o.cost_delivery ?? 0) + feesDue);
     return { purchases: mine.sort((a, b) => String(a.invoice_date ?? '').localeCompare(String(b.invoice_date ?? ''))), actual_purchase, actual_costs, actual_margin: o.net ? round2((o.net - actual_costs) / o.net) : null };
   }
   return views;

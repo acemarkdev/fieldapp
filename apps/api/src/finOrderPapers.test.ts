@@ -17,6 +17,8 @@ ok('an approved version wins over a newer one', quoteInForce([q(1, 'approved', 1
 ok('cost: install counts when we install', quoteCost(q(1, 'sent', 10000)) === 6500 && quoteMargin(q(1, 'sent', 10000)) === 0.35);
 ok('cost: delivery only drops installation', quoteCost(q(1, 'sent', 10000, { scope: 'delivery' })) === 5500 && quoteMargin(q(1, 'sent', 0)) === null);
 
+ok('cost: other reps fees count in the cost and margin', quoteCost(q(1, 'sent', 10000), 500) === 7000 && quoteMargin(q(1, 'sent', 10000), 500) === 0.3);
+
 // What the order gets
 const a = orderFromQuotes([q(1, 'rework', 10000), q(2, 'approved', 9000, { cost_purchase: 4000 }), q(3, 'sent', 9900)]);
 ok('approved → accepted, its amount and budget', !!a && a.status === 'accepted' && a.net === 9000 && a.cost_purchase === 4000 && a.cost_install === 1000, a);

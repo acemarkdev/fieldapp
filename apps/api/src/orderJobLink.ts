@@ -154,7 +154,7 @@ const KIND_SOURCE: Record<string, string> = { material: 'RW from Subiekt', glass
 /** The decided (or, undecided, the produce) scenario against everything booked: the job's cost lines (RW, invoices,
  *  labour), the order's supplier invoices and its installation (typed + cost reports paid out). */
 export function costing(b: Budget | null, job: { sums: Record<string, number>; totalCost: number; sales: number | null } | null,
-  order: { net: number; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null; cost_reports_paid?: number | null; actual_purchase?: number | null; invoiced?: number | null } | null): Costing {
+  order: { net: number; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null; cost_reports_paid?: number | null; actual_purchase?: number | null; invoiced?: number | null; rep_fees?: number | null; counted_date?: string | null } | null): Costing {
   const rows: CostingRow[] = [];
   const add = (key: string, label: string, budget: number, actual: number, source: string) => { if (Math.abs(budget) >= 0.005 || Math.abs(actual) >= 0.005) rows.push({ key, label, budget: round2(budget), actual: round2(actual), diff: round2(actual - budget), source }); };
   const sums = job?.sums ?? {};
@@ -175,6 +175,8 @@ export function costing(b: Budget | null, job: { sums: Record<string, number>; t
     add('transport', 'Delivery', order?.cost_delivery ?? 0, order?.cost_delivery ?? 0, 'as typed on the order');
   }
   if (order) add('install', 'Installation', order.cost_install ?? 0, (order.cost_install ?? 0) + (order.cost_reports_paid ?? 0), 'typed + cost reports paid out');
+  // other reps' bonuses / lump sums on the order: actual once due (the order has started to count)
+  if (order) add('rep_fees', 'Other sales reps (fees)', order.rep_fees ?? 0, order.counted_date ? order.rep_fees ?? 0 : 0, 'Sales orders ▸ other reps, due with the first payment');
   const budgetCost = round2(rows.reduce((s, r) => s + r.budget, 0)), actualCost = round2(rows.reduce((s, r) => s + r.actual, 0));
   const revB = b?.offer_net ?? (order && order.net > 0 ? order.net : null);
   const revA = order ? (order.invoiced ?? null) : (job?.sales ?? null);
