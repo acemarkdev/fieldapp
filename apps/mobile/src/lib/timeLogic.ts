@@ -1,6 +1,9 @@
 // Production time on the phone: pure helpers for the time screen (grouping, search, durations).
-export interface ProdTask { id: string; job_ref: string; operation: string; alias: string | null; export_name: string }
-export interface TimeEntry { id: string; task_id: string | null; task_name: string | null; started_at: string; ended_at: string | null; note?: string | null; job_key?: string | null }
+// WEM tasks (generated from an order) also carry their catalogue code, position, workstation and planned quantity;
+// their entries carry the time type (chosen at START) and the quantity done (typed at STOP).
+export interface ProdTask { id: string; job_ref: string; operation: string; alias: string | null; export_name: string; code?: string | null; position?: string | null; station?: string | null; planned_qty?: number | null; unit?: string | null }
+export type TimeType = 'work' | 'setup' | 'rework';
+export interface TimeEntry { id: string; task_id: string | null; task_name: string | null; started_at: string; ended_at: string | null; note?: string | null; job_key?: string | null; time_type?: TimeType | null; qty_done?: number | null }
 /** Started with "Bez zadania" and no task picked yet (no task and no job — not a removed task, which keeps its job). */
 export const isFree = (e: Pick<TimeEntry, 'task_id' | 'job_key'>) => !e.task_id && !e.job_key;
 
@@ -12,8 +15,39 @@ export function groupTasks(tasks: ProdTask[], query: string): { job: string; tas
   const by = new Map<string, ProdTask[]>();
   for (const t of tasks) if (hit(t)) (by.get(t.job_ref) ?? by.set(t.job_ref, []).get(t.job_ref)!).push(t);
   const num = (j: string) => +(/(\d+)/.exec(j)?.[1] ?? 0);
-  return [...by.entries()].sort((a, b) => num(b[0]) - num(a[0]) || a[0].localeCompare(b[0])).map(([job, list]) => ({ job, tasks: list.sort((x, y) => x.operation.localeCompare(y.operation)) }));
+  return [...by.entries()].sort((a, b) => num(b[0]) - num(a[0]) || a[0].localeCompare(b[0])).map(([job, list]) => ({ job, tasks: list.sort(taskOrder) }));
 }
+/** WEM tasks in the order of the work: by position, then joinery (box SB, then ST), assembly (SK), add-ons, and
+ *  downtime / other last; other tasks by name. */
+export function taskOrder(x: ProdTask, y: ProdTask): number {
+  if (!x.code || !y.code) return x.operation.localeCompare(y.operation);
+  const key = (t: ProdTask) => { const [head, , step = ''] = String(t.code).split('-'); const pos = parseInt(String(t.position ?? ''), 10);
+    const rank = head === 'OGL' ? 5 : head === 'DOD' ? 4 : /^SB/.test(step) ? 1 : /^ST/.test(step) ? 2 : /^SK/.test(step) ? 3 : 4;
+    return { pos: Number.isFinite(pos) ? pos : 99999, rank, step }; };
+  const a = key(x), b = key(y);
+  return a.pos - b.pos || a.rank - b.rank || a.step.localeCompare(b.step) || String(x.code).localeCompare(String(y.code));
+}
+
+// ---- WEM: the time type at START and the quantity at STOP -------------------------------------------
+export const TIME_TYPES: [TimeType, string][] = [['work', 'Praca'], ['setup', 'Przezbrojenie'], ['rework', 'Poprawka']];
+export const typeLabel = (t: TimeType | null | undefined) => TIME_TYPES.find((x) => x[0] === t)?.[1] ?? '';
+/** A WEM task measured per piece: it has a code and a planned quantity (downtime and "other" have none). */
+export const measured = (t: ProdTask | null | undefined) => !!t && !!t.code && t.planned_qty != null;
+/** What the quantity field starts with: work — what is left of the plan; setup — 0; rework — empty (type it). */
+export function qtyDefault(type: TimeType | null | undefined, planned: number | null | undefined, done: number): string {
+  if (type === 'setup') return '0';
+  if (type === 'rework' || planned == null) return '';
+  return String(Math.max(0, Math.round((planned - done) * 100) / 100));
+}
+/** "8", "2,5" → a quantity; empty, negative or not a number → null. */
+export function parseQty(text: string): number | null {
+  const s = String(text ?? '').trim().replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const n = Number(s); return n <= 100000 ? n : null;
+}
+/** "zrobione 3 / 8 szt. skrzydła" */
+export const doneLine = (t: ProdTask, done: number) => `zrobione ${fmtQty(done)} / ${fmtQty(t.planned_qty ?? 0)}${t.unit ? ' ' + t.unit : ''}`;
+export const fmtQty = (n: number) => String(Math.round(n * 100) / 100).replace('.', ',');
 /** "1:05:09" for a running timer. */
 export function clock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));

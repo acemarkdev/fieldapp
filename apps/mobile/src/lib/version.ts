@@ -70,4 +70,8 @@
 //   Moje wpisy warns about entries still without a task. Such an entry counts in no job's labour until a task is set
 //   (by the worker within 7 days, or by the production manager in the office). Needs migration 0106 (which also gives
 //   the warehouse role back its time corrections). Over the air on 0.76.0.
-export const APP_VERSION = '0.76.4';
+// 0.76.5 — Production time, WEM: a task made from a WEM order asks the time type at START (Praca / Przezbrojenie /
+//   Poprawka) and the quantity done at STOP — also when another task is started over it (work: prefilled with what is
+//   left of the plan; setup: 0). Tasks show the workstation and “zrobione x / planned”, in the order of the work;
+//   Moje wpisy show type and quantity and can correct them. Needs migrations 0114 and 0115; without them nothing changes.
+export const APP_VERSION = '0.76.5';

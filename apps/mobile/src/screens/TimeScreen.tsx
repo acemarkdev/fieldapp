@@ -6,14 +6,16 @@
 // today's also deleted; older ones only by the
 // production manager in the office app. Start/stop/edit go through the database functions prod_start,
 // prod_stop and prod_edit_entry, which stamp and check the time on the server. Polish: production
-// works in Orpiszew.
+// works in Orpiszew. WEM tasks made from an order (code + planned quantity) ask the time type at START (Praca /
+// Przezbrojenie / Poprawka — prod_start_typed) and the quantity done at STOP (prod_stop_qty) — also when another
+// task is started over a running one; each shows "zrobione x / planned" from prod_wem_done.
 import { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, AppState, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useKeyboardPad } from '../lib/useKeyboardPad';
 import { C } from '../lib/theme';
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, taskName, isFree, editableToday, editableRecent, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, type ProdTask, type TimeEntry } from '../lib/timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, taskName, isFree, editableToday, editableRecent, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, sameDay, measured, qtyDefault, parseQty, typeLabel, doneLine, fmtQty, TIME_TYPES, type ProdTask, type TimeEntry, type TimeType } from '../lib/timeLogic';
 
 export default function TimeScreen() {
   const [tasks, setTasks] = useState<ProdTask[]>([]);
@@ -30,6 +32,9 @@ export default function TimeScreen() {
   // The worker's own task names (task id → name), on this phone only — the office and the export keep the real name.
   const [own, setOwn] = useState<Record<string, string>>({});
   const [renaming, setRenaming] = useState<ProdTask | null>(null);
+  // WEM: done so far per task (everyone's work entries), and the START / STOP sheet asking the type and the quantity
+  const [done, setDone] = useState<Map<string, number>>(new Map());
+  const [flow, setFlow] = useState<{ next: ProdTask | 'free' | null } | null>(null);
   useEffect(() => { AsyncStorage.getItem(NAMES_KEY).then((v) => { try { if (v) setOwn(JSON.parse(v) ?? {}); } catch { /* ignore a broken value */ } }).catch(() => {}); }, []);
   const saveName = (id: string, name: string) => setOwn((cur) => {
     const next = { ...cur }; if (name.trim()) next[id] = name.trim().slice(0, 80); else delete next[id];
@@ -38,12 +43,18 @@ export default function TimeScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [t, e] = await Promise.all([
-        supabase.from('prod_tasks').select('id,job_ref,operation,alias,export_name').eq('active', true).order('job_ref'),
-        supabase.from('time_entries').select('id,task_id,task_name,job_key,started_at,ended_at,note').order('started_at', { ascending: false }).limit(60),
-      ]);
+      // the WEM columns (migrations 0114 / 0115) may not be there yet — then the plain columns
+      const tq = (cols: string) => supabase.from('prod_tasks').select(cols).eq('active', true).order('job_ref');
+      const eq = (cols: string) => supabase.from('time_entries').select(cols).order('started_at', { ascending: false }).limit(60);
+      let [t, e]: any[] = await Promise.all([tq('id,job_ref,operation,alias,export_name,code,position,station,planned_qty,unit'), eq('id,task_id,task_name,job_key,started_at,ended_at,note,time_type,qty_done')]);
+      if (t.error) t = await tq('id,job_ref,operation,alias,export_name');
+      if (e.error) e = await eq('id,task_id,task_name,job_key,started_at,ended_at,note');
       if (t.error) throw t.error; if (e.error) throw e.error;
       setTasks((t.data as ProdTask[]) ?? []); setEntries((e.data as TimeEntry[]) ?? []);
+      if (((t.data as ProdTask[]) ?? []).some((x) => measured(x))) {
+        const d = await supabase.rpc('prod_wem_done');
+        if (!d.error) setDone(new Map(((d.data as any[]) ?? []).map((r) => [r.task_id, Number(r.done) || 0])));
+      }
     } catch { Alert.alert('Brak połączenia', 'Nie udało się wczytać zadań. Sprawdź internet i przeciągnij w dół, aby odświeżyć.'); }
     setLoading(false);
   }, []);
@@ -60,9 +71,21 @@ export default function TimeScreen() {
     catch (err: any) { ok = false; Alert.alert('Nie udało się', plError(err)); }
     setBusy(false); return ok;
   };
-  const start = (t: ProdTask) => act(() => supabase.rpc('prod_start', { p_task: t.id }));
-  const stop = () => act(() => supabase.rpc('prod_stop'));
-  const startFree = () => act(() => supabase.rpc('prod_start_free'));
+  // A WEM task asks its type at START; the running WEM task asks its quantity first (STOP, or another task started).
+  const qtyFirst = measured(runningTask);
+  const start = (t: ProdTask) => (measured(t) || qtyFirst ? setFlow({ next: t }) : act(() => supabase.rpc('prod_start', { p_task: t.id })));
+  const stop = () => (qtyFirst ? setFlow({ next: null }) : act(() => supabase.rpc('prod_stop')));
+  const startFree = () => (qtyFirst ? setFlow({ next: 'free' }) : act(() => supabase.rpc('prod_start_free')));
+  const runFlow = async (qty: number | null, type: TimeType | null) => {
+    const next = flow?.next ?? null;
+    const ok = await act(async () => {
+      if (qty !== null) { const r = await supabase.rpc('prod_stop_qty', { p_qty: qty }); if (r.error) return r; }
+      if (next === 'free') return supabase.rpc('prod_start_free');
+      if (next) return type ? supabase.rpc('prod_start_typed', { p_task: next.id, p_type: type }) : supabase.rpc('prod_start', { p_task: next.id });
+      return qty === null ? supabase.rpc('prod_stop') : { error: null };
+    });
+    if (ok) setFlow(null);
+  };
   const runningFree = !!running && isFree(running);
   const freeCount = entries.filter((e) => isFree(e) && editableRecent(e, new Date(now))).length;
   const recent = recentTasks(entries, tasks, 6);
@@ -70,6 +93,7 @@ export default function TimeScreen() {
   const today = hoursToday(entries, new Date(now));
   const byTask = todayByTask(entries, new Date(now));
   const nToday = countToday(entries, new Date(now));
+  const doneOf = (t: ProdTask) => done.get(t.id) ?? 0;
   const short = (ms: number) => { const m = Math.round(ms / 60000); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
   const dayLabel = (iso: string) => { const d = new Date(iso), n = new Date(now), y = new Date(n); y.setDate(n.getDate() - 1); return sameDay(d, n) ? 'Dziś' : sameDay(d, y) ? 'Wczoraj' : d.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }); };
   // Delete one of today's own entries (prod_delete_entry checks the same on the server and logs it).
@@ -83,12 +107,13 @@ export default function TimeScreen() {
 
   // a plain function, not a component: the clock re-renders every second and must not remount the rows
   const taskRow = (t: ProdTask, label: string, renamable = false) => {
-    const on = running?.task_id === t.id, done = byTask.get(t.id);
+    const on = running?.task_id === t.id, today = byTask.get(t.id);
     return (
       <View key={t.id} style={s.row}>
         <View style={{ flex: 1, marginRight: 10 }}>
           <Text style={[s.op, { marginRight: 0 }, on && { color: C.green, fontWeight: '800' }]} numberOfLines={2}>{label}</Text>
-          {!!done && <Text style={s.today}>dziś {short(done)}</Text>}
+          {measured(t) && <Text style={s.today} numberOfLines={1}>{[t.station, doneLine(t, doneOf(t))].filter(Boolean).join(' · ')}</Text>}
+          {!!today && <Text style={s.today}>dziś {short(today)}</Text>}
         </View>
         {renamable && <TouchableOpacity style={s.ren} onPress={() => setRenaming(t)} hitSlop={8} accessibilityLabel="Zmień nazwę"><Text style={s.renT}>✎</Text></TouchableOpacity>}
         {on ? <Text style={s.onT}>trwa</Text>
@@ -107,7 +132,7 @@ export default function TimeScreen() {
           <View style={{ flex: 1 }}>
             {running ? (<>
               <Text style={s.task} numberOfLines={2}>{runningTask ? taskName(runningTask, own) : running.task_name}</Text>
-              <Text style={s.muted}>od {fmtT(running.started_at)} · dzisiaj {today.toFixed(2).replace('.', ',')} h</Text>
+              <Text style={s.muted}>{running.time_type ? typeLabel(running.time_type) + ' · ' : ''}od {fmtT(running.started_at)} · dzisiaj {today.toFixed(2).replace('.', ',')} h</Text>
               {runningFree && <TouchableOpacity onPress={() => edit(running)} style={{ marginTop: 4 }}><Text style={s.pickT}>Wybierz zadanie ›</Text></TouchableOpacity>}
             </>) : (<>
               <Text style={s.small}>NIC NIE TRWA</Text>
@@ -168,6 +193,7 @@ export default function TimeScreen() {
                 {isFree(e) ? <Text style={[s.entryT, { color: '#b45309' }]} numberOfLines={1}>Bez zadania — wybierz zadanie</Text>
                   : <Text style={s.entryT} numberOfLines={1}>{t && own[t.id] ? own[t.id] : e.task_name}</Text>}
                 <Text style={s.muted}>{new Date(e.started_at).toLocaleDateString('pl-PL')} {fmtT(e.started_at)}–{e.ended_at ? fmtT(e.ended_at) : 'trwa'}{e.ended_at ? ` · ${clock(Date.parse(e.ended_at) - Date.parse(e.started_at))}` : ''}</Text>
+                {!!(e.time_type || e.qty_done != null) && <Text style={s.muted}>{[typeLabel(e.time_type), e.qty_done != null ? fmtQty(Number(e.qty_done)) + ' szt.' : (e.ended_at && e.time_type ? 'bez ilości' : '')].filter(Boolean).join(' · ')}</Text>}
                 {!!e.note && <Text style={s.note} numberOfLines={2}>„{e.note}”</Text>}
               </View>
               {/* Last 7 days: change (today also delete, inside the edit window) + start the same task again. Older: start again only. */}
@@ -183,16 +209,22 @@ export default function TimeScreen() {
         })}
         </>}
       </ScrollView>
-      {editing && <EditEntry entry={editing} pickFirst={pickFirst} tasks={tasks} recent={recent} own={own} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
+      {editing && <EditEntry entry={editing} wem={!!editing.time_type || measured(tasks.find((x) => x.id === editing.task_id))} pickFirst={pickFirst} tasks={tasks} recent={recent} own={own} label={(() => { const t = tasks.find((x) => x.id === editing.task_id); return t ? taskName(t, own) : editing.task_name ?? ''; })()}
         onClose={() => setEditing(null)}
         onDelete={editableToday(editing, new Date(now)) ? () => editing && removeEntry(editing) : null}
-        onSave={async (startD, endD, note, taskId) => {
+        onSave={async (startD, endD, note, taskId, wemType, wemQty) => {
           // p_task only when the task changes (the 5-parameter version needs migration 0105)
           const args: Record<string, any> = { p_entry: editing.id, p_start: startD.toISOString(), p_end: endD ? endD.toISOString() : null, p_note: note };
           if (taskId) args.p_task = taskId;
-          const ok = await act(() => supabase.rpc('prod_edit_entry', args));
+          const changedWem = wemType !== (editing.time_type ?? null) || (wemQty !== null && wemQty !== (editing.qty_done == null ? null : Number(editing.qty_done)));
+          const ok = await act(async () => {
+            const r = await supabase.rpc('prod_edit_entry', args); if (r.error || !changedWem) return r;
+            return supabase.rpc('prod_edit_wem', { p_entry: editing.id, p_type: wemType, p_qty: editing.ended_at ? wemQty : null });
+          });
           if (ok) setEditing(null);
         }} />}
+      {flow && <WemFlow next={flow.next} running={qtyFirst ? running : null} runningTask={qtyFirst ? runningTask ?? null : null} doneOf={doneOf} own={own} busy={busy}
+        onClose={() => setFlow(null)} onConfirm={runFlow} />}
       {renaming && <RenameTask task={renaming} current={own[renaming.id] ?? ''} onClose={() => setRenaming(null)} onSave={(name) => { saveName(renaming.id, name); setRenaming(null); }} />}
     </View>
   );
@@ -235,7 +267,11 @@ function TimeField({ title, d, text, setD, setText }: { title: string; d: Date; 
   );
 }
 
-function EditEntry({ entry, label, tasks, recent, own, pickFirst, onClose, onSave, onDelete }: { entry: TimeEntry; label: string; pickFirst: boolean; tasks: ProdTask[]; recent: ProdTask[]; own: Record<string, string>; onClose: () => void; onSave: (start: Date, end: Date | null, note: string, taskId: string | null) => void; onDelete: (() => void) | null }) {
+function EditEntry({ entry, wem, label, tasks, recent, own, pickFirst, onClose, onSave, onDelete }: { entry: TimeEntry; wem: boolean; label: string; pickFirst: boolean; tasks: ProdTask[]; recent: ProdTask[]; own: Record<string, string>; onClose: () => void; onSave: (start: Date, end: Date | null, note: string, taskId: string | null, type: TimeType | null, qty: number | null) => void; onDelete: (() => void) | null }) {
+  // WEM: the time type and (once stopped) the quantity done
+  const [wType, setWType] = useState<TimeType | null>(entry.time_type ?? null);
+  const [qtyText, setQtyText] = useState(entry.qty_done == null ? '' : String(entry.qty_done).replace('.', ','));
+  const qty = parseQty(qtyText);
   const running = !entry.ended_at;
   const kb = useKeyboardPad();
   // the task: the entry can be moved to another open task (the server checks it and the Job costs locks)
@@ -250,7 +286,7 @@ function EditEntry({ entry, label, tasks, recent, own, pickFirst, onClose, onSav
   const [startText, setStartText] = useState(hhmm(new Date(entry.started_at)));
   const [endText, setEndText] = useState(entry.ended_at ? hhmm(new Date(entry.ended_at)) : '');
   const [note, setNote] = useState(entry.note ?? '');
-  const problem = editProblem(start, end, running, new Date(), note);
+  const problem = editProblem(start, end, running, new Date(), note) ?? (wem && !running && (qty === null || !wType) ? 'Wybierz rodzaj czasu i wpisz ilość wykonaną.' : null);
   return (
     <Modal transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheetWrap}>
@@ -278,6 +314,14 @@ function EditEntry({ entry, label, tasks, recent, own, pickFirst, onClose, onSav
           <TimeField title="POCZĄTEK" d={start} text={startText} setD={setStart} setText={setStartText} />
           {running ? <Text style={[s.muted, { marginTop: 12 }]}>Zadanie trwa — koniec ustawia przycisk STOP.</Text>
             : <TimeField title="KONIEC" d={end ?? start} text={endText} setD={(x) => setEnd(x)} setText={setEndText} />}
+          {wem && <>
+            <Text style={[s.small, { marginTop: 14 }]}>RODZAJ CZASU</Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+              {TIME_TYPES.map(([k, l]) => <TouchableOpacity key={k} style={[s.chip, wType === k && s.chipOn]} onPress={() => setWType(k)}><Text style={[s.chipT, wType === k && s.chipTOn]}>{l}</Text></TouchableOpacity>)}
+            </View>
+            {!running && <><Text style={[s.small, { marginTop: 12 }]}>ILOŚĆ WYKONANA</Text>
+              <TextInput style={[s.timeIn, { marginTop: 6 }]} value={qtyText} onChangeText={setQtyText} keyboardType="decimal-pad" maxLength={8} /></>}
+          </>}
           <Text style={[s.small, { marginTop: 14 }]}>KOMENTARZ ({note.length}/100)</Text>
           <TextInput style={s.noteIn} value={note} onChangeText={setNote} maxLength={100} placeholder="np. przerwa na naprawę maszyny" placeholderTextColor={C.muted} multiline />
           </>)}
@@ -285,11 +329,53 @@ function EditEntry({ entry, label, tasks, recent, own, pickFirst, onClose, onSav
           {!picking && <>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
             <TouchableOpacity style={[s.btn, { backgroundColor: C.soft }]} onPress={onClose}><Text style={[s.btnT, { color: C.ink }]}>Anuluj</Text></TouchableOpacity>
-            <TouchableOpacity style={[s.btn, !!problem && { opacity: 0.4 }]} disabled={!!problem} onPress={() => onSave(start, running ? null : end, note.trim(), moved ? taskId : null)}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
+            <TouchableOpacity style={[s.btn, !!problem && { opacity: 0.4 }]} disabled={!!problem} onPress={() => onSave(start, running ? null : end, note.trim(), moved ? taskId : null, wem ? wType : (entry.time_type ?? null), wem && !running ? qty : null)}><Text style={s.btnT}>Zapisz</Text></TouchableOpacity>
           </View>
           {onDelete ? <TouchableOpacity style={s.delLink} onPress={onDelete}><Text style={s.delLinkT}>Usuń ten wpis</Text></TouchableOpacity>
             : <Text style={[s.muted, { textAlign: 'center', marginTop: 14 }]}>Wpis z poprzedniego dnia — usunąć go może kierownik produkcji.</Text>}
           </>}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+/** WEM START / STOP sheet. First the quantity done on the running WEM task (STOP, or another task started over
+ *  it): work — prefilled with what is left of the plan, setup — 0, rework — typed. Then, when the next task is a WEM
+ *  task, its time type: three big buttons. */
+function WemFlow({ next, running, runningTask, doneOf, own, busy, onClose, onConfirm }: { next: ProdTask | 'free' | null; running: TimeEntry | null; runningTask: ProdTask | null; doneOf: (t: ProdTask) => number; own: Record<string, string>; busy: boolean; onClose: () => void; onConfirm: (qty: number | null, type: TimeType | null) => void }) {
+  const kb = useKeyboardPad();
+  const askQty = !!running && !!runningTask, askType = !!next && next !== 'free' && measured(next);
+  const [qtyText, setQtyText] = useState(askQty ? qtyDefault(running!.time_type, runningTask!.planned_qty, doneOf(runningTask!)) : '');
+  const qty = parseQty(qtyText);
+  const go = (type: TimeType | null) => { if (askQty && qty === null) return; onConfirm(askQty ? qty : null, type); };
+  return (
+    <Modal transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheetWrap}>
+        <View style={[s.sheet, kb > 0 && { paddingBottom: 30 + kb }]}>
+          {askQty && <>
+            <Text style={s.small}>{next ? 'NAJPIERW ZAKOŃCZ' : 'STOP'}</Text>
+            <Text style={[s.task, { marginTop: 4 }]} numberOfLines={2}>{taskName(runningTask!, own)}</Text>
+            <Text style={s.muted}>{[typeLabel(running!.time_type), doneLine(runningTask!, doneOf(runningTask!))].filter(Boolean).join(' · ')}</Text>
+            <Text style={[s.small, { marginTop: 12 }]}>ILOŚĆ WYKONANA{runningTask!.unit ? ' (' + runningTask!.unit + ')' : ''}{running!.time_type === 'rework' ? ' — POPRAWIONE SZTUKI' : ''}</Text>
+            <TextInput style={[s.timeIn, { marginTop: 6 }]} value={qtyText} onChangeText={setQtyText} keyboardType="decimal-pad" maxLength={8} autoFocus={!askType} selectTextOnFocus />
+            {qty === null && <Text style={s.err}>Wpisz ilość (0, jeśli nic nie zrobiono).</Text>}
+          </>}
+          {askType ? <>
+            <Text style={[s.small, { marginTop: askQty ? 16 : 0 }]}>START — RODZAJ CZASU</Text>
+            <Text style={[s.task, { marginTop: 4 }]} numberOfLines={2}>{taskName(next as ProdTask, own)}</Text>
+            <Text style={s.muted}>{[(next as ProdTask).station, doneLine(next as ProdTask, doneOf(next as ProdTask))].filter(Boolean).join(' · ')}</Text>
+            {TIME_TYPES.map(([k, l]) => (
+              <TouchableOpacity key={k} style={[s.typeBtn, k === 'work' && { backgroundColor: C.purple }, (busy || (askQty && qty === null)) && { opacity: 0.4 }]} disabled={busy || (askQty && qty === null)} onPress={() => go(k)} activeOpacity={0.85}>
+                <Text style={[s.typeBtnT, k === 'work' && { color: C.white }]}>{l}</Text>
+              </TouchableOpacity>
+            ))}
+          </> : (
+            <TouchableOpacity style={[s.btn, { marginTop: 16, flex: 0 }, (busy || qty === null) && { opacity: 0.4 }]} disabled={busy || qty === null} onPress={() => go(null)}>
+              <Text style={s.btnT}>{next === 'free' ? 'Zapisz i start bez zadania' : next ? 'Zapisz i start' : 'Zapisz i STOP'}</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={s.delLink} onPress={onClose}><Text style={[s.delLinkT, { color: C.muted }]}>Anuluj</Text></TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -369,4 +455,10 @@ const s = StyleSheet.create({
   err: { color: '#dc2626', marginTop: 10 },
   btn: { flex: 1, backgroundColor: C.purple, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
   btnT: { color: C.white, fontSize: 16, fontWeight: '800' },
+  typeBtn: { marginTop: 10, borderRadius: 12, paddingVertical: 16, alignItems: 'center', backgroundColor: C.soft },
+  typeBtnT: { fontSize: 18, fontWeight: '800', color: C.purple },
+  chip: { flex: 1, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingVertical: 9, alignItems: 'center' },
+  chipOn: { backgroundColor: C.purple, borderColor: C.purple },
+  chipT: { fontSize: 14, fontWeight: '700', color: C.ink },
+  chipTOn: { color: C.white },
 });

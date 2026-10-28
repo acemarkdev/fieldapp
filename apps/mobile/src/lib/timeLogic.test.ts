@@ -1,5 +1,5 @@
 // Run: npx tsx apps/mobile/src/lib/timeLogic.test.ts
-import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, editableRecent, taskName, isFree, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, type ProdTask } from './timeLogic';
+import { groupTasks, clock, hoursToday, recentTasks, taskLabel, editableToday, editableRecent, taskName, isFree, shiftWithinDay, atTime, hhmm, editProblem, todayByTask, countToday, measured, qtyDefault, parseQty, typeLabel, doneLine, taskOrder, type ProdTask } from './timeLogic';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -38,6 +38,15 @@ ok('editable for 7 days: today and the 6 days before; the 7th day back is locked
 ok('own task name on the phone wins; empty or blank falls back', taskName({ id: 't', job_ref: 'Z.394', operation: 'szklenie' }, { t: 'Szyby kuchnia' }) === 'Szyby kuchnia' && taskName({ id: 't', job_ref: 'Z.394', operation: 'szklenie' }, { t: '  ' }) === 'Z.394 · szklenie' && taskName({ id: 'u', job_ref: 'Z.394', operation: 'szklenie' }, {}) === 'Z.394 · szklenie');
 
 ok('free entry: no task and no job; a removed task keeps its job', isFree({ task_id: null, job_key: null }) && !isFree({ task_id: null, job_key: 'Z.437' }) && !isFree({ task_id: 't', job_key: 'Z.437' }));
+
+// WEM: type at START, quantity at STOP, the order of the work
+const W = (id: string, code: string, pos: string, planned: number | null): ProdTask => ({ ...T(id, 'WEM-2026-001', 'Poz. ' + pos + ' · ' + code), code, position: pos, planned_qty: planned, unit: 'szt. skrzydła', station: 'Czopiarka' });
+const w = [W('a', 'OGL-INN-01', '', null), W('b', 'SAS-KPL-SK01', '1', 4), W('c', 'SAS-SKR-ST05', '1', 8), W('d', 'SAS-BOX-SB01', '1', 4), W('e', 'DOD-HRN-01', '1', 8), W('f', 'CAS-RAM-ST03', '2', 3), W('g', 'SAS-SKR-SK08', '1', 8)];
+ok('WEM order: position, box, joinery, assembly, add-ons, downtime last', w.slice().sort(taskOrder).map((t) => t.id).join('') === 'dcbgefa', w.slice().sort(taskOrder).map((t) => t.code));
+ok('measured: a code and a planned quantity', measured(w[1]) && !measured(w[0]) && !measured(tasks[0]) && !measured(null));
+ok('quantity starts: work — what is left, setup 0, rework empty', qtyDefault('work', 8, 3) === '5' && qtyDefault('work', 8, 10) === '0' && qtyDefault('setup', 8, 0) === '0' && qtyDefault('rework', 8, 0) === '' && qtyDefault(null, 4, 1) === '3');
+ok('quantity typed', parseQty('8') === 8 && parseQty(' 2,5 ') === 2.5 && parseQty('') === null && parseQty('-1') === null && parseQty('abc') === null && parseQty('0') === 0);
+ok('labels', typeLabel('setup') === 'Przezbrojenie' && typeLabel(null) === '' && doneLine(w[2], 3) === 'zrobione 3 / 8 szt. skrzydła');
 
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('timeLogic: all passed');

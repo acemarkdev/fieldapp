@@ -5,6 +5,7 @@
 // Job costs. Pure rules first, storage below.
 import { db } from './supabase';
 import { referenceKey, getLabourRate } from './finJobs';
+import { colReady } from './schemaReady';
 
 const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -217,13 +218,19 @@ function entryFields(b: any): Result<{ fields: Record<string, any> }> {
   if (b?.ended_at && !Number.isFinite(e)) return fail(400, 'The end looks wrong.');
   if (Number.isFinite(e) && e < s) return fail(400, 'The end is before the start.');
   if (Number.isFinite(e) && e - s > 16 * 3600000) return fail(400, 'An entry longer than 16 hours looks wrong.');
-  return { ok: true, fields: { started_at: new Date(s).toISOString(), ended_at: Number.isFinite(e) ? new Date(e).toISOString() : null, note: clean(b?.note).slice(0, 300) || null } };
+  const fields: Record<string, any> = { started_at: new Date(s).toISOString(), ended_at: Number.isFinite(e) ? new Date(e).toISOString() : null, note: clean(b?.note).slice(0, 300) || null };
+  // WEM: the time type and the quantity done (migration 0115) — only when the form sends them
+  if (b && 'time_type' in b) { const t = clean(b.time_type); if (t && !TIME_TYPES.includes(t as any)) return fail(400, 'Pick the time type.'); fields.time_type = t || null; }
+  if (b && 'qty_done' in b) { const q = clean(b.qty_done).replace(',', '.'); const n = q ? Number(q) : null; if (n !== null && (!Number.isFinite(n) || n < 0)) return fail(400, 'The quantity done looks wrong.'); fields.qty_done = n; }
+  return { ok: true, fields };
 }
+export const TIME_TYPES = ['work', 'setup', 'rework'] as const;
 /** The manager adds an entry for a worker (forgot to start) or corrects one. */
 export async function saveEntry(tenantId: string, actor: Actor, id: string | null, b: any, company: ProdCompany = 'acemark'): Promise<Result<{ id: string }>> {
   const by = actor.name, co = await companyReady();
   const f = entryFields(b); if (!f.ok) return f;
   const fields: Record<string, any> = { ...f.fields, source: 'manual', edited_by: by };
+  if (!(await colReady('time_entries', 'time_type'))) { delete fields.time_type; delete fields.qty_done; }
   if (b?.task_id) {
     const t = await db().from('prod_tasks').select('id,export_name,job_key' + (co ? ',company' : '')).eq('tenant_id', tenantId).eq('id', String(b.task_id)).maybeSingle();
     if (t.error) throw t.error; if (!t.data || (co && prodCompanyOf((t.data as any).company) !== company)) return fail(400, 'Choose the task.');

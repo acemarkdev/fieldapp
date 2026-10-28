@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.67.0';
+export const APP_VERSION = '1.68.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.68.0', date: '2026-10-28', changes: [
+    'Production time ▸ WEM, step 2 of WEM time measurement (phone 0.76.5). A WEM task made from an order asks the time type at START — Praca, Przezbrojenie, Poprawka — and the quantity done at STOP, also when the worker starts another task over it (work: prefilled with what is left of the plan; setup: 0; rework: typed, never counted as new pieces). On the phone each WEM task shows its workstation and “done / planned” (everyone’s work entries), in the order of the work; Moje wpisy show type and quantity and can correct them (7 days).',
+    'Office ▸ Production time (WEM): time entries show the type and the quantity done, and the manager can correct both in the entry window. Needs migration 0115.',
+  ] },
   { version: '1.67.0', date: '2026-10-28', changes: [
     'Production time ▸ WEM, step 1 of WEM time measurement. Task catalogue: the 89 fixed task codes from the WEM file (PRODUKT-ELEMENT-CZYNNOŚĆ, e.g. SAS-SKR-ST05 = Sash, skrzydło, czopowanie) with department, product, element, activity, workstation and unit, loaded on first use. Names, workstations and units can be corrected and a code switched off; the code itself never changes. A newer catalogue file (CSV) can be loaded.',
     'WEM orders: type the order (number, client, positions — product, quantity, sashes per unit, material, horns / vents / restrictors per unit, size) and saving creates its tasks with the rules of the WEM workbook: kantówka skips cutting along and planing, sash tasks × sashes, add-ons per unit, downtime and other once. Each task carries its code, position, workstation and planned quantity. Saving again updates the quantities, adds new tasks and closes the ones no longer in the order; close or reopen all tasks of an order at once. Needs migration 0114.',
