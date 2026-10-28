@@ -185,6 +185,19 @@ export async function setTasksActive(tenantId: string, ids: string[], active: bo
   }
   return n;
 }
+/** Delete tasks. Time logged on them stays: the entries keep the task name and the job (task_id becomes null). */
+export async function deleteTasks(tenantId: string, ids: string[], company: ProdCompany = 'acemark'): Promise<number> {
+  const uniq = [...new Set(ids.map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+  const co = await companyReady();
+  let n = 0;
+  for (let i = 0; i < uniq.length; i += 200) {
+    let q = db().from('prod_tasks').delete().eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 200));
+    if (co) q = q.eq('company', company);
+    const { data, error } = await q.select('id');
+    if (error) throw error; n += (data ?? []).length;
+  }
+  return n;
+}
 
 // ---- the admin's log of time changes (start / end only) ---------------------------------------------
 export interface Actor { id: string; name: string; role: string }
@@ -256,13 +269,22 @@ export async function saveEntry(tenantId: string, actor: Actor, id: string | nul
   return { ok: true, id };
 }
 export async function deleteEntry(tenantId: string, id: string, actor: Actor, company: ProdCompany = 'acemark'): Promise<boolean> {
-  let q = db().from('time_entries').delete().eq('tenant_id', tenantId).eq('id', id);
-  if (await companyReady()) q = q.eq('company', company);
-  const { data, error } = await q.select('*');
-  if (error) throw error;
-  if (!(data ?? []).length) return false;
-  await logEdit(tenantId, 'delete', data![0], null, actor);
-  return true;
+  return (await deleteEntries(tenantId, [id], actor, company)) > 0;
+}
+/** Delete many entries at once; each one goes to the admin's log of time changes. */
+export async function deleteEntries(tenantId: string, ids: string[], actor: Actor, company: ProdCompany = 'acemark'): Promise<number> {
+  const uniq = [...new Set(ids.map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+  const co = await companyReady();
+  let n = 0;
+  for (let i = 0; i < uniq.length; i += 200) {
+    let q = db().from('time_entries').delete().eq('tenant_id', tenantId).in('id', uniq.slice(i, i + 200));
+    if (co) q = q.eq('company', company);
+    const { data, error } = await q.select('*');
+    if (error) throw error;
+    for (const e of data ?? []) await logEdit(tenantId, 'delete', e, null, actor);
+    n += (data ?? []).length;
+  }
+  return n;
 }
 export async function listRates(tenantId: string): Promise<Map<string, number>> { return new Map((await all('worker_rates', 'user_id,rate', tenantId, 'user_id')).map((r) => [r.user_id, Number(r.rate)])); }
 /** All rate rows (rate_history); before migration 0086 the current worker rates, valid since always. */

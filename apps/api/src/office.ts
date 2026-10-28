@@ -33,7 +33,7 @@ import { orderPapers, latestQuotes, addDoc, deleteDoc, addQuote, updateQuote, de
 import { listCustomers as listOrderCustomers, createCustomer, updateCustomer, customersReady, COUNTRIES, countryCode, splitOrderRef, buildOrderRef, peekOrderNumber, takeOrderNumber, setNextOrderNumber, codeTaken } from './finCustomers';
 import { statutoryData, writedownField, setWritedown } from './perfStatutory';
 import { attachJobs, jobOrders, syncOrdersFromJob, autoLinkZ, syncAfterLinks, jobKeyOf, mondayItemUrl as boardItemUrl, PRODUCTION_BOARD_ID, costing, jobIdByKey } from './orderJobLink';
-import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as addProdTask, setTaskActive, setTasksActive, listEditLog, listEntries as listTimeEntries, saveEntry as saveTimeEntry, deleteEntry as deleteTimeEntry, listRates as listWorkerRates, setRate as setWorkerRate, hoursBetween, rateRows, rateBook, rateFor, removeRateRow, recordDefaultRate, todayPL, PROD_COMPANIES, prodCompanyOf, prodCompanyMap, userProdCompany, setUserProdCompany, type ProdCompany } from './prodTime';
+import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as addProdTask, setTaskActive, setTasksActive, deleteTasks as deleteProdTasks, listEditLog, listEntries as listTimeEntries, saveEntry as saveTimeEntry, deleteEntry as deleteTimeEntry, deleteEntries as deleteTimeEntries, listRates as listWorkerRates, setRate as setWorkerRate, hoursBetween, rateRows, rateBook, rateFor, removeRateRow, recordDefaultRate, todayPL, PROD_COMPANIES, prodCompanyOf, prodCompanyMap, userProdCompany, setUserProdCompany, type ProdCompany } from './prodTime';
 import { agentTenant, receiveSnapshot, listDocs, docsToCheck, lastSync, hasAgentKey, newAgentKey, setNotJob } from './subiekt';
 import * as scaf from './scaffolding';
 import * as scafQ from './scafQuotes';
@@ -880,6 +880,20 @@ const server = createServer(async (req, res) => {
           const n = await setTasksActive(ctx.tenant_id, ids, b.active !== false, company);
           audit(ctx, b.active !== false ? 'prod.tasks.reopen' : 'prod.tasks.close', null, null, `${b.active !== false ? 'Reopened' : 'Closed'} ${n} production task(s)`);
           send(res, 200, { ok: true, changed: n }); return;
+        }
+        if (a === 'tasks' && id === 'delete' && req.method === 'POST') {
+          const b = await readJson(req); const ids: string[] = Array.isArray(b.ids) ? b.ids : [];
+          if (!ids.length) { send(res, 400, { error: 'Nothing selected.' }); return; }
+          const n = await deleteProdTasks(ctx.tenant_id, ids, company);
+          audit(ctx, 'prod.tasks.delete', null, null, `Deleted ${n} production task(s) for ${company === 'wem' ? 'WEM' : 'Acemark'}`);
+          send(res, 200, { ok: true, deleted: n }); return;
+        }
+        if (a === 'entries' && id === 'delete' && req.method === 'POST') {
+          const b = await readJson(req); const ids: string[] = Array.isArray(b.ids) ? b.ids : [];
+          if (!ids.length) { send(res, 400, { error: 'Nothing selected.' }); return; }
+          const n = await deleteTimeEntries(ctx.tenant_id, ids, { id: ctx.id, name: ctx.name, role: ctx.role }, company);
+          audit(ctx, 'prod.entry.delete', null, null, `Deleted ${n} production time entr${n === 1 ? 'y' : 'ies'}`);
+          send(res, 200, { ok: true, deleted: n }); return;
         }
         if (a === 'tasks' && id === 'import' && req.method === 'POST') {
           const b = await readJson(req); const rows = Array.isArray(b.rows) ? b.rows : [];
@@ -7341,7 +7355,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   }
   // ---- Production ▸ Production time: tasks per job, time entries, worker rates, export ----
   var PV_TT={work:'Praca',setup:'Przezbrojenie',rework:'Poprawka'};
-  var PV={tab:'entries',d:null,from:null,to:null,job:'',worker:'',sel:{},tq:'',hideClosed:false,log:[]};
+  var PV={tab:'entries',d:null,from:null,to:null,job:'',worker:'',sel:{},esel:{},tq:'',hideClosed:false,log:[]};
   function pvYmd(t){ return t.getFullYear()+'-'+(t.getMonth()<9?'0':'')+(t.getMonth()+1)+'-'+(t.getDate()<10?'0':'')+t.getDate(); }
   // Live view: while Production time is open, reload quietly every 20 s — not while a dialog is open
   // or the user is typing, and not in a hidden browser tab.
@@ -7367,10 +7381,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var allOn=list.length&&list.every(function(t){return PV.sel[t.id];});
     var h='<div style="display:flex;gap:10px;align-items:center;margin:0 0 10px">'+(list.length?'<button class="'+(allOn?'pobtn':'newbtn')+'" id="pv_selall" style="padding:8px 16px">'+(allOn?'\u2610 '+esc(TR('Clear selection')):'\u2611 '+esc(T('Select all shown ({0})',list.length)))+'</button>':'')+'<span class="sub" style="margin:0">'+esc(T('{0} tasks shown · {1} selected',list.length,nSel))+'</span></div>';
     h+=Object.keys(by).sort().reverse().map(function(j){ var hs=by[j].reduce(function(s,t){return s+t.hours;},0); return '<div class="card2" style="padding:12px 16px;margin-bottom:10px"><div style="display:flex;justify-content:space-between"><b>'+esc(j)+'</b><span class="sub" style="margin:0">'+esc(T('{0} tasks · {1} h logged',by[j].length,pvH(hs)))+'</span></div><table class="fjl" style="margin-top:6px"><tbody>'
-      +by[j].map(function(t){ return '<tr'+(t.active?'':' style="opacity:.5"')+'><td style="width:28px"><input type="checkbox" data-pvs="'+av(t.id)+'"'+(PV.sel[t.id]?' checked':'')+'></td><td style="width:80px">'+esc(t.op_id||'')+'</td><td>'+esc(t.operation)+(t.active?'':' <span class="pill" style="background:#eee;color:#6b6880">'+esc(TR('closed'))+'</span>')+'<div class="sub" style="margin:0">'+esc(t.export_name)+' · '+esc(T('loaded {0}',pvD(t.created_at)))+'</div></td><td class="r" style="width:90px">'+pvH(t.hours)+' h</td><td style="width:130px;text-align:right"><a class="codelink" data-pva="'+av(t.id)+'" data-on="'+(t.active?'0':'1')+'">'+esc(TR(t.active?'close':'reopen'))+'</a></td></tr>'; }).join('')+'</tbody></table></div>'; }).join('')
+      +by[j].map(function(t){ return '<tr'+(t.active?'':' style="opacity:.5"')+'><td style="width:28px"><input type="checkbox" data-pvs="'+av(t.id)+'"'+(PV.sel[t.id]?' checked':'')+'></td><td style="width:80px">'+esc(t.op_id||'')+'</td><td>'+esc(t.operation)+(t.active?'':' <span class="pill" style="background:#eee;color:#6b6880">'+esc(TR('closed'))+'</span>')+'<div class="sub" style="margin:0">'+esc(t.export_name)+' · '+esc(T('loaded {0}',pvD(t.created_at)))+'</div></td><td class="r" style="width:90px">'+pvH(t.hours)+' h</td><td style="width:170px;text-align:right;white-space:nowrap"><a class="codelink" data-pva="'+av(t.id)+'" data-on="'+(t.active?'0':'1')+'">'+esc(TR(t.active?'close':'reopen'))+'</a> · <a class="codelink" style="color:#b42318" data-pvtd="'+av(t.id)+'">'+esc(TR('delete'))+'</a></td></tr>'; }).join('')+'</tbody></table></div>'; }).join('')
       ||'<div class="sub">'+esc(TR(d.tasks.length?'No task matches.':'No tasks yet — import the task file.'))+'</div>';
     var box=document.getElementById('pv_tl'); if(!box)return; box.innerHTML=h;
-    ['pv_bclose','pv_bopen'].forEach(function(id){ var b=document.getElementById(id); if(b)b.disabled=!nSel; });
+    ['pv_bclose','pv_bopen','pv_bdel'].forEach(function(id){ var b=document.getElementById(id); if(b)b.disabled=!nSel; });
+    box.querySelectorAll('[data-pvtd]').forEach(function(a){ a.onclick=function(){ pvDelTasks([a.getAttribute('data-pvtd')]); }; });
     box.querySelectorAll('[data-pvs]').forEach(function(c){ c.onclick=function(){ var id=c.getAttribute('data-pvs'); if(c.checked)PV.sel[id]=1; else delete PV.sel[id]; pvTaskList(); }; });
     var sa=document.getElementById('pv_selall'); if(sa)sa.onclick=function(){ var all=list.every(function(t){return PV.sel[t.id];}); list.forEach(function(t){ if(all)delete PV.sel[t.id]; else PV.sel[t.id]=1; }); pvTaskList(); };
     box.querySelectorAll('[data-pva]').forEach(function(a){ a.onclick=function(){ pvSetActive([a.getAttribute('data-pva')],a.getAttribute('data-on')==='1'); }; });
@@ -7379,6 +7394,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{ var r=await api('/api/production/tasks/active',{method:'POST',body:JSON.stringify({ids:ids,active:active})}); var x=await r.json(); if(!r.ok)throw new Error(x.error); tShow(T(active?'Reopened {0} task(s)':'Closed {0} task(s)',x.changed)); }
     catch(e){ tShow(e.message||'Could not save'); }
     ids.forEach(function(id){ delete PV.sel[id]; }); loadProd();
+  }
+  // Delete tasks; time already logged on them stays on the job (the entries keep the task name).
+  async function pvDelTasks(ids){
+    var ts=PV.d.tasks.filter(function(t){ return ids.indexOf(t.id)>=0; }); if(!ts.length)return;
+    var hrs=ts.reduce(function(s,t){ return s+(t.hours||0); },0), wem=ts.some(function(t){ return t.order_id; });
+    var q=T('Delete {0} task(s)? Workers will no longer see them.',ts.length)+(hrs?' '+T('The {0} h already logged on them stay on the job.',pvH(hrs)):'')+(wem?' '+TR('Saving their WEM order again creates them again.'):'');
+    if(!fConfirm(q))return;
+    try{ var r=await api('/api/production/tasks/delete',{method:'POST',body:JSON.stringify({ids:ids})}); var x=await r.json(); if(!r.ok)throw new Error(x.error); tShow(T('Deleted {0} task(s)',x.deleted)); }
+    catch(e){ tShow(e.message||'Could not save'); }
+    ids.forEach(function(id){ delete PV.sel[id]; }); loadProd();
+  }
+  async function pvDelEntries(ids){
+    if(!ids.length)return;
+    var run=PV.d.entries.filter(function(e){ return ids.indexOf(e.id)>=0&&!e.ended_at; }).length;
+    if(!fConfirm(T('Delete {0} time entr(ies)?',ids.length)+(run?' '+T('{0} of them still running — the worker’s timer stops.',run):'')))return;
+    try{ var r=await api('/api/production/entries/delete',{method:'POST',body:JSON.stringify({ids:ids})}); var x=await r.json(); if(!r.ok)throw new Error(x.error); tShow(T('Deleted {0} time entr(ies)',x.deleted)); }
+    catch(e){ tShow(e.message||'Could not save'); }
+    ids.forEach(function(id){ delete PV.esel[id]; }); loadProd();
   }
   async function pvLog(){
     var box=document.getElementById('pv_log'); if(!box)return;
@@ -7418,7 +7451,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var cur0=document.getElementById('pv_co');
     if(cos.length>1&&cur0){ if(cur0.value!==cur)cur0.value=cur; }   // the live reload every 20 s keeps an open switch as it is
     else if(cos.length>1){ t.innerHTML=esc(TR('Production time'))+' <select id="pv_co" class="tinput" style="font-size:16px;font-weight:800;margin-left:8px;vertical-align:middle">'+cos.map(function(c){ return '<option value="'+c.key+'"'+(c.key===cur?' selected':'')+'>'+esc(c.name)+'</option>'; }).join('')+'</select>';
-      document.getElementById('pv_co').onchange=function(){ PV.company=this.value; PV.sel={}; PVW.orders=null; PVW.catalog=null; PV.job=''; PV.worker=''; loadProd(); }; }
+      document.getElementById('pv_co').onchange=function(){ PV.company=this.value; PV.sel={}; PV.esel={}; PVW.orders=null; PVW.catalog=null; PV.job=''; PV.worker=''; loadProd(); }; }
     else t.textContent=TR('Production time')+' \u2014 '+name;
     if(cur==='wem')document.getElementById('pv_sub').textContent=TR('WEM: tasks per job from the WEM task file; workers of WEM start and stop them in the FitAWindow app. WEM hours are kept apart — they are not added to Acemark Job costs.');
   }
@@ -7529,16 +7562,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<span style="display:flex;gap:4px">'+[['today','Today'],['week','This week'],['month','This month'],['last','Last month']].map(function(q){ return '<button class="pobtn" data-pvq="'+q[0]+'" style="padding:6px 10px;font-size:12px">'+esc(TR(q[1]))+'</button>'; }).join('')+'</span>'
         +'<select id="pv_j" class="tinput"><option value="">'+esc(TR('All jobs'))+'</option>'+Object.keys(jobs).sort().map(function(j){ return '<option'+(j===PV.job?' selected':'')+'>'+esc(j)+'</option>'; }).join('')+'</select>'
         +'<select id="pv_w" class="tinput"><option value="">'+esc(TR('All workers'))+'</option>'+d.workers.map(function(w){ return '<option value="'+av(w.id)+'"'+(w.id===PV.worker?' selected':'')+'>'+esc(w.name)+'</option>'; }).join('')+'</select>'
-        +'<span style="margin-left:auto;display:flex;gap:8px"><button class="pobtn" id="pv_add">'+esc(TR('+ Add entry'))+'</button><button class="pobtn" id="pv_csv">'+esc(TR('Export (Excel)'))+'</button></span></div>';
+        +'<span style="margin-left:auto;display:flex;gap:8px"><button class="pobtn" id="pv_edel" style="color:#b42318" disabled>'+esc(TR('Delete selected'))+'</button><button class="pobtn" id="pv_add">'+esc(TR('+ Add entry'))+'</button><button class="pobtn" id="pv_csv">'+esc(TR('Export (Excel)'))+'</button></span></div>';
       h+='<div class="sub" style="margin:0 0 8px"><b>'+esc(money?T('{0} entries · {1} h · {2} zł',list.length,pvH(tot),fcMoney(amt)):T('{0} entries · {1} h',list.length,pvH(tot)))+'</b></div>';
-      h+='<div class="card2" style="overflow:auto"><table class="fjl"><thead><tr><th>'+esc(TR('DATE'))+'</th><th>'+esc(TR('WORKER'))+'</th><th>'+esc(TR('TASK'))+'</th><th>'+esc(TR('START'))+'</th><th>'+esc(TR('END'))+'</th><th style="text-align:right">'+esc(TR('HOURS'))+'</th>'+(money?'<th style="text-align:right">'+esc(TR('AMOUNT'))+'</th>':'')+'<th></th></tr></thead><tbody>'
-        +(list.map(function(e){ var hh=pvHours(e), rt=pvRateE(e), run=!e.ended_at; return '<tr'+(run?' style="background:#f0fdf4"':'')+'><td style="white-space:nowrap">'+esc(pvD(e.started_at))+'</td><td>'+esc(e.user_name||'')+'</td><td>'+esc(e.task_name||'')+(e.time_type||e.qty_done!=null?'<div class="sub" style="margin:0;font-weight:700">'+esc([PV_TT[e.time_type]||'',e.qty_done!=null?T('{0} done',pvNum(Number(e.qty_done))):(e.ended_at&&e.time_type?TR('no quantity'):'')].filter(Boolean).join(' · '))+'</div>':'')+(e.note?'<div class="sub" style="margin:0">'+esc(e.note)+'</div>':'')+(e.source==='manual'?'<div class="sub" style="margin:0">'+esc(T('corrected by {0}',e.edited_by||''))+'</div>':'')+'</td><td>'+esc(pvT(e.started_at))+'</td><td>'+(run?'<b style="color:#15803d">'+esc(TR('running'))+'</b>':esc(pvT(e.ended_at)))+'</td><td class="r">'+(run?'':pvH(hh))+'</td>'+(money?'<td class="r">'+(run?'':fcMoney(hh*pvPriced(e,rt))+(rt==null?' *':''))+'</td>':'')+'<td style="white-space:nowrap"><a class="codelink" data-pve="'+av(e.id)+'">'+esc(TR('edit'))+'</a> · <a class="codelink" style="color:#b42318" data-pvd="'+av(e.id)+'">'+esc(TR('delete'))+'</a></td></tr>'; }).join('')||'<tr><td colspan="8" class="sub" style="padding:14px">'+esc(TR('No time logged in this period.'))+'</td></tr>')+'</tbody></table></div>'
+      h+='<div class="card2" style="overflow:auto"><table class="fjl"><thead><tr><th style="width:28px">'+(list.length?'<input type="checkbox" id="pv_eall" title="'+av(TR('Select all shown'))+'">':'')+'</th><th>'+esc(TR('DATE'))+'</th><th>'+esc(TR('WORKER'))+'</th><th>'+esc(TR('TASK'))+'</th><th>'+esc(TR('START'))+'</th><th>'+esc(TR('END'))+'</th><th style="text-align:right">'+esc(TR('HOURS'))+'</th>'+(money?'<th style="text-align:right">'+esc(TR('AMOUNT'))+'</th>':'')+'<th></th></tr></thead><tbody>'
+        +(list.map(function(e){ var hh=pvHours(e), rt=pvRateE(e), run=!e.ended_at; return '<tr'+(run?' style="background:#f0fdf4"':'')+'><td><input type="checkbox" data-pves="'+av(e.id)+'"'+(PV.esel[e.id]?' checked':'')+'></td><td style="white-space:nowrap">'+esc(pvD(e.started_at))+'</td><td>'+esc(e.user_name||'')+'</td><td>'+esc(e.task_name||'')+(e.time_type||e.qty_done!=null?'<div class="sub" style="margin:0;font-weight:700">'+esc([PV_TT[e.time_type]||'',e.qty_done!=null?T('{0} done',pvNum(Number(e.qty_done))):(e.ended_at&&e.time_type?TR('no quantity'):'')].filter(Boolean).join(' · '))+'</div>':'')+(e.note?'<div class="sub" style="margin:0">'+esc(e.note)+'</div>':'')+(e.source==='manual'?'<div class="sub" style="margin:0">'+esc(T('corrected by {0}',e.edited_by||''))+'</div>':'')+'</td><td>'+esc(pvT(e.started_at))+'</td><td>'+(run?'<b style="color:#15803d">'+esc(TR('running'))+'</b>':esc(pvT(e.ended_at)))+'</td><td class="r">'+(run?'':pvH(hh))+'</td>'+(money?'<td class="r">'+(run?'':fcMoney(hh*pvPriced(e,rt))+(rt==null?' *':''))+'</td>':'')+'<td style="white-space:nowrap"><a class="codelink" data-pve="'+av(e.id)+'">'+esc(TR('edit'))+'</a> · <a class="codelink" style="color:#b42318" data-pvd="'+av(e.id)+'">'+esc(TR('delete'))+'</a></td></tr>'; }).join('')||'<tr><td colspan="9" class="sub" style="padding:14px">'+esc(TR('No time logged in this period.'))+'</td></tr>')+'</tbody></table></div>'
         +'<div class="sub" style="margin:8px 0 30px">'+(money?esc(T('* no rate set for this worker — priced at the default labour rate ({0} zł/h).',fcMoney(d.defaultRate))):'')+'</div>';
     }
     if(PV.tab==='tasks'){
       h+='<div class="chips" style="gap:8px;margin:0 0 10px;flex-wrap:wrap;align-items:center"><input id="pv_tq" class="tinput" style="min-width:260px;flex:1" placeholder="'+av(TR('Search: job, operation, ID, task name'))+'" value="'+av(PV.tq)+'">'
         +'<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="pv_hc"'+(PV.hideClosed?' checked':'')+'> '+esc(TR('Hide closed'))+'</label>'
-        +'<button class="pobtn" id="pv_bclose" disabled>'+esc(TR('Close selected'))+'</button><button class="pobtn" id="pv_bopen" disabled>'+esc(TR('Reopen selected'))+'</button>'
+        +'<button class="pobtn" id="pv_bclose" disabled>'+esc(TR('Close selected'))+'</button><button class="pobtn" id="pv_bopen" disabled>'+esc(TR('Reopen selected'))+'</button><button class="pobtn" id="pv_bdel" style="color:#b42318" disabled>'+esc(TR('Delete selected'))+'</button>'
         +'<span style="margin-left:auto;display:flex;gap:8px"><button class="pobtn" id="pv_imp">'+esc(TR('Import from Excel'))+'</button><button class="pobtn" id="pv_newt">'+esc(TR('+ Task'))+'</button></span></div><div id="pv_tl"></div>';
     }
     if(PV.tab==='worders'||PV.tab==='wcat'){ h+='<div id="pv_wem"><div class="empty">'+esc(TR('Loading…'))+'</div></div>'; }
@@ -7572,6 +7605,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(g('pv_hc'))g('pv_hc').onchange=function(){ PV.hideClosed=this.checked; pvTaskList(); };
     if(g('pv_bclose'))g('pv_bclose').onclick=function(){ var ids=Object.keys(PV.sel); if(ids.length&&fConfirm(T('Close {0} selected task(s)? Workers will no longer see them.',ids.length)))pvSetActive(ids,false); };
     if(g('pv_bopen'))g('pv_bopen').onclick=function(){ var ids=Object.keys(PV.sel); if(ids.length)pvSetActive(ids,true); };
+    if(g('pv_bdel'))g('pv_bdel').onclick=function(){ var ids=Object.keys(PV.sel); if(ids.length)pvDelTasks(ids); };
+    // Entries: tick one or more (or all shown) and delete them together
+    var pvEShown=function(){ return Array.prototype.map.call(box.querySelectorAll('[data-pves]'),function(c){ return c.getAttribute('data-pves'); }); };
+    var pvESync=function(){ var ids=pvEShown().filter(function(id){ return PV.esel[id]; }), b=g('pv_edel'), all=g('pv_eall');
+      if(b){ b.disabled=!ids.length; b.textContent=ids.length?T('Delete selected ({0})',ids.length):TR('Delete selected'); }
+      if(all){ all.checked=ids.length>0&&ids.length===pvEShown().length; all.indeterminate=ids.length>0&&ids.length<pvEShown().length; } };
+    box.querySelectorAll('[data-pves]').forEach(function(c){ c.onclick=function(){ var id=c.getAttribute('data-pves'); if(c.checked)PV.esel[id]=1; else delete PV.esel[id]; pvESync(); }; });
+    if(g('pv_eall'))g('pv_eall').onclick=function(){ var on=this.checked; pvEShown().forEach(function(id){ if(on)PV.esel[id]=1; else delete PV.esel[id]; }); box.querySelectorAll('[data-pves]').forEach(function(c){ c.checked=on; }); pvESync(); };
+    if(g('pv_edel'))g('pv_edel').onclick=function(){ pvDelEntries(pvEShown().filter(function(id){ return PV.esel[id]; })); };
+    pvESync();
     if(g('pv_tl'))pvTaskList();
     if(PV.tab==='log')pvLog();
     if(PV.tab==='worders')pvWemOrders(); if(PV.tab==='wcat')pvWemCatalog();

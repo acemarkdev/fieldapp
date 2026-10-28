@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.68.0';
+export const APP_VERSION = '1.68.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.68.1', date: '2026-10-28', changes: [
+    'Production time (Acemark and WEM): delete for one or many. Tasks: a “delete” link on each task and “Delete selected” for the ticked ones — time already logged on them stays on the job. Time entries: a tick box on each row (and one to tick all shown) with “Delete selected”; each deleted entry goes to the log of time changes.',
+  ] },
   { version: '1.68.0', date: '2026-10-28', changes: [
     'Production time ▸ WEM, step 2 of WEM time measurement (phone 0.76.5). A WEM task made from an order asks the time type at START — Praca, Przezbrojenie, Poprawka — and the quantity done at STOP, also when the worker starts another task over it (work: prefilled with what is left of the plan; setup: 0; rework: typed, never counted as new pieces). On the phone each WEM task shows its workstation and “done / planned” (everyone’s work entries), in the order of the work; Moje wpisy show type and quantity and can correct them (7 days).',
     'Office ▸ Production time (WEM): time entries show the type and the quantity done, and the manager can correct both in the entry window. Needs migration 0115.',
