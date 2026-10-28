@@ -28,6 +28,7 @@ import { previewMondayJobs, applyMondayJobs, refreshJobGroups } from './mondayJo
 import { previewZLinks, applyZLinks } from './mondayOrders';
 import { previewEnquiries, applyEnquiries } from './mondayEnquiries';
 import { colReady } from './schemaReady';
+import { wemReady, listCatalog as listWemCatalog, importCatalog as importWemCatalog, updateCatalogRow as updateWemCatalogRow, listOrders as listWemOrders, saveOrder as saveWemOrder, setOrderTasksActive as setWemOrderActive } from './wemTasks';
 import { orderPapers, latestQuotes, addDoc, deleteDoc, addQuote, updateQuote, deleteQuote, syncOrder as syncOrderFromQuotes, papersReady } from './finOrderPapers';
 import { listCustomers as listOrderCustomers, createCustomer, updateCustomer, customersReady, COUNTRIES, countryCode, splitOrderRef, buildOrderRef, peekOrderNumber, takeOrderNumber, setNextOrderNumber, codeTaken } from './finCustomers';
 import { statutoryData, writedownField, setWritedown } from './perfStatutory';
@@ -838,7 +839,35 @@ const server = createServer(async (req, res) => {
             entries: seeRates ? entries.map((e: any) => { const r = rateFor(book, defaultRate, e.user_id, e.started_at); return { ...e, rate: r.own, priced: r.rate }; }) : entries,
             workers, seeRates, defaultRate: seeRates ? defaultRate : null, today: todayPL(),
             running: all.filter((e: any) => !e.ended_at), now: new Date().toISOString(), canSeeLog: ctx.role === 'admin',
-            company, companies: ctx.role === 'admin' ? PROD_COMPANIES : PROD_COMPANIES.filter((c) => c.key === company) }); return;
+            company, companies: ctx.role === 'admin' ? PROD_COMPANIES : PROD_COMPANIES.filter((c) => c.key === company), wemReady: company === 'wem' ? await wemReady() : false }); return;
+        }
+        // WEM: the task catalogue and orders that generate tasks (migration 0114)
+        if (a === 'wem') {
+          if (company !== 'wem') { send(res, 400, { error: 'Switch to WEM first.' }); return; }
+          if (!(await wemReady())) { send(res, 409, { error: 'The WEM catalogue and orders need migration 0114 first.' }); return; }
+          const oid = parts[5] ?? '', act = parts[6] ?? '';
+          if (id === 'catalog' && !sub && req.method === 'GET') { send(res, 200, { catalog: await listWemCatalog(ctx.tenant_id) }); return; }
+          if (id === 'catalog' && sub === 'import' && req.method === 'POST') {
+            const r = await importWemCatalog(ctx.tenant_id, String((await readJson(req)).text ?? ''));
+            if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+            audit(ctx, 'prod.wem.catalog', null, null, `WEM task catalogue loaded: ${r.added} new code(s), ${r.updated} updated`); send(res, 200, r); return;
+          }
+          if (id === 'catalog' && sub && req.method === 'PUT') {
+            const r = await updateWemCatalogRow(ctx.tenant_id, sub, await readJson(req));
+            if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+            audit(ctx, 'prod.wem.catalog', null, null, 'Edited a WEM task code'); send(res, 200, r); return;
+          }
+          if (id === 'orders' && !oid && req.method === 'GET') { send(res, 200, { orders: await listWemOrders(ctx.tenant_id) }); return; }
+          if (id === 'orders' && req.method === (oid ? 'PUT' : 'POST') && !act) {
+            const r = await saveWemOrder(ctx.tenant_id, ctx.name, oid || null, await readJson(req));
+            if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+            audit(ctx, 'prod.wem.order', null, r.id, `${oid ? 'Changed' : 'Added'} a WEM order: ${r.added} task(s) added, ${r.updated} updated, ${r.closed} closed`); send(res, 200, r); return;
+          }
+          if (id === 'orders' && oid && act === 'active' && req.method === 'POST') {
+            const on = (await readJson(req)).active !== false, n = await setWemOrderActive(ctx.tenant_id, oid, on);
+            audit(ctx, on ? 'prod.tasks.reopen' : 'prod.tasks.close', null, oid, `${on ? 'Reopened' : 'Closed'} the ${n} task(s) of a WEM order`); send(res, 200, { ok: true, changed: n }); return;
+          }
+          send(res, 404, { error: 'Not found.' }); return;
         }
         // the change log of time entries: admin only
         if (a === 'log' && req.method === 'GET') {
@@ -7388,7 +7417,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var cur0=document.getElementById('pv_co');
     if(cos.length>1&&cur0){ if(cur0.value!==cur)cur0.value=cur; }   // the live reload every 20 s keeps an open switch as it is
     else if(cos.length>1){ t.innerHTML=esc(TR('Production time'))+' <select id="pv_co" class="tinput" style="font-size:16px;font-weight:800;margin-left:8px;vertical-align:middle">'+cos.map(function(c){ return '<option value="'+c.key+'"'+(c.key===cur?' selected':'')+'>'+esc(c.name)+'</option>'; }).join('')+'</select>';
-      document.getElementById('pv_co').onchange=function(){ PV.company=this.value; PV.sel={}; PV.job=''; PV.worker=''; loadProd(); }; }
+      document.getElementById('pv_co').onchange=function(){ PV.company=this.value; PV.sel={}; PVW.orders=null; PVW.catalog=null; PV.job=''; PV.worker=''; loadProd(); }; }
     else t.textContent=TR('Production time')+' \u2014 '+name;
     if(cur==='wem')document.getElementById('pv_sub').textContent=TR('WEM: tasks per job from the WEM task file; workers of WEM start and stop them in the FitAWindow app. WEM hours are kept apart — they are not added to Acemark Job costs.');
   }
@@ -7397,8 +7426,94 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   function pvRateE(e){ return e.rate!==undefined?e.rate:pvRate(e.user_id); }
   function pvPriced(e,rt){ return e.priced!=null?e.priced:(rt==null?PV.d.defaultRate:rt); }
   function pvNum(v){ return String(v).replace('.',myLang==='pl'?',':'.'); }
+  // ---- WEM: orders that generate tasks, and the task catalogue (fixed codes) ----
+  var PVW={orders:null,catalog:null,cq:''};
+  var PVW_RULE={product:'× quantity',sash:'× quantity × sashes',horns:'× horns per unit',vents:'× vents per unit',restrictors:'× restrictors per unit',none:'once per order, not planned'};
+  async function pvWemLoad(what){
+    try{ var r=await api('/api/production/wem/'+what); var x=await r.json(); if(!r.ok)throw new Error(x.error||'Could not load'); PVW[what]=x[what]; }
+    catch(e){ var b=document.getElementById('pv_wem'); if(b)b.innerHTML='<div class="empty">'+esc(TR(e.message||'Could not load'))+'</div>'; return false; }
+    return true;
+  }
+  function pvWemPosSummary(o){ return (o.positions||[]).map(function(p){ return p.qty+'× '+p.product; }).join(', '); }
+  async function pvWemOrders(force){
+    var box=document.getElementById('pv_wem'); if(!box)return;
+    if(force||!PVW.orders){ if(!(await pvWemLoad('orders')))return; box=document.getElementById('pv_wem'); if(!box)return; }
+    var h='<div class="chips" style="gap:8px;margin:0 0 10px;align-items:center"><span class="sub" style="margin:0">'+esc(TR('An order’s positions create its tasks from the catalogue: kantówka skips cutting along and planing (ST01, ST02); sash tasks × sashes; add-ons per unit; downtime and other once.'))+'</span><span style="margin-left:auto"><button class="add" id="pvw_new">'+esc(TR('+ New WEM order'))+'</button></span></div>';
+    h+='<div class="card2" style="overflow:auto"><table class="fjl"><thead><tr><th>'+esc(TR('ORDER'))+'</th><th>'+esc(TR('CLIENT'))+'</th><th>'+esc(TR('POSITIONS'))+'</th><th style="text-align:right">'+esc(TR('OPEN TASKS'))+'</th><th style="text-align:right">'+esc(TR('CLOSED'))+'</th><th>'+esc(TR('ADDED'))+'</th><th></th></tr></thead><tbody>'
+      +(PVW.orders.map(function(o){ return '<tr class="g" data-pvwo="'+av(o.id)+'" style="cursor:pointer"><td style="font-weight:700">'+esc(o.order_ref)+'</td><td>'+esc(o.client||'')+'</td><td>'+esc(pvWemPosSummary(o))+'</td><td class="r">'+o.tasks.open+'</td><td class="r">'+o.tasks.closed+'</td><td class="sub" style="white-space:nowrap">'+esc(pvD(o.created_at))+(o.created_by?' · '+esc(o.created_by):'')+'</td>'
+        +'<td style="white-space:nowrap">'+(o.tasks.open?'<a class="codelink" data-pvwc="'+av(o.id)+'" data-on="0">'+esc(TR('close all tasks'))+'</a>':'<a class="codelink" data-pvwc="'+av(o.id)+'" data-on="1">'+esc(TR('reopen tasks'))+'</a>')+'</td></tr>'; }).join('')||'<tr><td colspan="7" class="sub" style="padding:14px">'+esc(TR('No WEM orders yet — add the first with “+ New WEM order”.'))+'</td></tr>')+'</tbody></table></div><div style="height:30px"></div>';
+    box.innerHTML=h;
+    document.getElementById('pvw_new').onclick=function(){ pvWemOrderOpen(null); };
+    box.querySelectorAll('[data-pvwo]').forEach(function(tr){ tr.onclick=function(){ pvWemOrderOpen(PVW.orders.filter(function(o){ return o.id===tr.getAttribute('data-pvwo'); })[0]); }; });
+    box.querySelectorAll('[data-pvwc]').forEach(function(a){ a.onclick=async function(e){ e.stopPropagation(); var on=a.getAttribute('data-on')==='1'; if(!on&&!fConfirm(TR('Close all tasks of this order? Workers will no longer see them; logged time stays.')))return;
+      try{ var r=await api('/api/production/wem/orders/'+encodeURIComponent(a.getAttribute('data-pvwc'))+'/active',{method:'POST',body:JSON.stringify({active:on})}); var x=await r.json(); if(!r.ok)throw new Error(x.error); tShow(T(on?'Reopened {0} task(s)':'Closed {0} task(s)',x.changed)); }catch(err){ tShow(err.message||'Could not save'); }
+      pvWemOrders(true); loadProd(true); }; });
+  }
+  function pvWemPosRow(p,i){
+    p=p||{}; var inp=function(k,w,ph,val){ return '<td><input class="tinput pvw_'+k+'" style="width:'+w+'px" value="'+av(val!=null?val:(p[k]!=null?p[k]:''))+'"'+(ph?' placeholder="'+av(ph)+'"':'')+'></td>'; };
+    return '<tr class="pvw_row">'+inp('pos',44,'',p.pos!=null?p.pos:String(i+1))
+      +'<td><select class="pvw_product">'+['','Sash','Casement','Drzwi'].map(function(x){ return '<option'+(p.product===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('')+'</select></td>'
+      +inp('qty',60,'')+inp('sashes',60,TR('Sash 2'))
+      +'<td><select class="pvw_material">'+['kantówka','tarcica'].map(function(x){ return '<option'+((p.material||'kantówka')===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('')+'</select></td>'
+      +inp('horns',50,'0')+inp('vents',50,'0')+inp('restrictors',50,'0')+inp('size',90,'900×1600')+inp('note',120,'')
+      +'<td><a class="codelink pvw_del" style="color:#b42318">×</a></td></tr>';
+  }
+  function pvWemOrderOpen(o){
+    var h='<div class="fgrid"><div class="field"><label>'+esc(TR('Order number *'))+'</label><input id="pvw_ref" class="tinput" value="'+av(o?o.order_ref:'')+'" placeholder="WEM-2026-001"></div>'
+      +'<div class="field"><label>'+esc(TR('Client'))+'</label><input id="pvw_client" class="tinput" value="'+av(o?o.client||'':'')+'"></div>'
+      +'<div class="field full"><label>'+esc(TR('Note'))+'</label><input id="pvw_note" class="tinput" value="'+av(o?o.note||'':'')+'"></div></div>'
+      +'<div style="padding:0 22px;overflow:auto"><table class="fjl"><thead><tr><th>'+esc(TR('POS.'))+'</th><th>'+esc(TR('PRODUCT'))+'</th><th>'+esc(TR('QTY'))+'</th><th>'+esc(TR('SASHES / UNIT'))+'</th><th>'+esc(TR('MATERIAL'))+'</th><th>'+esc(TR('HORNS / UNIT'))+'</th><th>'+esc(TR('VENTS / UNIT'))+'</th><th>'+esc(TR('RESTRICTORS / UNIT'))+'</th><th>'+esc(TR('SIZE'))+'</th><th>'+esc(TR('NOTE'))+'</th><th></th></tr></thead><tbody id="pvw_rows">'
+      +((o&&o.positions&&o.positions.length?o.positions:[null,null,null]).map(pvWemPosRow).join(''))+'</tbody></table>'
+      +'<button class="pobtn" id="pvw_addrow" style="margin-top:8px">'+esc(TR('+ Position'))+'</button>'
+      +'<div class="sub" style="margin:8px 0 0">'+esc(TR('Empty values: Sash 2 sashes, Casement and Drzwi 1; kantówka; add-ons 0. Saving again updates planned quantities, adds new tasks and closes the ones no longer in the order — time already logged stays.'))+'</div></div>'
+      +'<div style="display:flex;gap:10px;align-items:center;padding:14px 22px 20px"><button class="add" id="pvw_save">'+esc(TR(o?'Save and update tasks':'Save and create tasks'))+'</button><span class="sub" id="pvw_msg" style="margin:0"></span></div>';
+    openModal(o?T('WEM order {0}',esc(o.order_ref)):TR('New WEM order'),h);
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='1080px';
+    var rows=document.getElementById('pvw_rows');
+    var wire=function(){ rows.querySelectorAll('.pvw_del').forEach(function(a){ a.onclick=function(){ a.closest('tr').remove(); }; }); };
+    document.getElementById('pvw_addrow').onclick=function(){ rows.insertAdjacentHTML('beforeend',pvWemPosRow(null,rows.querySelectorAll('tr').length)); wire(); };
+    wire();
+    document.getElementById('pvw_save').onclick=async function(){
+      var g=function(row,k){ var el=row.querySelector('.pvw_'+k); return el?el.value:''; };
+      var b={order_ref:document.getElementById('pvw_ref').value,client:document.getElementById('pvw_client').value,note:document.getElementById('pvw_note').value,
+        positions:[].slice.call(rows.querySelectorAll('tr')).map(function(row){ var x={}; ['pos','product','qty','sashes','material','horns','vents','restrictors','size','note'].forEach(function(k){ x[k]=g(row,k); }); return x; })};
+      var msg=document.getElementById('pvw_msg'); msg.textContent=TR('Saving…');
+      try{ var r=await api('/api/production/wem/orders'+(o?'/'+encodeURIComponent(o.id):''),{method:o?'PUT':'POST',body:JSON.stringify(b)}); var x=await r.json(); if(!r.ok)throw new Error(x.error||'Could not save');
+        closeModal(true); fAlert(T('Saved. Tasks: {0} added, {1} updated, {2} closed.',x.added,x.updated,x.closed)); pvWemOrders(true); loadProd(true); }
+      catch(e){ msg.textContent=TR(e.message||'Could not save'); }
+    };
+  }
+  async function pvWemCatalog(force){
+    var box=document.getElementById('pv_wem'); if(!box)return;
+    if(force||!PVW.catalog){ if(!(await pvWemLoad('catalog')))return; box=document.getElementById('pv_wem'); if(!box)return; }
+    var q=PVW.cq.toLowerCase(), list=PVW.catalog.filter(function(c){ return !q||[c.code,c.department,c.product,c.element,c.activity,c.station].join(' ').toLowerCase().indexOf(q)>=0; });
+    var h='<div class="chips" style="gap:8px;margin:0 0 10px;align-items:center"><input id="pvw_cq" class="tinput" style="min-width:260px;flex:1" placeholder="'+av(TR('Search: code, product, element, activity, workstation'))+'" value="'+av(PVW.cq)+'">'
+      +'<span class="sub" style="margin:0">'+esc(T('{0} codes',PVW.catalog.length))+'</span><span style="margin-left:auto"><button class="pobtn" id="pvw_cimp">'+esc(TR('Load catalogue file (CSV)'))+'</button><input type="file" id="pvw_cfile" accept=".csv,text/csv" style="display:none"></span></div>'
+      +'<div class="sub" style="margin:0 0 8px">'+esc(TR('Codes never change — the analysis joins time by code. Names, workstations and units can be corrected (click a row); a code switched off is no longer put into new orders.'))+'</div>';
+    h+='<div class="card2" style="overflow:auto"><table class="fjl"><thead><tr><th>'+esc(TR('CODE'))+'</th><th>'+esc(TR('DEPARTMENT'))+'</th><th>'+esc(TR('PRODUCT'))+'</th><th>'+esc(TR('ELEMENT'))+'</th><th>'+esc(TR('ACTIVITY'))+'</th><th>'+esc(TR('WORKSTATION'))+'</th><th>'+esc(TR('UNIT'))+'</th><th>'+esc(TR('PLANNED'))+'</th></tr></thead><tbody>'
+      +list.map(function(c){ return '<tr class="g" data-pvwk="'+av(c.id)+'" style="cursor:pointer'+(c.active===false?';color:#9a97ad;text-decoration:line-through':'')+'"><td style="font-weight:700;white-space:nowrap">'+esc(c.code)+'</td><td>'+esc(c.department||'')+'</td><td>'+esc(c.product||'—')+'</td><td>'+esc(c.element||'')+'</td><td>'+esc(c.activity)+'</td><td>'+esc(c.station||'')+'</td><td>'+esc(c.unit||'')+'</td><td class="sub">'+esc(TR(PVW_RULE[c.qty_rule]||c.qty_rule))+(c.timber_only?' · '+esc(TR('tarcica only')):'')+'</td></tr>'; }).join('')
+      +'</tbody></table></div><div style="height:30px"></div>';
+    box.innerHTML=h;
+    var cq=document.getElementById('pvw_cq'); cq.oninput=function(){ PVW.cq=cq.value; pvWemCatalog(); var n=document.getElementById('pvw_cq'); n.focus(); n.setSelectionRange(n.value.length,n.value.length); };
+    var fi=document.getElementById('pvw_cfile'); document.getElementById('pvw_cimp').onclick=function(){ fi.click(); };
+    fi.onchange=function(){ var f=fi.files[0]; if(!f)return; var rd=new FileReader(); rd.onload=async function(){
+      try{ var r=await api('/api/production/wem/catalog/import',{method:'POST',body:JSON.stringify({text:String(rd.result||'')})}); var x=await r.json(); if(!r.ok)throw new Error(x.error); fAlert(T('Catalogue loaded: {0} new code(s), {1} updated.',x.added,x.updated)); pvWemCatalog(true); }
+      catch(e){ fAlert(e.message||'Could not load the file'); } }; rd.readAsText(f,'utf-8'); };
+    box.querySelectorAll('[data-pvwk]').forEach(function(tr){ tr.onclick=function(){ pvWemCodeEdit(PVW.catalog.filter(function(c){ return c.id===tr.getAttribute('data-pvwk'); })[0]); }; });
+  }
+  function pvWemCodeEdit(c){
+    var i=function(k,lab){ return '<div class="field"><label>'+esc(TR(lab))+'</label><input id="pvwk_'+k+'" class="tinput" value="'+av(c[k]||'')+'"></div>'; };
+    openModal(T('Task code {0}',esc(c.code)),'<div class="fgrid">'+i('activity','Activity *')+i('element','Element')+i('station','Workstation')+i('unit','Unit')+i('department','Department')
+      +'<div class="field"><label>'+esc(TR('In use'))+'</label><label style="display:flex;gap:6px;align-items:center;padding-top:8px"><input type="checkbox" id="pvwk_active"'+(c.active===false?'':' checked')+'> '+esc(TR('put into new orders'))+'</label></div></div>'
+      +'<div class="sub" style="padding:0 22px">'+esc(T('Product {0} · planned {1}. Tasks already created keep their names until their order is saved again.',c.product||'—',TR(PVW_RULE[c.qty_rule]||c.qty_rule)))+'</div>'
+      +'<div style="display:flex;gap:10px;align-items:center;padding:14px 22px 20px"><button class="add" id="pvwk_save">'+esc(TR('Save'))+'</button><span class="sub" id="pvwk_msg" style="margin:0"></span></div>');
+    document.getElementById('pvwk_save').onclick=async function(){ var b={active:document.getElementById('pvwk_active').checked}; ['activity','element','station','unit','department'].forEach(function(k){ b[k]=document.getElementById('pvwk_'+k).value; });
+      try{ var r=await api('/api/production/wem/catalog/'+encodeURIComponent(c.id),{method:'PUT',body:JSON.stringify(b)}); var x=await r.json(); if(!r.ok)throw new Error(x.error||'Could not save'); closeModal(true); tShow('Saved'); pvWemCatalog(true); }
+      catch(e){ document.getElementById('pvwk_msg').textContent=TR(e.message||'Could not save'); } };
+  }
   function renderProd(){
-    var d=PV.d, money=d.seeRates!==false, chips=[['entries','Time entries'],['tasks','Tasks']].concat(money?[['workers','Workers and rates']]:[]).concat(d.canSeeLog?[['log','Change log']]:[]);
+    var d=PV.d, money=d.seeRates!==false, wem=d.company==='wem'&&d.wemReady, chips=[['entries','Time entries'],['tasks','Tasks']].concat(wem?[['worders','WEM orders'],['wcat','Task catalogue']]:[]).concat(money?[['workers','Workers and rates']]:[]).concat(d.canSeeLog?[['log','Change log']]:[]);
+    if(!wem&&(PV.tab==='worders'||PV.tab==='wcat'))PV.tab='entries';
     if(!money&&PV.tab==='workers')PV.tab='entries';   // team leader: no rates
     document.getElementById('pv_run').innerHTML=pvRunningBox();
     document.getElementById('pv_chips').innerHTML=chips.map(function(c){ return '<button class="chip'+(PV.tab===c[0]?' on':'')+'" data-pvt="'+c[0]+'">'+esc(TR(c[1]))+'</button>'; }).join('');
@@ -7425,6 +7540,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<button class="pobtn" id="pv_bclose" disabled>'+esc(TR('Close selected'))+'</button><button class="pobtn" id="pv_bopen" disabled>'+esc(TR('Reopen selected'))+'</button>'
         +'<span style="margin-left:auto;display:flex;gap:8px"><button class="pobtn" id="pv_imp">'+esc(TR('Import from Excel'))+'</button><button class="pobtn" id="pv_newt">'+esc(TR('+ Task'))+'</button></span></div><div id="pv_tl"></div>';
     }
+    if(PV.tab==='worders'||PV.tab==='wcat'){ h+='<div id="pv_wem"><div class="empty">'+esc(TR('Loading…'))+'</div></div>'; }
     if(PV.tab==='log'){ h+='<div id="pv_log"><div class="empty">'+esc(TR('Loading…'))+'</div></div>'; }
     if(PV.tab==='workers'){
       h+='<p class="sub" style="margin:0 0 10px">'+esc(TR('Production workers are users with the Production role (Admin ▸ Users). The rate is in zł per hour. A new rate applies from the date you give (today by default): hours logged before that day keep the rate valid then, so a change never re-prices time already reported. Without a rate the default labour rate valid that day is used.'))+'</p>';
@@ -7457,6 +7573,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(g('pv_bopen'))g('pv_bopen').onclick=function(){ var ids=Object.keys(PV.sel); if(ids.length)pvSetActive(ids,true); };
     if(g('pv_tl'))pvTaskList();
     if(PV.tab==='log')pvLog();
+    if(PV.tab==='worders')pvWemOrders(); if(PV.tab==='wcat')pvWemCatalog();
     if(g('pv_newt'))g('pv_newt').onclick=pvNewTask;
     box.querySelectorAll('[data-pve]').forEach(function(a){ a.onclick=function(){ pvEdit(a.getAttribute('data-pve')); }; });
     box.querySelectorAll('[data-pvd]').forEach(function(a){ a.onclick=async function(){ if(!fConfirm('Delete this time entry?'))return; try{ var r=await api('/api/production/entries/'+encodeURIComponent(a.getAttribute('data-pvd')),{method:'DELETE'}); var x=await r.json(); if(!r.ok)throw new Error(x.error); }catch(e){ tShow(e.message||'Could not save'); } loadProd(); }; });

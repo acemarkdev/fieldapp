@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.66.1';
+export const APP_VERSION = '1.67.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.67.0', date: '2026-10-28', changes: [
+    'Production time ▸ WEM, step 1 of WEM time measurement. Task catalogue: the 89 fixed task codes from the WEM file (PRODUKT-ELEMENT-CZYNNOŚĆ, e.g. SAS-SKR-ST05 = Sash, skrzydło, czopowanie) with department, product, element, activity, workstation and unit, loaded on first use. Names, workstations and units can be corrected and a code switched off; the code itself never changes. A newer catalogue file (CSV) can be loaded.',
+    'WEM orders: type the order (number, client, positions — product, quantity, sashes per unit, material, horns / vents / restrictors per unit, size) and saving creates its tasks with the rules of the WEM workbook: kantówka skips cutting along and planing, sash tasks × sashes, add-ons per unit, downtime and other once. Each task carries its code, position, workstation and planned quantity. Saving again updates the quantities, adds new tasks and closes the ones no longer in the order; close or reopen all tasks of an order at once. Needs migration 0114.',
+  ] },
   { version: '1.66.1', date: '2026-10-28', changes: [
     'Sales orders: the other sales reps’ fees are part of the budget. The order’s budget cost and margin include them (a % is of the order net); on the actual side they count once due, with the order’s first payment. Budget against actual shows them as their own line, “Other sales reps (fees)”. Each quote version counts the fees at its own amount — a new REP FEES column, and the quote form’s live total and margin include them. CSV: an “Other reps fees” column.',
   ] },
