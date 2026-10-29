@@ -7449,7 +7449,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{ var res=await api('/api/production?from='+encodeURIComponent(r.from)+'&to='+encodeURIComponent(r.to)); var d=await res.json(); if(!res.ok)throw new Error(d.error||'Could not load'); PV.d=d; }
     catch(e){ if(quiet)return; box.innerHTML='<div class="empty">'+esc(TR(e.message||'Could not load'))+'</div>'; return; }
     pvCompanyHead();
-    renderProd();
+    renderProd(quiet);
   }
   // Company context: Acemark or WEM. A production manager sees only theirs; admin switches between them.
   function pvCompanyHead(){
@@ -7656,7 +7656,18 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       try{ var r=await api('/api/production/wem/catalog/'+encodeURIComponent(c.id),{method:'PUT',body:JSON.stringify(b)}); var x=await r.json(); if(!r.ok)throw new Error(x.error||'Could not save'); closeModal(true); tShow('Saved'); pvWemCatalog(true); }
       catch(e){ document.getElementById('pvwk_msg').textContent=TR(e.message||'Could not save'); } };
   }
-  function renderProd(){
+  // The live reload every 20 s (quiet): only the running box and the live lists (entries, tasks), kept where the user
+  // has scrolled — the WEM tabs, rates and the log are not redrawn, so the page never jumps or flashes “Loading…”.
+  function renderProd(quiet){
+    if(!quiet){ renderProdNow(); return; }
+    if(PV.tab!=='entries'&&PV.tab!=='tasks'){ document.getElementById('pv_run').innerHTML=pvRunningBox(); return; }
+    var box=document.getElementById('pv_body'), keep=[], wy=window.scrollY;
+    for(var el=box;el;el=el.parentElement){ if(el.scrollTop)keep.push([el,el.scrollTop]); }
+    box.style.minHeight=box.offsetHeight+'px';
+    renderProdNow();
+    keep.forEach(function(k){ k[0].scrollTop=k[1]; }); window.scrollTo(0,wy); box.style.minHeight='';
+  }
+  function renderProdNow(){
     var d=PV.d, money=d.seeRates!==false, wem=d.company==='wem'&&d.wemReady, chips=[['entries','Time entries'],['tasks','Tasks']].concat(wem?[['worders','WEM orders'],['wcat','Task catalogue'],['wan','WEM analysis']]:[]).concat(money?[['workers','Workers and rates']]:[]).concat(d.canSeeLog?[['log','Change log']]:[]);
     if(!wem&&(PV.tab==='worders'||PV.tab==='wcat'))PV.tab='entries';
     if(!money&&PV.tab==='workers')PV.tab='entries';   // team leader: no rates
