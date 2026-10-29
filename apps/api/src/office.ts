@@ -7462,6 +7462,16 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     else t.textContent=TR('Production time')+' \u2014 '+name;
     if(cur==='wem')document.getElementById('pv_sub').textContent=TR('WEM: tasks per job from the WEM task file; workers of WEM start and stop them in the FitAWindow app. WEM hours are kept apart — they are not added to Acemark Job costs.');
   }
+  // An entry belongs to the picked job when its task is one of the job's tasks, or (task deleted) by the job key it
+  // keeps, or its name starts with the job — Z.394 → Z_394_ for Acemark task files; WEM names keep the order as typed.
+  function pvJobHit(e){
+    if(!PV.job)return true;
+    var ts=(PV.d.tasks||[]).filter(function(t){ return t.job_ref===PV.job; });
+    if(e.task_id&&ts.some(function(t){ return t.id===e.task_id; }))return true;
+    if(e.job_key&&ts.some(function(t){ return t.job_key&&t.job_key===e.job_key; }))return true;
+    var n=(e.task_name||'').toUpperCase(), j=PV.job.toUpperCase();
+    return n.indexOf(j.replace('.','_')+'_')===0||n.indexOf(j+'_')===0;
+  }
   function pvRate(uid){ var w=(PV.d.workers||[]).filter(function(x){return x.id===uid;})[0]; return w&&w.rate!=null?w.rate:null; }
   // An entry's rate: the worker's rate valid on the day it started (from the server); null = default used.
   function pvRateE(e){ return e.rate!==undefined?e.rate:pvRate(e.user_id); }
@@ -7656,7 +7666,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var box=document.getElementById('pv_body'), h='';
     if(PV.tab==='entries'){
       var jobs={}; d.tasks.forEach(function(t){ jobs[t.job_ref]=1; });
-      var list=d.entries.filter(function(e){ return (!PV.job||(e.task_name||'').toUpperCase().indexOf(PV.job.replace('.','_').toUpperCase())===0)&&(!PV.worker||e.user_id===PV.worker); });
+      var list=d.entries.filter(function(e){ return pvJobHit(e)&&(!PV.worker||e.user_id===PV.worker); });
       var tot=0, amt=0; list.forEach(function(e){ var hh=pvHours(e), rt=pvRateE(e); tot+=hh; amt+=hh*pvPriced(e,rt); });
       h+='<div class="chips" style="gap:8px;flex-wrap:wrap;margin:0 0 10px;align-items:center">'
         +'<span style="display:flex;gap:6px;align-items:center"><span class="sub" style="margin:0">'+esc(TR('From day'))+'</span><input type="date" id="pv_from" class="tinput" value="'+av(PV.from)+'"><span class="sub" style="margin:0">'+esc(TR('to'))+'</span><input type="date" id="pv_to" class="tinput" value="'+av(PV.to)+'"></span>'
@@ -7773,7 +7783,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var z=function(v){ return (v<10?'0':'')+v; }, dt=function(iso){ var t=new Date(iso); return t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate()); }, tm=function(iso){ var t=new Date(iso); return z(t.getHours())+':'+z(t.getMinutes())+':'+z(t.getSeconds()); };
     var hms=function(h){ var s=Math.round(h*3600); return z(Math.floor(s/3600))+':'+z(Math.floor(s%3600/60))+':'+z(s%60); };
     var L=[['Project','Client','Description','Task','Kiosk','User','Group','Email','Tags','Billable','Start Date','Start Time','End Date','End Time','Duration (h)','Duration (decimal)','Rate (PLN)','Amount (PLN)','Date of creation'].map(q).join(sep)];
-    d.entries.filter(function(e){ return e.ended_at&&(!PV.job||(e.task_name||'').toUpperCase().indexOf(PV.job.replace('.','_').toUpperCase())===0)&&(!PV.worker||e.user_id===PV.worker); }).forEach(function(e){ var h=pvHours(e), rt=pvRateE(e);
+    d.entries.filter(function(e){ return e.ended_at&&pvJobHit(e)&&(!PV.worker||e.user_id===PV.worker); }).forEach(function(e){ var h=pvHours(e), rt=pvRateE(e);
       L.push([q('Produkcja'),q(''),q(e.note||''),q(e.task_name||''),q(''),q(e.user_name||''),q(''),q(e.user_email||''),q(''),q('Yes'),q(dt(e.started_at)),q(tm(e.started_at)),q(dt(e.ended_at)),q(tm(e.ended_at)),q(hms(h)),n(h),PV.d.seeRates===false?'':n(rt),PV.d.seeRates===false||rt==null?'':n(h*rt),q(dt(e.created_at))].join(sep)); });
     var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download='czas-produkcji-'+(PV.from===PV.to?PV.from:PV.from+'_'+PV.to)+'.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
