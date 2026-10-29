@@ -74,4 +74,6 @@
 //   Poprawka) and the quantity done at STOP — also when another task is started over it (work: prefilled with what is
 //   left of the plan; setup: 0). Tasks show the workstation and “zrobione x / planned”, in the order of the work;
 //   Moje wpisy show type and quantity and can correct them. Needs migrations 0114 and 0115; without them nothing changes.
-export const APP_VERSION = '0.76.5';
+// 0.76.6 — WEM: the "Ilość wykonana" field at STOP and in the entry correction is full height on Android (it was a
+//   sliver that hid what was typed). Over the air on 0.76.0.
+export const APP_VERSION = '0.76.6';

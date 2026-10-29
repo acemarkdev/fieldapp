@@ -320,7 +320,7 @@ function EditEntry({ entry, wem, label, tasks, recent, own, pickFirst, onClose, 
               {TIME_TYPES.map(([k, l]) => <TouchableOpacity key={k} style={[s.chip, wType === k && s.chipOn]} onPress={() => setWType(k)}><Text style={[s.chipT, wType === k && s.chipTOn]}>{l}</Text></TouchableOpacity>)}
             </View>
             {!running && <><Text style={[s.small, { marginTop: 12 }]}>ILOŚĆ WYKONANA</Text>
-              <TextInput style={[s.timeIn, { marginTop: 6 }]} value={qtyText} onChangeText={setQtyText} keyboardType="decimal-pad" maxLength={8} /></>}
+              <TextInput style={s.qtyIn} value={qtyText} onChangeText={setQtyText} keyboardType="decimal-pad" maxLength={8} /></>}
           </>}
           <Text style={[s.small, { marginTop: 14 }]}>KOMENTARZ ({note.length}/100)</Text>
           <TextInput style={s.noteIn} value={note} onChangeText={setNote} maxLength={100} placeholder="np. przerwa na naprawę maszyny" placeholderTextColor={C.muted} multiline />
@@ -358,7 +358,7 @@ function WemFlow({ next, running, runningTask, doneOf, own, busy, onClose, onCon
             <Text style={[s.task, { marginTop: 4 }]} numberOfLines={2}>{taskName(runningTask!, own)}</Text>
             <Text style={s.muted}>{[typeLabel(running!.time_type), doneLine(runningTask!, doneOf(runningTask!))].filter(Boolean).join(' · ')}</Text>
             <Text style={[s.small, { marginTop: 12 }]}>ILOŚĆ WYKONANA{runningTask!.unit ? ' (' + runningTask!.unit + ')' : ''}{running!.time_type === 'rework' ? ' — POPRAWIONE SZTUKI' : ''}</Text>
-            <TextInput style={[s.timeIn, { marginTop: 6 }]} value={qtyText} onChangeText={setQtyText} keyboardType="decimal-pad" maxLength={8} autoFocus={!askType} selectTextOnFocus />
+            <TextInput style={s.qtyIn} value={qtyText} onChangeText={setQtyText} keyboardType="decimal-pad" maxLength={8} autoFocus={!askType} selectTextOnFocus />
             {qty === null && <Text style={s.err}>Wpisz ilość (0, jeśli nic nie zrobiono).</Text>}
           </>}
           {askType ? <>
@@ -450,6 +450,8 @@ const s = StyleSheet.create({
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   step: { backgroundColor: C.soft, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, minWidth: 48, alignItems: 'center' },
   stepT: { fontSize: 15, fontWeight: '800', color: C.purple },
+  // the quantity done (WEM): its own height — timeIn's flex: 1 collapses it to a sliver in a column on Android
+  qtyIn: { height: 60, marginTop: 6, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingVertical: 0, paddingHorizontal: 12, fontSize: 26, fontWeight: '800', textAlign: 'center', textAlignVertical: 'center', includeFontPadding: false, color: C.ink },
   timeIn: { flex: 1, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingVertical: 9, fontSize: 20, fontWeight: '800', textAlign: 'center', color: C.ink },
   noteIn: { borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 10, fontSize: 15, color: C.ink, minHeight: 60, marginTop: 6 },
   err: { color: '#dc2626', marginTop: 10 },
