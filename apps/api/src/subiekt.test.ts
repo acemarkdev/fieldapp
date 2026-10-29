@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/subiekt.test.ts   (the examples are real subtitles from the Subiekt database)
-import { zNumbers, okCode, classifyDoc, toPln, saleRow, planSales, planMaterial, docsToCheck, docFromAgent, countryCode, type SubDoc } from './subiekt';
+import { zNumbers, okCode, classifyDoc, toPln, saleRow, planSales, planMaterial, docsToCheck, docFromAgent, countryCode, refCountry, type SubDoc } from './subiekt';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -81,5 +81,15 @@ ok('to check: no number, several jobs, missing rate — not the ticked one, not 
 ok('agent row is cleaned', (() => { const d = docFromAgent({ id: 55, symbol: 'fl', number: ' FL 1/ACE/10/2026 ', issued: '2026-10-09T00:00:00', net: '6410.450000', gross: 7628.43, currency: 'euro', rate: '4.265000', units: 1, subtitle: '  OK DE203065  -Mülheim ', flag: 3 }); return !!d && d.symbol === 'FL' && d.issued === '2026-10-09' && d.net === 6410.45 && d.rate === 4.265 && d.subtitle === 'OK DE203065 -Mülheim' && d.corrects === null; })());
 ok('unknown document types and broken rows are dropped', docFromAgent({ id: 1, symbol: 'FZ' }) === null && docFromAgent({ id: 'x', symbol: 'FS' }) === null && docFromAgent(null) === null);
 
+
+// a private customer has no country in Subiekt: from the OK number, else the Z job's sales order
+ok('country in the OK number', refCountry('OK UK203065 - Smith') === 'UK' && refCountry('OK GB203065') === 'UK' && refCountry('OK DE203065 -Mülheim-') === 'DE' && refCountry('OK 203065') === null && refCountry('Z.414') === null && refCountry(null) === null);
+const priv = doc('FS', 'OK UK203070 - Kowalski', null, 1000, { country: null });
+ok('no country in Subiekt → the OK number', saleRow(priv, classifyDoc(priv)).country === 'UK');
+const privZ = doc('FS', 'Z.420', null, 1000, { country: null });
+ok('no country in Subiekt, Z job → its sales order', saleRow(privZ, classifyDoc(privZ), undefined, (r) => (r === 'Z.420' ? 'IE' : null)).country === 'IE' && saleRow(privZ, classifyDoc(privZ)).country === null);
+const firm = doc('FS', 'OK UK203071', null, 1000, { country: 'Niemcy' });
+ok('the country in Subiekt wins', saleRow(firm, classifyDoc(firm), undefined, () => 'IE').country === 'DE');
+ok('a stored row without a country is filled on the next sync', planSales([priv], [{ id: 'S9', ...saleRow(priv, classifyDoc(priv)), country: null }]).update[0]?.fields.country === 'UK');
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('subiekt: all passed');

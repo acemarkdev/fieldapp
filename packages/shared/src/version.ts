@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.69.2';
+export const APP_VERSION = '1.69.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.69.3', date: '2026-10-29', changes: [
+    'Sales from Subiekt: an invoice whose customer has no country in Subiekt (often a private person) takes it from the OK number (OK UK203065 → UK), or for a Z job from its sales order (the order’s OK number, else its customer). The country in Subiekt still comes first. Invoices already in the Sales tab without a country are filled on the next sync.',
+  ] },
   { version: '1.69.2', date: '2026-10-29', changes: [
     'Production time: the live reload every 20 s no longer makes the page jump. It refreshes the “Now running” box and, on Time entries and Tasks, the list in place, keeping where you have scrolled; WEM orders, Task catalogue, WEM analysis, Workers and rates and the change log are no longer redrawn by it.',
   ] },

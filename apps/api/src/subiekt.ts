@@ -9,6 +9,7 @@ import { db } from './supabase';
 import { getConfig, setConfig } from './store';
 import { referenceKey } from './finJobs';
 import { orderCode } from './finOrders';
+import { colReady } from './schemaReady';
 
 export const SALE_SYMBOLS = ['FS', 'FL', 'KFS', 'KFL'] as const;
 export const SYNC_SYMBOLS = [...SALE_SYMBOLS, 'RW'] as const;
@@ -88,9 +89,13 @@ export function toPln(amount: number | null, d: Pick<SubDoc, 'currency' | 'rate'
 }
 const COUNTRY: Record<string, string> = { polska: 'PL', niemcy: 'DE', 'wielka brytania': 'UK', hiszpania: 'ES', holandia: 'NL', niderlandy: 'NL', francja: 'FR', belgia: 'BE', austria: 'AT', irlandia: 'IE', szwajcaria: 'CH' };
 export const countryCode = (v: string | null) => { const s = clean(v); return /^[A-Za-z]{2,3}$/.test(s) ? (s.toUpperCase() === 'GB' ? 'UK' : s.toUpperCase()) : (COUNTRY[s.toLowerCase()] ?? null); };
+/** The country written in an OK order number: "OK UK203065 - Smith" → UK; a Z number or "OK 203065" → null. */
+export const refCountry = (ref: string | null) => { const m = /^OK ([A-Za-z]{2})\d/.exec(orderCode(ref ?? '') ?? ''); return m ? countryCode(m[1]) : null; };
 
-/** A sales document → the Sales-tab row. `supplierOf` gives the producer of a trade order. */
-export function saleRow(d: SubDoc, c: DocClass, supplierOf?: (jobRef: string) => string | null): Record<string, any> {
+/** A sales document → the Sales-tab row. `supplierOf` gives the producer of a trade order. The country is the
+ *  customer's in Subiekt; a private customer often has none there, so then it is the one in the OK number, and for
+ *  a Z job the one of its sales order (`countryOf`). */
+export function saleRow(d: SubDoc, c: DocClass, supplierOf?: (jobRef: string) => string | null, countryOf?: (jobRef: string) => string | null): Record<string, any> {
   const net = toPln(d.net, d), gross = toPln(d.gross, d);
   const date = d.issued ?? d.sold;
   const check: CheckReason | null = net === null ? 'no_rate' : (c.check && !d.not_job ? c.check : null);
@@ -100,7 +105,7 @@ export function saleRow(d: SubDoc, c: DocClass, supplierOf?: (jobRef: string) =>
     invoice_no: d.number, invoice_date: date, job_ref: c.job_ref, job_key: c.job_ref ? referenceKey(c.job_ref).slice(0, 80) : null,
     period_year: date ? +date.slice(0, 4) : null, period_month: date ? +date.slice(5, 7) : null,
     producer: production ? 'Acemark PL' : (c.job_ref && supplierOf ? supplierOf(c.job_ref) : null), buyer: d.customer,
-    net: net ?? 0, gross, country: countryCode(d.country),
+    net: net ?? 0, gross, country: countryCode(d.country) ?? (c.job_ref ? refCountry(c.job_ref) ?? countryOf?.(c.job_ref) ?? null : null),
     // an advance invoice (and its correction) is a prepayment; the closing advance and FS are final
     kind: (d.symbol === 'FL' && d.flag !== 3) || d.symbol === 'KFL' ? 'prepaid' : 'final',
     note: [foreign, clean(d.subtitle) && !c.job_ref ? clean(d.subtitle) : ''].filter(Boolean).join(' · ').slice(0, 500) || null,
@@ -115,7 +120,7 @@ const noKey = (v: unknown) => clean(v).replace(/[^A-Za-z0-9]/g, '').toUpperCase(
 export interface SalesPlan { insert: Record<string, any>[]; update: { id: string; fields: Record<string, any>; adopted: boolean }[]; remove: string[] }
 /** What has to change on the Sales tab. A typed invoice with the same number is taken over
  *  ("adopted") instead of being duplicated; rows that came from Subiekt and are gone there are removed. */
-export function planSales(docs: SubDoc[], existing: Record<string, any>[], supplierOf?: (jobRef: string) => string | null): SalesPlan {
+export function planSales(docs: SubDoc[], existing: Record<string, any>[], supplierOf?: (jobRef: string) => string | null, countryOf?: (jobRef: string) => string | null): SalesPlan {
   const byId = new Map(docs.map((d) => [d.doc_id, d]));
   const sourced = new Map<number, Record<string, any>>(), typed = new Map<string, Record<string, any>[]>();
   for (const r of existing) {
@@ -127,7 +132,7 @@ export function planSales(docs: SubDoc[], existing: Record<string, any>[], suppl
   for (const d of docs) {
     if (!(SALE_SYMBOLS as readonly string[]).includes(d.symbol)) continue;
     seen.add(d.doc_id);
-    const next = saleRow(d, classifyDoc(d, byId), supplierOf);
+    const next = saleRow(d, classifyDoc(d, byId), supplierOf, countryOf);
     const cur = sourced.get(d.doc_id);
     if (cur) { if (rowDiffers(cur, next, SALE_COLS)) plan.update.push({ id: cur.id, fields: next, adopted: false }); continue; }
     const match = d.number ? typed.get(noKey(d.number))?.shift() : undefined;
@@ -245,12 +250,16 @@ export interface SyncSummary {
 export async function applyDocs(tenantId: string): Promise<SyncSummary> {
   const docs = await listDocs(tenantId);
   const [sales, orders, jobs, items] = await Promise.all([
-    all<any>('fin_sales', '*', tenantId), all<any>('fin_orders', 'order_ref,job_ref,supplier', tenantId),
+    all<any>('fin_sales', '*', tenantId), all<any>('fin_orders', 'order_ref,job_ref,supplier' + ((await colReady('fin_orders', 'customer_id')) ? ',customer_id' : ''), tenantId),
     all<any>('fin_jobs', 'id,reference_key,locked', tenantId), all<any>('fin_job_items', 'id,job_id,kind,source,source_id,amount,invoice_no,item_date', tenantId),
   ]);
-  const supplier = new Map<string, string>();
+  const supplier = new Map<string, string>(), country = new Map<string, string>();
   for (const o of orders) if (o.supplier) for (const ref of [o.order_ref, o.job_ref]) { const code = orderCode(ref); if (code) supplier.set(noKey(code), String(o.supplier)); }
-  const sp = planSales(docs, sales, (ref) => supplier.get(noKey(ref)) ?? null);
+  // a Z job's country: its sales order's OK number, else that order's customer (migration 0111)
+  let custCountry = new Map<string, string>();
+  try { custCountry = new Map((await all<any>('fin_customers', 'id,country', tenantId)).filter((c) => c.country).map((c) => [c.id, countryCode(c.country) ?? String(c.country)])); } catch { /* before 0111 */ }
+  for (const o of orders) { const cc = refCountry(o.order_ref) ?? (o.customer_id ? custCountry.get(o.customer_id) : null); const code = orderCode(o.job_ref ?? ''); if (cc && code && !country.has(noKey(code))) country.set(noKey(code), cc); }
+  const sp = planSales(docs, sales, (ref) => supplier.get(noKey(ref)) ?? null, (ref) => { const code = orderCode(ref); return code ? country.get(noKey(code)) ?? null : null; });
   const now = new Date().toISOString();
   for (let i = 0; i < sp.insert.length; i += 200) { const { error } = await db().from('fin_sales').insert(sp.insert.slice(i, i + 200).map((r) => ({ tenant_id: tenantId, created_by: 'Subiekt', ...r }))); if (error) throw error; }
   await pool(sp.update, 6, async (u) => { const { error } = await db().from('fin_sales').update({ ...u.fields, updated_at: now }).eq('tenant_id', tenantId).eq('id', u.id); if (error) throw error; });
