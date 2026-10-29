@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.68.1';
+export const APP_VERSION = '1.69.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.69.0', date: '2026-10-29', changes: [
+    'Production time ▸ WEM analysis, step 3 of WEM time measurement. For any period, per task code: minutes of Praca, Przezbrojenie and Poprawka, pieces (from Praca only — rework is never a new piece), work minutes and all minutes per piece, % lost and labour cost per piece at each worker’s own rate. Headline figures (hours, % lost, downtime, labour cost, data gaps), top 5 by % lost and by minutes per piece, one Sash / Casement / Drzwi in hours and zł once every code of its path is measured, a weekly trend (all codes, or the code clicked) and the table grouped by code, department, product, element, activity or workstation.',
+    'Exports: the analysis per code (as analiza.py) and the time entries in the WEM layout — ID;Pracownik;Nr zlecenia;Poz.;Kod tasku;Rodzaj czasu;Start;Stop;Ilość wykonana;Uwagi. Costs only for roles that see rates.',
+  ] },
   { version: '1.68.1', date: '2026-10-28', changes: [
     'Production time (Acemark and WEM): delete for one or many. Tasks: a “delete” link on each task and “Delete selected” for the ticked ones — time already logged on them stays on the job. Time entries: a tick box on each row (and one to tick all shown) with “Delete selected”; each deleted entry goes to the log of time changes.',
   ] },

@@ -29,6 +29,7 @@ import { previewZLinks, applyZLinks } from './mondayOrders';
 import { previewEnquiries, applyEnquiries } from './mondayEnquiries';
 import { colReady } from './schemaReady';
 import { wemReady, listCatalog as listWemCatalog, importCatalog as importWemCatalog, updateCatalogRow as updateWemCatalogRow, listOrders as listWemOrders, saveOrder as saveWemOrder, setOrderTasksActive as setWemOrderActive } from './wemTasks';
+import { analyse as analyseWem, wemExportRows, WEM_EXPORT_HEAD } from './wemAnalysis';
 import { orderPapers, latestQuotes, addDoc, deleteDoc, addQuote, updateQuote, deleteQuote, syncOrder as syncOrderFromQuotes, papersReady } from './finOrderPapers';
 import { listCustomers as listOrderCustomers, createCustomer, updateCustomer, customersReady, COUNTRIES, countryCode, splitOrderRef, buildOrderRef, peekOrderNumber, takeOrderNumber, setNextOrderNumber, codeTaken } from './finCustomers';
 import { statutoryData, writedownField, setWritedown } from './perfStatutory';
@@ -856,6 +857,12 @@ const server = createServer(async (req, res) => {
             const r = await updateWemCatalogRow(ctx.tenant_id, sub, await readJson(req));
             if (!r.ok) { send(res, r.status, { error: r.error }); return; }
             audit(ctx, 'prod.wem.catalog', null, null, 'Edited a WEM task code'); send(res, 200, r); return;
+          }
+          if (id === 'analysis' && req.method === 'GET') {
+            const from = url.searchParams.get('from'), to = url.searchParams.get('to');
+            const [entries, tasks, catalog, rows, def] = await Promise.all([listTimeEntries(ctx.tenant_id, from, to, 'wem'), listProdTasks(ctx.tenant_id, 'wem'), listWemCatalog(ctx.tenant_id), rateRows(ctx.tenant_id), getLabourRate()]);
+            const book = rateBook(rows), money = can(ctx.role, 'time.rates');
+            send(res, 200, { ...analyseWem(entries, tasks, catalog, (e) => rateFor(book, def, e.user_id, e.started_at).rate, money), money, exportHead: WEM_EXPORT_HEAD, exportRows: wemExportRows(entries, tasks) }); return;
           }
           if (id === 'orders' && !oid && req.method === 'GET') { send(res, 200, { orders: await listWemOrders(ctx.tenant_id) }); return; }
           if (id === 'orders' && req.method === (oid ? 'PUT' : 'POST') && !act) {
@@ -7451,7 +7458,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var cur0=document.getElementById('pv_co');
     if(cos.length>1&&cur0){ if(cur0.value!==cur)cur0.value=cur; }   // the live reload every 20 s keeps an open switch as it is
     else if(cos.length>1){ t.innerHTML=esc(TR('Production time'))+' <select id="pv_co" class="tinput" style="font-size:16px;font-weight:800;margin-left:8px;vertical-align:middle">'+cos.map(function(c){ return '<option value="'+c.key+'"'+(c.key===cur?' selected':'')+'>'+esc(c.name)+'</option>'; }).join('')+'</select>';
-      document.getElementById('pv_co').onchange=function(){ PV.company=this.value; PV.sel={}; PV.esel={}; PVW.orders=null; PVW.catalog=null; PV.job=''; PV.worker=''; loadProd(); }; }
+      document.getElementById('pv_co').onchange=function(){ PV.company=this.value; PV.sel={}; PV.esel={}; PVW.orders=null; PVW.catalog=null; PVA.d=null; PV.job=''; PV.worker=''; loadProd(); }; }
     else t.textContent=TR('Production time')+' \u2014 '+name;
     if(cur==='wem')document.getElementById('pv_sub').textContent=TR('WEM: tasks per job from the WEM task file; workers of WEM start and stop them in the FitAWindow app. WEM hours are kept apart — they are not added to Acemark Job costs.');
   }
@@ -7467,6 +7474,100 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{ var r=await api('/api/production/wem/'+what); var x=await r.json(); if(!r.ok)throw new Error(x.error||'Could not load'); PVW[what]=x[what]; }
     catch(e){ var b=document.getElementById('pv_wem'); if(b)b.innerHTML='<div class="empty">'+esc(TR(e.message||'Could not load'))+'</div>'; return false; }
     return true;
+  }
+  // ---- WEM analysis: per task code (minutes per type, pieces, % lost, cost per piece), groups, products, weekly trend ----
+  var PVA={from:null,to:null,group:'code',code:'',d:null,key:''};
+  var PVA_GROUPS=[['code','Task code'],['department','Department'],['product','Product'],['element','Element'],['activity','Activity'],['station','Workstation']];
+  async function pvWan(force){
+    var box=document.getElementById('pv_wan'); if(!box)return;
+    if(!PVA.from){ var n=new Date(), a=new Date(n.getFullYear(),n.getMonth(),n.getDate()-27); a.setDate(a.getDate()-((a.getDay()+6)%7)); PVA.from=pvYmd(a); PVA.to=pvYmd(n); }
+    var key=PVA.from+'|'+PVA.to+'|'+(PV.company||'');
+    if(force||!PVA.d||PVA.key!==key){
+      box.innerHTML='<div class="empty">'+esc(TR('Loading…'))+'</div>';
+      var r=pvRange(PVA.from,PVA.to);
+      try{ var res=await api('/api/production/wem/analysis?from='+encodeURIComponent(r.from)+'&to='+encodeURIComponent(r.to)); var x=await res.json(); if(!res.ok)throw new Error(x.error||'Could not load'); PVA.d=x; PVA.key=key; }
+      catch(e){ box.innerHTML='<div class="empty">'+esc(TR(e.message||'Could not load'))+'</div>'; return; }
+      box=document.getElementById('pv_wan'); if(!box)return;
+    }
+    pvWanDraw(box);
+  }
+  function pvaMin(m){ return m==null?'—':pvNum(Math.round(m*10)/10); }
+  function pvaPct(p){ return p==null?'—':pvNum(p)+'%'; }
+  function pvaName(c){ return (c.element&&c.element!=='komplet'&&c.element!=='—'?c.element+' · ':'')+c.activity; }
+  function pvaBar(v,max,col){ var w=max>0?Math.max(2,Math.round(v/max*100)):0; return '<div style="background:#f1f0f6;border-radius:4px;height:6px;margin-top:3px;min-width:80px"><div style="width:'+w+'%;height:6px;border-radius:4px;background:'+col+'"></div></div>'; }
+  function pvaCsv(name,head,rows){
+    var q=function(x){ return '"'+String(x==null?'':x).replace(/"/g,'""')+'"'; };
+    var L=[head.map(q).join(';')]; rows.forEach(function(r){ L.push(r.map(q).join(';')); });
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([String.fromCharCode(65279)+L.join(String.fromCharCode(13,10))],{type:'text/csv;charset=utf-8'})); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  }
+  function pvWanDraw(box){
+    var d=PVA.d, money=d.money, t=d.totals, by={}; d.codes.forEach(function(c){ by[c.code]=c; });
+    var cn=function(x){ return x==null?'':String(x).replace('.',','); };
+    var h='<div class="chips" style="gap:8px;flex-wrap:wrap;margin:0 0 12px;align-items:center">'
+      +'<span style="display:flex;gap:6px;align-items:center"><span class="sub" style="margin:0">'+esc(TR('From day'))+'</span><input type="date" id="pva_from" class="tinput" value="'+av(PVA.from)+'"><span class="sub" style="margin:0">'+esc(TR('to'))+'</span><input type="date" id="pva_to" class="tinput" value="'+av(PVA.to)+'"></span>'
+      +'<span style="display:flex;gap:4px">'+[['week','This week'],['month','This month'],['last','Last month'],['q','Last 3 months']].map(function(q){ return '<button class="pobtn" data-pvaq="'+q[0]+'" style="padding:6px 10px;font-size:12px">'+esc(TR(q[1]))+'</button>'; }).join('')+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:8px"><button class="pobtn" id="pva_csv">'+esc(TR('Export analysis'))+'</button><button class="pobtn" id="pva_exp">'+esc(TR('Export entries (WEM layout)'))+'</button></span></div>';
+    if(!t.entries&&!t.noCode){ PVA.csv=null; box.innerHTML=h+'<div class="card2" style="padding:18px">'+esc(TR('No finished WEM time in this period.'))+'</div>'; pvWanWire(box); return; }
+    // headline figures
+    var tile=function(label,val,sub,col){ return '<div class="card2" style="padding:12px 16px;flex:1;min-width:150px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR(label))+'</div><div style="font-size:22px;font-weight:800;margin-top:4px'+(col?';color:'+col:'')+'">'+val+'</div>'+(sub?'<div class="sub" style="margin:2px 0 0">'+sub+'</div>':'')+'</div>'; };
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px">'
+      +tile('HOURS LOGGED',esc(pvH(t.total/60))+' h',esc(T('{0} entries with a code',t.entries))+(t.noCode?' · '+esc(T('{0} h without a code',pvH(t.noCode/60))):''))
+      +tile('WORK / SETUP / REWORK',esc(pvH(t.work/60)+' / '+pvH(t.setup/60)+' / '+pvH(t.rework/60))+' h','')
+      +tile('% LOST',esc(pvaPct(t.lostPct)),esc(TR('setup and rework of all time')),(t.lostPct||0)>=20?'#b42318':'')
+      +tile('DOWNTIME',esc(pvH(t.downtime/60))+' h',esc(T('other: {0} h',pvH(t.other/60))))
+      +(money?tile('LABOUR COST',esc(fcMoney(t.cost))+' zł',esc(TR('each worker at their own rate'))):'')
+      +(t.noQty||t.untyped?tile('DATA GAPS',esc(String(t.noQty+t.untyped)),esc(T('{0} work entries without a quantity · {1} without a time type',t.noQty,t.untyped)),'#b45309'):'')
+      +'</div>';
+    // top 5 lists
+    var top=function(title,list,val,max,col){ return '<div class="card2" style="padding:12px 16px;flex:1;min-width:320px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px;margin:0 0 6px">'+esc(TR(title))+'</div>'
+      +(list.length?list.map(function(code){ var c=by[code]; return '<div style="margin:6px 0;cursor:pointer" data-pvac="'+av(code)+'"><div style="display:flex;justify-content:space-between;gap:8px"><span><b>'+esc(code)+'</b> <span class="sub" style="margin:0">'+esc(pvaName(c))+'</span></span><b>'+esc(val(c))+'</b></div>'+pvaBar(max(c),max(by[list[0]]),col)+'</div>'; }).join(''):'<div class="sub" style="margin:0">'+esc(TR('Not enough data yet.'))+'</div>')+'</div>'; };
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px">'
+      +top('TOP 5 BY % LOST',d.topLost,function(c){ return pvaPct(c.lostPct); },function(c){ return c.lostPct||0; },'#dc2626')
+      +top('TOP 5 BY MINUTES PER PIECE',d.topSlow,function(c){ return T('{0} min/pc',pvaMin(c.totalPerPiece)); },function(c){ return c.totalPerPiece||0; },'#6d5bd0')+'</div>';
+    // one unit of each product
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px">'+d.products.map(function(p){
+      return '<div class="card2" style="padding:12px 16px;flex:1;min-width:220px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(T('ONE {0}',String(p.product).toUpperCase()))+'</div>'
+        +(p.complete?'<div style="font-size:20px;font-weight:800;margin-top:4px">'+esc(pvH(p.minutesPerUnit/60))+' h <span class="sub" style="margin:0;font-size:13px">('+esc(T('{0} min',pvaMin(p.minutesPerUnit)))+')</span></div>'+(money?'<div style="font-weight:700">'+esc(fcMoney(p.costPerUnit))+' zł</div>':'')
+          +'<div class="sub" style="margin:2px 0 0">'+esc(p.sashes>1?T('pre-cut timber path · sash rows × {0} sashes',p.sashes):TR('pre-cut timber path'))+(p.timberExtra?' · '+esc(T('+{0} min for sawn timber',pvaMin(p.timberExtra))):'')+'</div>'
+          :'<div style="font-weight:700;margin-top:4px">'+esc(T('{0} of {1} codes measured',p.measured,p.codes))+'</div><div class="sub" style="margin:2px 0 0" title="'+av(p.missing.join(', '))+'">'+esc(T('Missing: {0}',p.missing.slice(0,4).join(', ')+(p.missing.length>4?' …':'')))+'</div>')+'</div>'; }).join('')+'</div>';
+    // weekly trend: all codes, or the code picked in the table
+    var wk=PVA.code&&d.codeWeeks[PVA.code]?d.codeWeeks[PVA.code]:d.weeks, one=!!(PVA.code&&by[PVA.code]), wmax=wk.reduce(function(m,w){ return Math.max(m,w.total); },0);
+    h+='<div id="pva_trend" class="card2" style="padding:12px 16px;margin:0 0 12px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(one?T('WEEKLY TREND — {0} · {1}',PVA.code,pvaName(by[PVA.code])):TR('WEEKLY TREND — ALL CODES'))+'</div>'+(one?'<a class="codelink" id="pva_all">'+esc(TR('show all codes'))+'</a>':'<span class="sub" style="margin:0">'+esc(TR('Click a code in the table to see its trend.'))+'</span>')+'</div>'
+      +'<table class="fjl" style="margin-top:6px"><thead><tr><th>'+esc(TR('WEEK FROM'))+'</th><th style="text-align:right">'+esc(TR('HOURS'))+'</th><th></th><th style="text-align:right">'+esc(TR('WORK MIN'))+'</th><th style="text-align:right">'+esc(TR('SETUP MIN'))+'</th><th style="text-align:right">'+esc(TR('REWORK MIN'))+'</th><th style="text-align:right">'+esc(TR('% LOST'))+'</th>'+(one?'<th style="text-align:right">'+esc(TR('PIECES'))+'</th><th style="text-align:right">'+esc(TR('MIN/PC'))+'</th>':'')+(money?'<th style="text-align:right">'+esc(TR('COST'))+'</th>':'')+'</tr></thead><tbody>'
+      +wk.map(function(w){ return '<tr><td style="white-space:nowrap">'+esc(pvD(w.week+'T12:00:00'))+'</td><td class="r">'+esc(pvH(w.total/60))+'</td><td style="width:22%">'+pvaBar(w.total,wmax,'#6d5bd0')+'</td><td class="r">'+pvaMin(w.work)+'</td><td class="r">'+pvaMin(w.setup)+'</td><td class="r">'+pvaMin(w.rework)+'</td><td class="r"'+((w.lostPct||0)>=20?' style="color:#b42318;font-weight:700"':'')+'>'+esc(pvaPct(w.lostPct))+'</td>'+(one?'<td class="r">'+pvNum(w.pieces)+'</td><td class="r">'+(w.pieces?pvaMin(w.total/w.pieces):'—')+'</td>':'')+(money?'<td class="r">'+fcMoney(w.cost)+'</td>':'')+'</tr>'; }).join('')+'</tbody></table></div>';
+    // the table: per code, or grouped
+    var g=PVA.group;
+    h+='<div class="chips" style="gap:8px;margin:0 0 8px;align-items:center"><span class="sub" style="margin:0">'+esc(TR('Group by'))+'</span>'+PVA_GROUPS.map(function(x){ return '<button class="chip'+(g===x[0]?' on':'')+'" data-pvag="'+x[0]+'">'+esc(TR(x[1]))+'</button>'; }).join('')+'</div>';
+    if(g==='code'){
+      h+='<div class="card2" style="overflow:auto"><table class="fjl"><thead><tr><th>'+esc(TR('CODE'))+'</th><th>'+esc(TR('ELEMENT · ACTIVITY'))+'</th><th>'+esc(TR('WORKSTATION'))+'</th><th style="text-align:right">'+esc(TR('ENTRIES'))+'</th><th style="text-align:right">'+esc(TR('WORK MIN'))+'</th><th style="text-align:right">'+esc(TR('SETUP MIN'))+'</th><th style="text-align:right">'+esc(TR('REWORK MIN'))+'</th><th style="text-align:right">'+esc(TR('PIECES'))+'</th><th style="text-align:right">'+esc(TR('WORK MIN/PC'))+'</th><th style="text-align:right">'+esc(TR('ALL MIN/PC'))+'</th><th style="text-align:right">'+esc(TR('% LOST'))+'</th>'+(money?'<th style="text-align:right">'+esc(TR('COST'))+'</th><th style="text-align:right">'+esc(TR('COST/PC'))+'</th>':'')+'</tr></thead><tbody>'
+        +d.codes.map(function(c){ return '<tr class="g" data-pvac="'+av(c.code)+'" style="cursor:pointer'+(PVA.code===c.code?';background:#f3f0ff':'')+'"><td style="white-space:nowrap;font-weight:700">'+esc(c.code)+'</td><td>'+esc(pvaName(c))+(c.noQty||c.untyped?'<div class="sub" style="margin:0;color:#b45309">'+esc([c.noQty?T('{0} without quantity',c.noQty):'',c.untyped?T('{0} without type',c.untyped):''].filter(Boolean).join(' · '))+'</div>':'')+'</td><td class="sub">'+esc(c.station||'')+'</td><td class="r">'+c.entries+'</td><td class="r">'+pvaMin(c.work)+'</td><td class="r">'+pvaMin(c.setup)+'</td><td class="r">'+pvaMin(c.rework)+'</td><td class="r">'+(c.pieces?pvNum(c.pieces):'—')+'</td><td class="r">'+pvaMin(c.workPerPiece)+'</td><td class="r" style="font-weight:700">'+pvaMin(c.totalPerPiece)+'</td><td class="r"'+((c.lostPct||0)>=20?' style="color:#b42318;font-weight:700"':'')+'>'+esc(pvaPct(c.lostPct))+'</td>'+(money?'<td class="r">'+fcMoney(c.cost)+'</td><td class="r">'+(c.costPerPiece==null?'—':fcMoney(c.costPerPiece))+'</td>':'')+'</tr>'; }).join('')+'</tbody></table></div>';
+    } else {
+      var gs={}; d.codes.forEach(function(c){ var k=c[g]&&c[g]!=='—'?c[g]:'—', s=gs[k]=gs[k]||{key:k,codes:0,entries:0,work:0,setup:0,rework:0,cost:0}; s.codes++; s.entries+=c.entries; s.work+=c.work; s.setup+=c.setup; s.rework+=c.rework; s.cost+=c.cost||0; });
+      var gl=Object.keys(gs).map(function(k){ var s=gs[k]; s.total=s.work+s.setup+s.rework; s.lost=s.total?Math.round((s.setup+s.rework)/s.total*1000)/10:null; return s; }).sort(function(a,b){ return b.total-a.total; }), gmax=gl.length?gl[0].total:0;
+      h+='<div class="card2" style="overflow:auto"><table class="fjl"><thead><tr><th>'+esc(TR((PVA_GROUPS.filter(function(x){ return x[0]===g; })[0]||['',''])[1]).toUpperCase())+'</th><th style="text-align:right">'+esc(TR('CODES'))+'</th><th style="text-align:right">'+esc(TR('ENTRIES'))+'</th><th style="text-align:right">'+esc(TR('HOURS'))+'</th><th></th><th style="text-align:right">'+esc(TR('WORK MIN'))+'</th><th style="text-align:right">'+esc(TR('SETUP MIN'))+'</th><th style="text-align:right">'+esc(TR('REWORK MIN'))+'</th><th style="text-align:right">'+esc(TR('% LOST'))+'</th>'+(money?'<th style="text-align:right">'+esc(TR('COST'))+'</th>':'')+'</tr></thead><tbody>'
+        +gl.map(function(s){ return '<tr><td style="font-weight:700">'+esc(s.key)+'</td><td class="r">'+s.codes+'</td><td class="r">'+s.entries+'</td><td class="r">'+esc(pvH(s.total/60))+'</td><td style="width:18%">'+pvaBar(s.total,gmax,'#6d5bd0')+'</td><td class="r">'+pvaMin(s.work)+'</td><td class="r">'+pvaMin(s.setup)+'</td><td class="r">'+pvaMin(s.rework)+'</td><td class="r"'+((s.lost||0)>=20?' style="color:#b42318;font-weight:700"':'')+'>'+esc(pvaPct(s.lost))+'</td>'+(money?'<td class="r">'+fcMoney(s.cost)+'</td>':'')+'</tr>'; }).join('')+'</tbody></table></div>';
+    }
+    h+='<div class="sub" style="margin:8px 0 30px">'+esc(TR('Pieces count from Praca entries only; Poprawka is never a new piece. % lost = (Przezbrojenie + Poprawka) / all minutes. An entry without a time type counts as Praca. Running entries are left out.'))+'</div>';
+    box.innerHTML=h; pvWanWire(box);
+    PVA.csv=function(){ pvaCsv('wem-analiza-'+PVA.from+'_'+PVA.to+'.csv',['Kod tasku','Dział','Produkt','Element','Czynność','Stanowisko','Wpisów','Min praca','Min przezbr.','Min poprawki','Szt.','Min pracy/szt.','Min całk./szt.','% strat'].concat(money?['Koszt zł','Koszt/szt. zł']:[]),
+      d.codes.map(function(c){ return [c.code,c.department,c.product,c.element,c.activity,c.station,c.entries,cn(c.work),cn(c.setup),cn(c.rework),cn(c.pieces),cn(c.workPerPiece),cn(c.totalPerPiece),c.lostPct==null?'':cn(c.lostPct)+'%'].concat(money?[cn(c.cost),cn(c.costPerPiece)]:[]); })); };
+  }
+  function pvWanWire(box){
+    var d=PVA.d, g=function(id){ return document.getElementById(id); };
+    var set=function(a,b){ if(!a||!b)return; if(a>b){ var x=a; a=b; b=x; } PVA.from=a; PVA.to=b; PVA.code=''; pvWan(true); };
+    if(g('pva_from'))g('pva_from').onchange=function(){ set(this.value,PVA.to); };
+    if(g('pva_to'))g('pva_to').onchange=function(){ set(PVA.from,this.value); };
+    box.querySelectorAll('[data-pvaq]').forEach(function(b){ b.onclick=function(){ var n=new Date(), q=b.getAttribute('data-pvaq'), a, z=n;
+      if(q==='week'){ a=new Date(n); a.setDate(n.getDate()-((n.getDay()+6)%7)); }
+      else if(q==='month'){ a=new Date(n.getFullYear(),n.getMonth(),1); }
+      else if(q==='last'){ a=new Date(n.getFullYear(),n.getMonth()-1,1); z=new Date(n.getFullYear(),n.getMonth(),0); }
+      else { a=new Date(n.getFullYear(),n.getMonth()-2,1); }
+      set(pvYmd(a),pvYmd(z)); }; });
+    box.querySelectorAll('[data-pvag]').forEach(function(b){ b.onclick=function(){ PVA.group=b.getAttribute('data-pvag'); pvWanDraw(box); }; });
+    box.querySelectorAll('[data-pvac]').forEach(function(r){ r.onclick=function(){ PVA.code=r.getAttribute('data-pvac'); PVA.group='code'; pvWanDraw(box); var tr=g('pva_trend'); if(tr)tr.scrollIntoView({behavior:'smooth',block:'start'}); }; });
+    if(g('pva_all'))g('pva_all').onclick=function(){ PVA.code=''; pvWanDraw(box); };
+    if(g('pva_csv'))g('pva_csv').onclick=function(){ if(PVA.csv)PVA.csv(); };
+    if(g('pva_exp'))g('pva_exp').onclick=function(){ if(!d.exportRows.length){ tShow(TR('No finished WEM time in this period.')); return; } pvaCsv('wem-eksport-'+PVA.from+'_'+PVA.to+'.csv',d.exportHead,d.exportRows); };
   }
   function pvWemPosSummary(o){ return (o.positions||[]).map(function(p){ return p.qty+'× '+p.product; }).join(', '); }
   async function pvWemOrders(force){
@@ -7546,7 +7647,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       catch(e){ document.getElementById('pvwk_msg').textContent=TR(e.message||'Could not save'); } };
   }
   function renderProd(){
-    var d=PV.d, money=d.seeRates!==false, wem=d.company==='wem'&&d.wemReady, chips=[['entries','Time entries'],['tasks','Tasks']].concat(wem?[['worders','WEM orders'],['wcat','Task catalogue']]:[]).concat(money?[['workers','Workers and rates']]:[]).concat(d.canSeeLog?[['log','Change log']]:[]);
+    var d=PV.d, money=d.seeRates!==false, wem=d.company==='wem'&&d.wemReady, chips=[['entries','Time entries'],['tasks','Tasks']].concat(wem?[['worders','WEM orders'],['wcat','Task catalogue'],['wan','WEM analysis']]:[]).concat(money?[['workers','Workers and rates']]:[]).concat(d.canSeeLog?[['log','Change log']]:[]);
     if(!wem&&(PV.tab==='worders'||PV.tab==='wcat'))PV.tab='entries';
     if(!money&&PV.tab==='workers')PV.tab='entries';   // team leader: no rates
     document.getElementById('pv_run').innerHTML=pvRunningBox();
@@ -7574,6 +7675,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'<button class="pobtn" id="pv_bclose" disabled>'+esc(TR('Close selected'))+'</button><button class="pobtn" id="pv_bopen" disabled>'+esc(TR('Reopen selected'))+'</button><button class="pobtn" id="pv_bdel" style="color:#b42318" disabled>'+esc(TR('Delete selected'))+'</button>'
         +'<span style="margin-left:auto;display:flex;gap:8px"><button class="pobtn" id="pv_imp">'+esc(TR('Import from Excel'))+'</button><button class="pobtn" id="pv_newt">'+esc(TR('+ Task'))+'</button></span></div><div id="pv_tl"></div>';
     }
+    if(PV.tab==='wan'){ h+='<div id="pv_wan"><div class="empty">'+esc(TR('Loading…'))+'</div></div>'; }
     if(PV.tab==='worders'||PV.tab==='wcat'){ h+='<div id="pv_wem"><div class="empty">'+esc(TR('Loading…'))+'</div></div>'; }
     if(PV.tab==='log'){ h+='<div id="pv_log"><div class="empty">'+esc(TR('Loading…'))+'</div></div>'; }
     if(PV.tab==='workers'){
@@ -7617,7 +7719,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     pvESync();
     if(g('pv_tl'))pvTaskList();
     if(PV.tab==='log')pvLog();
-    if(PV.tab==='worders')pvWemOrders(); if(PV.tab==='wcat')pvWemCatalog();
+    if(PV.tab==='worders')pvWemOrders(); if(PV.tab==='wcat')pvWemCatalog(); if(PV.tab==='wan')pvWan();
     if(g('pv_newt'))g('pv_newt').onclick=pvNewTask;
     box.querySelectorAll('[data-pve]').forEach(function(a){ a.onclick=function(){ pvEdit(a.getAttribute('data-pve')); }; });
     box.querySelectorAll('[data-pvd]').forEach(function(a){ a.onclick=async function(){ if(!fConfirm('Delete this time entry?'))return; try{ var r=await api('/api/production/entries/'+encodeURIComponent(a.getAttribute('data-pvd')),{method:'DELETE'}); var x=await r.json(); if(!r.ok)throw new Error(x.error); }catch(e){ tShow(e.message||'Could not save'); } loadProd(); }; });
