@@ -90,6 +90,7 @@ import { buildJobPoPdf } from './poPdf';
 import { specCatalogueOut, saveSpecValues, listCustomerSpecRows, listJobSpecRows, jobCustomerId, itemSpecOut, resolveJobSpec, specScopeKey } from './specStore';
 import { inviteUser, resetUserPassword, updateAuthEmail } from './adminUser';
 import { promoteItem } from './promote';
+import { renameOnMonday } from './syncItem';
 import { recogniseItemPhoto } from './recognise';
 import { Monday } from './monday';
 import { REQUIRED_MONDAY_COLUMNS, norm as normColTitle, pickPlanDateColumn as pickDateColumn, scheduleColumnValues } from './mapItem';
@@ -3155,13 +3156,15 @@ const server = createServer(async (req, res) => {
       }
       if (action === 'block' || action === 'elevation' || action === 'floor' || action === 'flat' || action === 'room' || action === 'item') {
         if (!allow('items.edit')) return;
-        // Sets the field AND rebuilds each item's code — skipped for items already synced to Monday.
+        // Sets the field AND rebuilds each item's code. On items already synced to Monday only Flat and Room can change
+        // (the Monday row is renamed to match); the other code parts stay locked.
         const raw = String(value ?? '').trim();
         const jobCache: Record<string, any> = {};
-        let updated = 0, locked = 0, dupes = 0;
+        let updated = 0, locked = 0, dupes = 0, failed = 0;
+        const canRename = action === 'flat' || action === 'room';
         for (const id of allowed) {
           const it: any = await getSurveyItem(id);
-          if (it.monday_item_id) { locked++; continue; } // code locked after sync
+          if (it.monday_item_id && !canRename) { locked++; continue; } // code locked after sync
           const job = jobCache[it.job_id] || (jobCache[it.job_id] = await getJob(it.job_id));
           let block = it.block, elevation = it.elevation, flat = it.flat, floor = it.floor, room = it.room_code, item = it.item_code;
           if (action === 'block') block = raw.toUpperCase() || null;
@@ -3172,10 +3175,14 @@ const server = createServer(async (req, res) => {
           else if (action === 'item') item = raw.toUpperCase() || null;
           const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block, elevation, flat, floor, room, item });
           if (await codeExists(it.job_id, full_code, id)) { dupes++; continue; }
-          const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, item_code: item, full_code }).eq('id', id).eq('tenant_id', ctx.tenant_id);
+          if (it.monday_item_id && full_code !== it.full_code) {
+            if (!job.monday_board_id) { failed++; continue; }
+            try { await renameOnMonday(new Monday(), job.monday_board_id, it.monday_item_id, full_code, it); } catch { failed++; continue; }
+          }
+          const { error } = await db().from('survey_items').update({ block, elevation, flat, floor, room_code: room, item_code: item, full_code, ...(it.monday_item_id ? { needs_resync: true } : {}) }).eq('id', id).eq('tenant_id', ctx.tenant_id);
           if (!error) updated++;
         }
-        send(res, 200, { ok: true, updated, skipped: locked + dupes, locked, dupes }); return;
+        send(res, 200, { ok: true, updated, skipped: locked + dupes + failed, locked, dupes, failed }); return;
       }
       if (action === 'po') {
         // Group items into a PO phase. Only Surveyed items accept a phase (others are skipped);
@@ -3379,10 +3386,11 @@ const server = createServer(async (req, res) => {
           patch.po_phase = n; patch.po_ready_by = null; patch.po_ready_at = null;
         }
       }
-      // Editing Flat / Room rebuilds the item code — allowed only until it's synced to Monday.
+      // Editing Flat / Room rebuilds the item code. On a synced item the Monday row is renamed first (sync finds rows by
+      // this name): if Monday refuses, nothing is saved. The row's columns follow at the next sync.
+      let renamed = false;
       if ('flat' in body || 'room' in body) {
         if (!allow('items.edit')) return;
-        if (item.monday_item_id) { send(res, 400, { error: 'This item is synced to Monday — its code is locked. Un-sync it first to change Flat/Room.' }); return; }
         const job = await getJob(item.job_id);
         const newFlat = 'flat' in body ? (String(body.flat ?? '').trim().replace(/^F(?=[0-9])/i, '').toUpperCase() || null) : (item.flat ?? null);
         const newRoom = 'room' in body ? (String(body.room ?? '').trim().toUpperCase() || null) : (item.room_code ?? null);
@@ -3390,6 +3398,12 @@ const server = createServer(async (req, res) => {
         const newFloor = item.floor ?? null;
         const full_code = buildItemCode({ client: job.client_code, job: job.job_code, block: item.block, elevation: item.elevation, flat: newFlat, floor: newFloor, room: newRoom, item: item.item_code });
         if (await codeExists(item.job_id, full_code, id)) { send(res, 409, { error: `Code ${full_code} already exists in this job — pick a different Flat/Room.` }); return; }
+        if (item.monday_item_id && full_code !== item.full_code) {
+          if (!job.monday_board_id) { send(res, 400, { error: 'This item is synced, but the job has no Monday board linked — link it before changing Flat/Room.' }); return; }
+          try { await renameOnMonday(new Monday(), job.monday_board_id, item.monday_item_id, full_code, item as any); }
+          catch (e: any) { send(res, 502, { error: 'Monday did not accept the new name, so nothing was changed: ' + (e?.message ?? e) }); return; }
+          renamed = true; patch.needs_resync = true;
+        }
         patch.flat = newFlat; patch.room_code = newRoom; patch.floor = newFloor; patch.full_code = full_code;
       }
       // The completeness of the item after this edit (used for the Unfinished flag and the Surveyed gate).
@@ -3408,7 +3422,7 @@ const server = createServer(async (req, res) => {
       const { error } = await db().from('survey_items').update(patch).eq('id', id);
       if (error) { send(res, 500, { error: error.message }); return; }
       // Field-level before→after for the item's activity timeline (skip internal-only fields).
-      const HIDE = new Set(['full_code', 'incomplete']);
+      const HIDE = new Set(['full_code', 'incomplete', 'needs_resync']);
       const before: any = item;
       const changes = Object.keys(patch).filter((k) => !HIDE.has(k)).map((k) => ({
         field: k, from: before[k] ?? null, to: (patch as any)[k] ?? null,
@@ -3416,7 +3430,7 @@ const server = createServer(async (req, res) => {
       if (changes.length) {
         audit(ctx, 'item.update', 'item', id, `${(patch.full_code as string) || item.full_code}: ${changes.map((c) => c.field).join(', ')}`, changes);
       }
-      send(res, 200, { ok: true });
+      send(res, 200, { ok: true, renamed });
       return;
     }
 
@@ -6560,8 +6574,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         :(canSync?'<button class="sync" onclick="syncItem(\\''+r.id+'\\')">Sync</button>':'<span class="ro">not synced</span>');
       var snagTag=r.kind==='snag'?'<span class="snagtag">SNAG</span> ':'';
       var unfinTag=r.incomplete?'<span class="unfintag" title="Imported with required data missing — open to complete it">UNFINISHED</span> ':'';
-      // Flat & Room are editable until the item is synced to Monday (editing rebuilds the code).
-      var editable=canEdit&&!r.synced;
+      // Flat & Room stay editable after sync: editing rebuilds the code and renames the Monday row.
+      var editable=canEdit;
       var flatCell=editable?'<input class="cedit" value="'+(r.flat||'')+'" placeholder="—" onchange="saveCode(\\''+r.id+'\\',\\'flat\\',this.value)">':(r.flat||'—');
       var roomCell=editable?'<select class="sel" style="min-width:150px" onchange="saveCode(\\''+r.id+'\\',\\'room\\',this.value)">'+roomOptions(r.room||'')+'</select>':roomLabel(r.room);
       // PO phase: editable only on Surveyed items; a phase marked ready-for-PO is locked (admins exempt).
@@ -6599,7 +6613,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function saveCode(id,field,value){
     var body=field==='flat'?{flat:value}:{room:value};
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
-    if(d.ok)tShow('Code updated'); else tShow(d.error||'Update failed');
+    if(d.ok)tShow(d.renamed?'Code updated · Monday row renamed':'Code updated'); else tShow(d.error||'Update failed');
     loadItems(); // refresh full code + Floor column
   }
   async function syncItem(id){tShow('Syncing…');try{var d=await (await api('/api/promote/'+id,{method:'POST'})).json();if(d.ok){var m='Synced to Monday'+(d.photosPushed?' · '+d.photosPushed+' photo'+(d.photosPushed>1?'s':''):'')+(d.sketchPushed?' · style '+d.sketchPushed+' drawing':'');tShow(d.photoError?('Synced · photo issue: '+d.photoError):d.sketchError?('Synced · style drawing not sent: '+d.sketchError):m);loadItems();}else tShow(d.error||'Sync failed');}catch(e){tShow('Sync failed')}}
@@ -8024,7 +8038,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var d=await (await api('/api/items/bulk',{method:'POST',body:JSON.stringify({ids:ids,action:action,value:value})})).json();
       if(vEl&&vEl.tagName==='INPUT')vEl.value='';
-      if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced/dupe)'):''));loadItems();}else tShow(d.error||'Update failed');
+      if(d.ok){tShow((d.updated||0)+' updated'+(d.skipped?(' · '+d.skipped+' skipped (synced, same code or Monday refused)'):''));loadItems();}else tShow(d.error||'Update failed');
     }catch(e){tShow('Update failed');}
     finally{ if(btn){btn.disabled=false;btn.textContent=label||'Apply';} }
   }
@@ -12514,13 +12528,13 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         +'</div>';
     }
     // Editable Flat + Room (rebuild the item code) — the other code parts (Block/Elevation/Item) are
-    // set in the Items table. Locked once synced to Monday.
-    var codeEditable=!d.is_snag&&canCap('items.edit')&&!it.monday_item_id;
+    // set in the Items table. On a synced item the Monday row is renamed to match.
+    var codeEditable=!d.is_snag&&canCap('items.edit');
     if(codeEditable){
       html+='<div class="groupt" style="padding:12px 22px 0">LOCATION</div><div class="fgrid" style="padding:6px 22px 6px">'
         +'<div class="field"><label>Flat / plot</label><input id="f_flat_edit" value="'+attr(it.flat)+'" placeholder="e.g. 12"></div>'
         +'<div class="field"><label>Room *</label><select id="f_room_edit">'+roomOptions(it.room_code||'')+'</select></div>'
-        +'<div class="sub full" style="margin:0">Changing Flat or Room rebuilds the item code. Block, Elevation and Item are set in the Items table.</div>'
+        +'<div class="sub full" style="margin:0">Changing Flat or Room rebuilds the item code'+(it.monday_item_id?' and renames the row on Monday':'')+'. Block, Elevation and Item are set in the Items table.</div>'
         +'</div>';
     }
     var specEditable=!d.is_snag&&canCap('items.edit');
@@ -12609,7 +12623,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function saveDetailCode(id,field,value){
     var body=field==='flat'?{flat:value}:{room:value};
     var d=await (await api('/api/item/'+id,{method:'PUT',body:JSON.stringify(body)})).json();
-    if(d.ok)tShow(field==='room'?'Room saved':'Flat saved'); else tShow(d.error||'Update failed');
+    if(d.ok)tShow((field==='room'?'Room saved':'Flat saved')+(d.renamed?' · Monday row renamed':'')); else tShow(d.error||'Update failed');
     loadItems(); openDetail(id);
   }
   var ACT_LABELS={material:'Material',item_type:'Item type',window_type:'Window type',glass:'Glass',safety_glass:'Safety glass',glazing:'Glazing',glazing_bars:'Glazing bars',cill_depth:'Cill depth',open_in_out:'Open in/out',add_ons:'Add-ons',coupled:'Coupled',design_code:'Design code',comments:'Comments',width_mm:'Width',height_mm:'Height',cill_depth_mm:'Cill depth',transom1_mm:'Transom 1',transom2_mm:'Transom 2',transom3_mm:'Transom 3',mullion1_mm:'Mullion 1',mullion2_mm:'Mullion 2',mullion3_mm:'Mullion 3',transom_equal:'Transoms equal',mullion_equal:'Mullions equal',install_status:'Install status',team_id:'Team',stage:'Stage',po_phase:'PO phase',rate_override_pennies:'Rate override',flat:'Flat',room_code:'Room',floor:'Floor'};

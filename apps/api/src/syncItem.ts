@@ -1,5 +1,5 @@
 // Idempotent "promote to Monday": create the item if it's new, otherwise update it.
-// Keyed on the item name = full code, so re-running is safe (no duplicates).
+// Keyed on the Monday row it was synced to, else on the item name = full code, so re-running is safe (no duplicates).
 
 import { Monday } from './monday';
 import { buildColumnValues, pickPlanDateColumn, type SyncInputs } from './mapItem';
@@ -10,6 +10,15 @@ export interface SyncResult {
   fullCode: string;
 }
 
+/** The Monday row's name: the full code; a snag also shows its defect text (the code stays the Full Location Ref). */
+export function mondayItemName(fullCode: string, item: { kind?: string | null; snag_comment?: string | null }): string {
+  return item.kind === 'snag' && item.snag_comment ? `${fullCode} — ${item.snag_comment}`.slice(0, 255) : fullCode;
+}
+/** Flat or Room changed on a synced item: its code changes, so the Monday row is renamed to match. */
+export async function renameOnMonday(monday: Pick<Monday, 'changeColumnValues'>, boardId: string, mondayItemId: string, fullCode: string, item: { kind?: string | null; snag_comment?: string | null }): Promise<void> {
+  await monday.changeColumnValues(boardId, mondayItemId, { name: mondayItemName(fullCode, item) });
+}
+
 export async function upsertSurveyItem(
   monday: Monday,
   boardId: string,
@@ -18,14 +27,20 @@ export async function upsertSurveyItem(
   const fullCode = inputs.item.full_code;
   if (!fullCode) throw new Error('Item has no full_code — cannot sync.');
 
-  // Snag items show the defect text in their Monday name (the code stays the Full Location Ref).
-  const snagComment = (inputs.item as any).snag_comment;
-  const itemName = ((inputs.item as any).kind === 'snag' && snagComment)
-    ? `${fullCode} — ${snagComment}`.slice(0, 255)
-    : fullCode;
+  const itemName = mondayItemName(fullCode, inputs.item as any);
 
   const cols = await monday.getColumns(boardId);
   const columnValues = buildColumnValues(cols, inputs);
+
+  // Already synced: update that row, also when the name has just changed (a search by the new name could miss it and
+  // make a duplicate). If the row is gone from Monday, carry on by name.
+  const stored = (inputs.item as any).monday_item_id;
+  if (stored) {
+    try {
+      await monday.changeColumnValues(boardId, String(stored), { ...columnValues, name: itemName });
+      return { itemId: String(stored), action: 'updated', fullCode };
+    } catch { /* not on this board any more */ }
+  }
 
   const existingId = await monday.findItemIdByName(boardId, itemName);
   if (existingId) {
