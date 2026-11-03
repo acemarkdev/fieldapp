@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.69.4';
+export const APP_VERSION = '1.69.5';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.69.5', date: '2026-11-03', changes: [
+    'PDF downloads (PO, survey / install report, price breakdown, invoice, sign-off, install calendar, quotations, labels): a second PDF is no longer lost. When a PDF takes a few seconds to build, the browser no longer treats the download as coming from your click and quietly blocks the second one as “multiple automatic downloads” — the app then shows a small “File ready” box with a Save file button instead, and says “downloaded” only when it really downloaded.',
+  ] },
   { version: '1.69.4', date: '2026-11-01', changes: [
     'Items: Flat and Room can now be changed on an item already synced to Monday — in the table, in the item window and with the bulk change. The item code is rebuilt and the Monday row renamed to match; if Monday refuses, nothing is saved. A code already used in the job is still refused. The row’s other columns (such as Full Location Ref) follow at the next sync: the item shows as changed until then.',
     'Sync to Monday: an item already synced updates its own Monday row instead of searching by name, so a renamed item can never create a duplicate row. If that row is gone from Monday, it is found by name or created, as before.',

@@ -6497,10 +6497,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(current)+'/po.pdf?phase='+encodeURIComponent(phase)+'&sort='+encodeURIComponent(sort),{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PO PDF failed');return;}
-      var blob=await r.blob(); var u=URL.createObjectURL(blob);
-      var a=document.createElement('a'); a.href=u; a.download=curCode()+'-PO-phase-'+phase+'.pdf'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){URL.revokeObjectURL(u);},4000);
-      tShow('PO PDF downloaded');
+      if(fSaveBlob(await r.blob(),curCode()+'-PO-phase-'+phase+'.pdf'))tShow('PO PDF downloaded');
     }catch(err){tShow('PO PDF failed');}
   }
   function fillColFilter(selId,field,setFn,cur,allLabel){
@@ -7977,8 +7974,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(code)+'/install-calendar.pdf',{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){ var e={}; try{ e=await r.json(); }catch(_){ } tShow(e.error||'Calendar failed'); return; }
-      var blob=await r.blob(), u=URL.createObjectURL(blob), a=document.createElement('a'); a.href=u; a.download=code+'-install-calendar.pdf'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){ URL.revokeObjectURL(u); },4000); tShow('Install calendar downloaded');
+      if(fSaveBlob(await r.blob(),code+'-install-calendar.pdf'))tShow('Install calendar downloaded');
     }catch(err){ tShow('Calendar failed'); }
     finally{ if(b){ b.disabled=false; b.textContent=was; } }
   }
@@ -8837,7 +8833,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     on('scq_sent',async function(){ if(!await save())return; if(!confirm('Mark this quote as sent to the customer? It is then fixed, and the enquiry moves to Quote sent with a chase-up in a week.'))return; if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'sent'}))after('Marked sent'); });
     on('scq_pdf',async function(){ if(ed&&!await save())return; tShow('Building the PDF…');
       var r=await fetch('/api/scaf/quotes/'+id+'/pdf',{headers:{Authorization:'Bearer '+token}}); if(!r.ok){ var x={}; try{ x=await r.json(); }catch(_){} tShow(x.error||'PDF failed'); return; }
-      var u=URL.createObjectURL(await r.blob()), a=document.createElement('a'); a.href=u; a.download='Quotation ACE'+e.number+' v'+q.revision+'.pdf'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },4000); });
+      fSaveBlob(await r.blob(),'Quotation ACE'+e.number+' v'+q.revision+'.pdf'); });
     on('scq_acc',async function(){ if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'accepted'}))after('Won'); });
     on('scq_dec',async function(){ var r=scVal('scq_reason'); if(!r){ tShow('Choose the reason'); return; } if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'declined',reason:r}))after('Declined'); });
     on('scq_back',async function(){ if(await scSend('/api/scaf/quotes/'+id+'/status','POST',{status:'draft'}))after('Back to draft'); });
@@ -8930,7 +8926,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('sjb_visit').onclick=function(){ scVisitForm(null,{job:j}); };
   }
   async function scPdf(url,name){ tShow('Building the PDF…'); var r=await fetch(url,{headers:{Authorization:'Bearer '+token}}); if(!r.ok){ var x={}; try{ x=await r.json(); }catch(_){} tShow(x.error||'PDF failed'); return; }
-    var u=URL.createObjectURL(await r.blob()), a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },4000); }
+    fSaveBlob(await r.blob(),name); }
   function scScaffoldForm(j,s){
     var isNew=!s; s=s||{variation:!!(j.quote_id||(j.scaffolds||[]).length)};
     scModal((isNew?'Add a scaffold':'Scaffold')+' · ACESC'+j.number,'<div class="scform">'
@@ -9723,10 +9719,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(code)+'/report.pdf?type='+type,{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'Report failed');return;}
-      var blob=await r.blob(); var u=URL.createObjectURL(blob);
-      var a=document.createElement('a'); a.href=u; a.download=code+'-'+type+'-report.pdf'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){URL.revokeObjectURL(u);},4000);
-      tShow((type==='install'?'Install':'Survey')+' PDF downloaded');
+      if(fSaveBlob(await r.blob(),code+'-'+type+'-report.pdf'))tShow((type==='install'?'Install':'Survey')+' PDF downloaded');
     }catch(err){tShow('Report failed');}
     finally{btn.textContent=was; btn.disabled=false;}
   }
@@ -10005,6 +9998,24 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   // ---- modal, create item, item detail ----
   function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   var modalDirty=null; // function -> bool, set by modals that need an unsaved-changes guard
+  // Save a file the server has just built. A page may start a download by itself only right after a click: once that
+  // moment has passed (a slow PDF), Chrome lets the first one through and quietly blocks the next ones as "multiple
+  // automatic downloads" (a small icon in the address bar). So when the click is no longer fresh, the file is offered
+  // with a Save button — a click of its own, which always works.
+  function fSaveBlob(blob,name){
+    var u=URL.createObjectURL(blob), ua=navigator.userActivation;
+    if(!ua||ua.isActive){ var a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },60000); return true; }
+    // a box of its own (bottom right), so an open window — a quotation, the labels — stays as it is
+    var old=document.getElementById('fsb_box'); if(old)old.remove();
+    var box=document.createElement('div'); box.id='fsb_box';
+    box.style.cssText='position:fixed;right:18px;bottom:18px;z-index:10000;background:#fff;border:1px solid #d9d6e8;border-radius:14px;box-shadow:0 10px 30px rgba(20,16,60,.18);padding:14px 16px;max-width:340px;font-size:13px';
+    box.innerHTML='<div style="font-weight:800;margin:0 0 4px">File ready</div><div style="color:#6b6880;margin:0 0 10px;overflow-wrap:anywhere">'+esc(name)+'</div><div style="display:flex;gap:8px;align-items:center"><a class="add" id="fsb_go" href="'+u+'" download="'+esc(name)+'" style="text-decoration:none;padding:9px 18px">Save file</a><a class="codelink" id="fsb_x">close</a></div>';
+    document.body.appendChild(box);
+    var done=function(){ box.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },60000); };
+    document.getElementById('fsb_go').onclick=function(){ setTimeout(done,300); };
+    document.getElementById('fsb_x').onclick=done;
+    return false;
+  }
   function openModal(title,html){modalDirty=null;document.getElementById('modal').classList.remove('fro');var sh0=document.querySelector('#modal .sheet');if(sh0)sh0.style.width='';document.getElementById('modalTitle').innerHTML=title;document.getElementById('modalBody').innerHTML=html;document.getElementById('modal').style.display='grid';}
   function closeModal(force){
     if(force!==true && typeof modalDirty==='function'){ try{ if(modalDirty() && !confirm('You have unsaved changes on this job. Discard them?'))return; }catch(e){} }
@@ -10293,9 +10304,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(code)+'/price.pdf'+(fpOmitOn()?'?includeOmit=1':''),{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'Export failed');return;}
-      var blob=await r.blob(); var u=URL.createObjectURL(blob);
-      var a=document.createElement('a'); a.href=u; a.download=code+'-price-breakdown.pdf'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){URL.revokeObjectURL(u);},4000); tShow('Price PDF downloaded');
+      if(fSaveBlob(await r.blob(),code+'-price-breakdown.pdf'))tShow('Price PDF downloaded');
     }catch(err){tShow('Export failed');}
     finally{btn.textContent=was; btn.disabled=false;}
   }
@@ -10449,9 +10458,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/invoice/'+id+'/pdf',{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PDF failed');return;}
-      var blob=await r.blob(); var u=URL.createObjectURL(blob);
-      var a=document.createElement('a'); a.href=u; a.download='invoice.pdf'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){URL.revokeObjectURL(u);},4000); tShow('Invoice PDF downloaded');
+      if(fSaveBlob(await r.blob(),'invoice.pdf'))tShow('Invoice PDF downloaded');
     }catch(err){tShow('PDF failed');}
   }
 
@@ -10529,9 +10536,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/job/'+encodeURIComponent(code)+'/flat/'+encodeURIComponent(flat)+'/signoff.pdf',{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){var e={};try{e=await r.json();}catch(_){}tShow(e.error||'PDF failed');return;}
-      var blob=await r.blob(); var u=URL.createObjectURL(blob);
-      var a=document.createElement('a'); a.href=u; a.download='flat-'+flat+'-signoff.pdf'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){URL.revokeObjectURL(u);},4000); tShow('Certificate downloaded');
+      if(fSaveBlob(await r.blob(),'flat-'+flat+'-signoff.pdf'))tShow('Certificate downloaded');
     }catch(err){tShow('PDF failed');}
   }
   async function openQaTemplate(){
@@ -12017,7 +12022,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var r=await fetch('/api/confirmations/'+encodeURIComponent(id)+'/pdf',{headers:{Authorization:'Bearer '+token}});
     if(!r.ok){ tShow('Could not build the PDF'); return; }
     var cd=r.headers.get('content-disposition')||''; var m=cd.match(/filename="([^"]+)"/);
-    var blob=await r.blob(); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=m?m[1]:'report.pdf'; document.body.appendChild(a); a.click(); a.remove();
+    fSaveBlob(await r.blob(),m?m[1]:'report.pdf');
   }
   async function cfDelete(id){
     var row=CF_ROWS.filter(function(r){return r.id===id;})[0]; if(!row)return;
@@ -12099,7 +12104,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     try{
       var r=await fetch('/api/labels/pdf',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});
       if(!r.ok){ var e=await r.json().catch(function(){return {};}); tShow(e.error||'Could not build the PDF'); return; }
-      var blob=await r.blob(); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='Etykiety '+(body.order||'labels')+'.pdf'; document.body.appendChild(a); a.click(); a.remove();
+      fSaveBlob(await r.blob(),'Etykiety '+(body.order||'labels')+'.pdf');
       loadLabelStats();
     } finally { btn.disabled=false; }
   }
@@ -12363,9 +12368,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   async function exportTests(){
     try{var r=await fetch('/api/tests/export.csv'+(TEST_VER?('?version='+encodeURIComponent(TEST_VER)):''),{headers:{Authorization:'Bearer '+token}});
       if(!r.ok){tShow('Export failed');return;}
-      var blob=await r.blob(); var u=URL.createObjectURL(blob);
-      var a=document.createElement('a'); a.href=u; a.download='test-results-v'+(TESTS.version||'')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){URL.revokeObjectURL(u);},4000);
+      fSaveBlob(await r.blob(),'test-results-v'+(TESTS.version||'')+'.csv');
     }catch(e){tShow('Export failed');}
   }
   async function submitTest(code,status){
