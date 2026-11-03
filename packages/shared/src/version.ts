@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.69.5';
+export const APP_VERSION = '1.70.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.70.0', date: '2026-11-03', changes: [
+    'Performance (Acemark PL): a new Result option, \u201cResult: production month\u201d, next to the management sheet. It is the management sheet, except that each Z job\u2019s Sales from Orpiszew count in the month(s) the job\u2019s costs were reported \u2014 material (RW) in the job\u2019s month and the invoices booked to it from the monday cost board in their months, split by cost when there are several. So a job whose materials were bought in March with only a prepayment invoiced then shows its whole sale in March, not a loss in March and a windfall at the final invoice. A finally invoiced job counts with its invoices (prepayments + final); a job not finally invoiced yet counts at its order value from Sales orders, shown in italics as an estimate (what is invoiced so far if it has no order). When the final invoice differs from the order value, the earlier months change. Jobs with no costs: their prepayments wait for the final invoice and are shown as a memo line. Invoices with no job and Trade from Poland stay in their invoice month. Memo lines show the sales as invoiced, the estimated part and the waiting prepayments; jobs with costs but no invoice and no order are listed so their Z number can be fixed. CSV export included. No migration.',
+  ] },
   { version: '1.69.5', date: '2026-11-03', changes: [
     'PDF downloads (PO, survey / install report, price breakdown, invoice, sign-off, install calendar, quotations, labels): a second PDF is no longer lost. When a PDF takes a few seconds to build, the browser no longer treats the download as coming from your click and quietly blocks the second one as “multiple automatic downloads” — the app then shows a small “File ready” box with a Save file button instead, and says “downloaded” only when it really downloaded.',
   ] },
