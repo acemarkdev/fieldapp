@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.70.2';
+export const APP_VERSION = '1.71.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.71.0', date: '2026-11-03', changes: [
+    'Sales \u25b8 Subiekt: documents without a number can now be placed from the app instead of one by one in Subiekt. Each row has a suggestion: the order whose reference (L2025 \u2026, WEB/\u2026, ZMAL/\u2026, OK \u2026, Z.\u2026, PO-AG\u2026) is written on the document, else the customer\u2019s orders (an amount within 3 % first); a material issue (RW) goes on its Z job or is marked as overhead with the reason read from its Podtytu\u0142 (trials / CNC, scrap, warranty, shipment to the UK, production, stock correction); scrap sales, commission invoices and zero-value documents as other income. One click applies a suggestion; \u201cApply the ticked\u201d places all the clear ones at once after a review list. Search finds any order or Z job. Everything placed in the app is listed with an undo; a number written in Subiekt still wins.',
+    'An invoice already noted on a sales order (its \u201cInvoice numbers\u201d) leaves the to-check list. Linking to an order with a Z number or an OK code of its own puts the invoice under that job; otherwise the invoice number is noted on the order.',
+    'Needs migration 0116 (Supabase) for placing on a job and for the reasons; marking as \u201cnot a job\u201d works without it.',
+  ] },
   { version: '1.70.2', date: '2026-11-03', changes: [
     'Sales rep: a Fin&Ops app granted to the role on Admin \u25b8 Roles (e.g. Job costs) now also reopens after a page reload; before, the rep was always sent back to Sales orders.',
   ] },

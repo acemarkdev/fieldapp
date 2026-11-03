@@ -18,6 +18,10 @@ export interface SubDoc {
   net: number; gross: number | null; currency: string | null; rate: number | null; units: number | null;
   subtitle: string | null; notes: string | null; flag: number | null; corrects: number | null;
   customer: string | null; country: string | null; not_job?: boolean;
+  /** placed from the app (migration 0116): a Z job / order code, or why it belongs to no job */
+  assigned_ref?: string | null; not_job_reason?: string | null; assigned_by?: string | null;
+  /** its invoice number is noted on a sales order ("Invoice numbers") — placed there */
+  linked?: boolean;
 }
 const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -53,7 +57,7 @@ export function okCode(text: unknown): string | null {
   return /^OK /.test(code) ? code : null;
 }
 export type CheckReason = 'no_number' | 'several_jobs' | 'no_rate';
-export interface DocClass { job_ref: string | null; from: 'subtitle' | 'notes' | 'order' | 'corrected' | null; check: CheckReason | null }
+export interface DocClass { job_ref: string | null; from: 'subtitle' | 'notes' | 'order' | 'app' | 'corrected' | null; check: CheckReason | null }
 /** Which job a document belongs to — or why that cannot be said. `byId` lets a correction with no
  *  number of its own take the job of the invoice it corrects. */
 export function classifyDoc(d: SubDoc, byId?: Map<number, SubDoc>): DocClass {
@@ -72,6 +76,9 @@ export function classifyDoc(d: SubDoc, byId?: Map<number, SubDoc>): DocClass {
     const ok = okCode(sub) ?? okCode(d.notes);
     if (ok) return { job_ref: ok, from: 'order', check: null };
   }
+  // placed from the app (the Subiekt fields above win once they carry a number); an RW only on a Z job
+  const app = clean(d.assigned_ref);
+  if (app && (d.symbol !== 'RW' || /^Z\.\d+$/.test(app))) return { job_ref: app, from: 'app', check: null };
   if (d.corrects && byId) {
     const orig = byId.get(d.corrects);
     if (orig) { const c = classifyDoc(orig); if (c.job_ref) return { job_ref: c.job_ref, from: 'corrected', check: null }; }
@@ -98,7 +105,7 @@ export const refCountry = (ref: string | null) => { const m = /^OK ([A-Za-z]{2})
 export function saleRow(d: SubDoc, c: DocClass, supplierOf?: (jobRef: string) => string | null, countryOf?: (jobRef: string) => string | null): Record<string, any> {
   const net = toPln(d.net, d), gross = toPln(d.gross, d);
   const date = d.issued ?? d.sold;
-  const check: CheckReason | null = net === null ? 'no_rate' : (c.check && !d.not_job ? c.check : null);
+  const check: CheckReason | null = net === null ? 'no_rate' : (c.check && !d.not_job && !d.linked ? c.check : null);
   const production = !!c.job_ref && /^Z\./.test(c.job_ref);
   const foreign = !isPln(d.currency) ? `${d.currency}: ${d.net.toFixed(2)} net${d.rate ? `, rate ${d.rate}${d.units && d.units !== 1 ? '/' + d.units : ''}` : ''}` : '';
   return {
@@ -196,13 +203,25 @@ export function planMaterial(docs: SubDoc[], jobs: JobLite[], items: ItemLite[])
   return plan;
 }
 
+const alnumKey = (s: unknown) => clean(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+export const invoiceKey = (no: unknown) => alnumKey(no);
+/** Invoice numbers noted on sales orders — a sales document there is already placed. */
+export function notedInvoices(orders: { invoice_refs: string | null }[]): Set<string> {
+  const out = new Set<string>();
+  for (const o of orders) for (const no of clean(o.invoice_refs).split(/[,;]+/)) { const k = alnumKey(no); if (k.length >= 3) out.add(k); }
+  return out;
+}
+/** Mark the sales documents whose number is noted on an order. */
+export function withLinks(docs: SubDoc[], noted: Set<string>): SubDoc[] {
+  return docs.map((d) => ((SALE_SYMBOLS as readonly string[]).includes(d.symbol) && d.number && noted.has(alnumKey(d.number)) ? { ...d, linked: true } : d));
+}
 /** The documents that need a number in Subiekt, newest first (for the list in the app). */
 export function docsToCheck(docs: SubDoc[]): (SubDoc & { reason: CheckReason; net_pln: number | null })[] {
   const byId = new Map(docs.map((d) => [d.doc_id, d]));
   const out: (SubDoc & { reason: CheckReason; net_pln: number | null })[] = [];
   for (const d of docs) {
     const net_pln = toPln(d.net, d);
-    const reason: CheckReason | null = net_pln === null ? 'no_rate' : (d.not_job ? null : classifyDoc(d, byId).check);
+    const reason: CheckReason | null = net_pln === null ? 'no_rate' : (d.not_job || d.linked ? null : classifyDoc(d, byId).check);
     if (reason) out.push({ ...d, reason, net_pln });
   }
   return out.sort((a, b) => String(b.issued ?? '').localeCompare(String(a.issued ?? '')) || b.doc_id - a.doc_id);
@@ -226,7 +245,7 @@ export async function agentTenant(key: unknown): Promise<string | null> {
 }
 
 // ---- storage -----------------------------------------------------------------------------------
-async function all<T>(table: string, cols: string, tenantId: string): Promise<T[]> {
+export async function all<T>(table: string, cols: string, tenantId: string): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db().from(table).select(cols).eq('tenant_id', tenantId).order(table === 'fin_subiekt_docs' ? 'doc_id' : 'id').range(from, from + 999);
@@ -248,9 +267,8 @@ export interface SyncSummary {
 }
 /** Rebuild the Sales tab and the material lines from the stored documents. */
 export async function applyDocs(tenantId: string): Promise<SyncSummary> {
-  const docs = await listDocs(tenantId);
   const [sales, orders, jobs, items] = await Promise.all([
-    all<any>('fin_sales', '*', tenantId), all<any>('fin_orders', 'order_ref,job_ref,supplier' + ((await colReady('fin_orders', 'customer_id')) ? ',customer_id' : ''), tenantId),
+    all<any>('fin_sales', '*', tenantId), all<any>('fin_orders', 'order_ref,job_ref,supplier,invoice_refs' + ((await colReady('fin_orders', 'customer_id')) ? ',customer_id' : ''), tenantId),
     all<any>('fin_jobs', 'id,reference_key,locked', tenantId), all<any>('fin_job_items', 'id,job_id,kind,source,source_id,amount,invoice_no,item_date', tenantId),
   ]);
   const supplier = new Map<string, string>(), country = new Map<string, string>();
@@ -259,6 +277,7 @@ export async function applyDocs(tenantId: string): Promise<SyncSummary> {
   let custCountry = new Map<string, string>();
   try { custCountry = new Map((await all<any>('fin_customers', 'id,country', tenantId)).filter((c) => c.country).map((c) => [c.id, countryCode(c.country) ?? String(c.country)])); } catch { /* before 0111 */ }
   for (const o of orders) { const cc = refCountry(o.order_ref) ?? (o.customer_id ? custCountry.get(o.customer_id) : null); const code = orderCode(o.job_ref ?? ''); if (cc && code && !country.has(noKey(code))) country.set(noKey(code), cc); }
+  const docs = withLinks(await listDocs(tenantId), notedInvoices(orders));
   const sp = planSales(docs, sales, (ref) => supplier.get(noKey(ref)) ?? null, (ref) => { const code = orderCode(ref); return code ? country.get(noKey(code)) ?? null : null; });
   const now = new Date().toISOString();
   for (let i = 0; i < sp.insert.length; i += 200) { const { error } = await db().from('fin_sales').insert(sp.insert.slice(i, i + 200).map((r) => ({ tenant_id: tenantId, created_by: 'Subiekt', ...r }))); if (error) throw error; }
@@ -297,11 +316,27 @@ export async function receiveSnapshot(tenantId: string, body: any): Promise<{ ok
 }
 export async function lastSync(): Promise<SyncSummary | null> { try { return JSON.parse((await getConfig('subiekt_last_sync')) || 'null'); } catch { return null; } }
 export async function hasAgentKey(): Promise<boolean> { try { return !!JSON.parse((await getConfig('subiekt_agent')) || 'null')?.hash; } catch { return false; } }
-/** The accountant's "belongs to no job" tick on a sales document. */
-export async function setNotJob(tenantId: string, docId: number, value: boolean, by: string): Promise<boolean> {
-  const { data, error } = await db().from('fin_subiekt_docs').update({ not_job: value, not_job_by: value ? by : null }).eq('tenant_id', tenantId).eq('doc_id', docId).in('symbol', [...SALE_SYMBOLS]).select('doc_id');
+/** The accountant's "belongs to no job" tick: a sales document (other income) or a material issue (overhead).
+ *  Several at once, then one rebuild. Returns how many were found. */
+export async function setNotJob(tenantId: string, list: { doc_id: number; value: boolean; reason?: string | null }[], by: string): Promise<number> {
+  const withReason = await colReady('fin_subiekt_docs', 'not_job_reason');
+  let n = 0;
+  for (const x of list) {
+    const fields: Record<string, any> = { not_job: x.value, not_job_by: x.value ? by : null };
+    if (withReason) { fields.not_job_reason = x.value ? clean(x.reason).slice(0, 40) || null : null; if (x.value) fields.assigned_ref = null; }
+    const { data, error } = await db().from('fin_subiekt_docs').update(fields).eq('tenant_id', tenantId).eq('doc_id', x.doc_id).select('doc_id');
+    if (error) throw error;
+    n += (data ?? []).length;
+  }
+  if (n) await applyDocs(tenantId);
+  return n;
+}
+/** Place a document on a Z job or an order code from the app (null takes it off again). */
+export async function setAssigned(tenantId: string, docId: number, ref: string | null, by: string, rebuild = true): Promise<'ok' | 'not_found' | 'not_ready'> {
+  if (!(await colReady('fin_subiekt_docs', 'assigned_ref'))) return 'not_ready';
+  const { data, error } = await db().from('fin_subiekt_docs').update({ assigned_ref: ref ? clean(ref).slice(0, 80) : null, assigned_by: ref ? by : null, ...(ref ? { not_job: false, not_job_by: null, not_job_reason: null } : {}) }).eq('tenant_id', tenantId).eq('doc_id', docId).select('doc_id');
   if (error) throw error;
-  if (!(data ?? []).length) return false;
-  await applyDocs(tenantId);
-  return true;
+  if (!(data ?? []).length) return 'not_found';
+  if (rebuild) await applyDocs(tenantId);
+  return 'ok';
 }

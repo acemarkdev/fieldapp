@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/subiekt.test.ts   (the examples are real subtitles from the Subiekt database)
-import { zNumbers, okCode, classifyDoc, toPln, saleRow, planSales, planMaterial, docsToCheck, docFromAgent, countryCode, refCountry, type SubDoc } from './subiekt';
+import { zNumbers, okCode, classifyDoc, toPln, saleRow, planSales, planMaterial, docsToCheck, docFromAgent, countryCode, refCountry, withLinks, notedInvoices, type SubDoc } from './subiekt';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -91,5 +91,15 @@ ok('no country in Subiekt, Z job → its sales order', saleRow(privZ, classifyDo
 const firm = doc('FS', 'OK UK203071', null, 1000, { country: 'Niemcy' });
 ok('the country in Subiekt wins', saleRow(firm, classifyDoc(firm), undefined, () => 'IE').country === 'DE');
 ok('a stored row without a country is filled on the next sync', planSales([priv], [{ id: 'S9', ...saleRow(priv, classifyDoc(priv)), country: null }]).update[0]?.fields.country === 'UK');
+// Placed from the app (migration 0116)
+const placed = doc('FS', ' EQ - L2025 12462 - 3Sphere ', null, 152006.26, { assigned_ref: 'Z.409' });
+ok('a document placed in the app takes that job', c(placed) === 'Z.409|ok|app' && saleRow(placed, classifyDoc(placed)).job_key !== null && saleRow(placed, classifyDoc(placed)).needs_check === null);
+ok('a number in Subiekt wins over the app', c(doc('FS', 'Z.414', null, 100, { assigned_ref: 'Z.409' })) === 'Z.414|ok|subtitle');
+ok('an RW placed in the app goes on a Z job only', c(doc('RW', 'L2025 16840', null, 4891.88, { assigned_ref: 'Z.390' })) === 'Z.390|ok|app' && c(doc('RW', null, null, 10, { assigned_ref: 'OK PL202950' })) === '-|no_number|-');
+const rwOver = doc('RW', 'Próby na CNC', null, 428, { not_job: true, not_job_reason: 'trials' });
+ok('an RW marked as overhead leaves the list', !docsToCheck([rwOver]).length && docsToCheck([doc('RW', 'Próby na CNC', null, 428)]).length === 1);
+const noted = doc('FS', 'EQ - L2025 12462 - 3Sphere', null, 10455, { number: 'FS 3/ACE/08/2026' });
+const linkedDocs = withLinks([noted, doc('RW', null, null, 5, { number: 'FS 3/ACE/08/2026' })], notedInvoices([{ invoice_refs: 'FS 1/ACE/08/2026; fs 3/ace/08/2026' }, { invoice_refs: null }]));
+ok('an invoice noted on an order leaves the list (an RW never counts as noted)', linkedDocs[0].linked === true && !linkedDocs[1].linked && docsToCheck(linkedDocs).length === 1 && saleRow(linkedDocs[0], classifyDoc(linkedDocs[0])).needs_check === null);
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('subiekt: all passed');
