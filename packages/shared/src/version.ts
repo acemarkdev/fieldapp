@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.70.1';
+export const APP_VERSION = '1.70.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.70.2', date: '2026-11-03', changes: [
+    'Sales rep: a Fin&Ops app granted to the role on Admin \u25b8 Roles (e.g. Job costs) now also reopens after a page reload; before, the rep was always sent back to Sales orders.',
+  ] },
   { version: '1.70.1', date: '2026-11-03', changes: [
     'Performance \u25b8 Result (UoR, IFRS, production month): while the job costs are still loading, RESULT and the lines that still change (job costs, cost of trade goods, sales costs, commission, production overheads, EBITDA, operating profit, profit before tax) show \u201c\u2026\u201d instead of a number without the job costs, which could look like a real result for a few seconds. Negative and estimated numbers on the purple RESULT bar are now light red / light amber so they can be read.',
   ] },

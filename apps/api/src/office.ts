@@ -5501,7 +5501,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(myRole==='scaffolder')return 'home';
     if(myRole==='logistics') return (t==='confirm'||t==='labels')?t:'labels';
     if(myRole==='acemark_finance'&&t!=='finwh'&&t!=='finstock'&&t!=='labels'&&t!=='confirm') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales'||t==='finpay'||t==='finorders'||t==='fincomm'||t==='finman')?t:'finperf';
-    if(myRole==='sales_rep') return (t==='finorders'||t==='fincomm'||t==='finman')?t:'finorders';
+    // a rep keeps their own tabs, plus any Fin&Ops app granted on Admin ▸ Roles (e.g. Job costs)
+    if(myRole==='sales_rep'){ var repApp={finperf:'fin.performance',fincosts:'fin.costs',finjobs:'fin.jobs',finsales:'fin.sales',finpay:'fin.payroll',finstock:'fin.stock',finwh:'wh.issues'}; return (t==='finorders'||t==='fincomm'||t==='finman'||(repApp[t]&&canApp(repApp[t])!=='off'))?t:'finorders'; }
     if(myRole==='acemark_fitter') return 'myexp';
     if(myRole==='production_manager'||myRole==='production_lead'||myRole==='production'||myRole==='warehouse') return (t==='finwh'&&canApp('wh.issues')!=='off')?t:'prod';
     // Fin&Ops tabs and Warehouse issues follow the role's app access (Admin ▸ Roles), not the capability
