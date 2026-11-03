@@ -12,11 +12,13 @@
       .\ace-subiekt-agent.ps1 -Uninstall  removes the scheduled task
       .\ace-subiekt-agent.ps1 -Explore    lists Subiekt's product / stock tables and a few product symbols
                                           (sends nothing) - used once to check the stock query
+      .\ace-subiekt-agent.ps1 -ExploreCountry  lists where Subiekt keeps a customer's address country and the
+                                          invoices whose customer has no country of registration (sends nothing)
 
   Settings are in config.json next to this file; the SQL password and the agent key are stored
   encrypted (Windows DPAPI, this computer only) in secrets.bin. Works with Windows PowerShell 5.1.
 #>
-param([switch]$Setup, [switch]$Preview, [switch]$Install, [switch]$Uninstall, [switch]$Explore)
+param([switch]$Setup, [switch]$Preview, [switch]$Install, [switch]$Uninstall, [switch]$Explore, [switch]$ExploreCountry)
 
 $ErrorActionPreference = 'Stop'
 $AgentVersion = '1.2'
@@ -176,6 +178,52 @@ where a.Symbol like 'COR%' or a.Symbol like '[0-9][0-9][0-9][0-9][0-9][0-9]%' or
     Write-Host '=== Stock query test ==='
     try { $st = Read-Rows $conn $StockQuery @{}; Write-Host ('Stock rows: ' + $st.Count); $st | Select-Object -First 15 | Format-Table -AutoSize | Out-String -Width 220 | Write-Host }
     catch { Write-Host ('Stock query failed: ' + $_.Exception.Message) }
+  } finally { $conn.Close() }
+  Write-Host 'Nothing was sent. Copy everything above into the chat with Claude.'
+  exit 0
+}
+
+# Where is the country of a private customer? Sales invoices read the customer's country of registration, which is
+# often empty for a private person - the country is then only in the address. Lists the address / country tables and
+# the newest invoices whose customer has no country of registration. Sends nothing.
+if ($ExploreCountry) {
+  $cfg = Read-Config; $sec = Read-Secrets
+  $conn = Open-Subiekt $cfg $sec
+  try {
+    Write-Host '=== Podmioty: all columns ==='
+    $pc = Read-Rows $conn @"
+select c.COLUMN_NAME as c, c.DATA_TYPE as ty from INFORMATION_SCHEMA.COLUMNS c
+where c.TABLE_SCHEMA = 'ModelDanychContainer' and c.TABLE_NAME = 'Podmioty' order by c.ORDINAL_POSITION
+"@ @{}
+    Write-Host ((($pc | ForEach-Object { $_.c + '(' + $_.ty + ')' }) -join ', ')); Write-Host ''
+    Write-Host '=== Tables about addresses, countries, persons, contacts ==='
+    $cols = Read-Rows $conn @"
+select c.TABLE_NAME as t, c.COLUMN_NAME as c, c.DATA_TYPE as ty
+from INFORMATION_SCHEMA.COLUMNS c
+where c.TABLE_SCHEMA = 'ModelDanychContainer'
+  and (c.TABLE_NAME like '%Adres%' or c.TABLE_NAME like '%Panstw%' or c.TABLE_NAME like '%Osob%' or c.TABLE_NAME like '%Kontakt%' or c.TABLE_NAME like '%Klient%' or c.TABLE_NAME like '%Odbiorc%')
+order by c.TABLE_NAME, c.ORDINAL_POSITION
+"@ @{}
+    $cols | Group-Object t | ForEach-Object { Write-Host ($_.Name + ': ' + (($_.Group | ForEach-Object { $_.c + '(' + $_.ty + ')' }) -join ', ')); Write-Host '' }
+    Write-Host '=== Every column that points to a country ==='
+    $pz = Read-Rows $conn @"
+select c.TABLE_NAME as t, c.COLUMN_NAME as c from INFORMATION_SCHEMA.COLUMNS c
+where c.TABLE_SCHEMA = 'ModelDanychContainer' and c.COLUMN_NAME like '%Panstw%' order by c.TABLE_NAME, c.COLUMN_NAME
+"@ @{}
+    $pz | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
+    Write-Host '=== Newest 15 sales invoices whose customer has no country of registration ==='
+    try {
+      $nd = Read-Rows $conn @"
+select top 15 d.Id as doc_id, d.NumerWewnetrzny_PelnaSygnatura as number, convert(varchar(10), d.DataWydaniaWystawienia, 23) as issued,
+       p.Id as podmiot_id, left(p.NazwaSkrocona, 50) as customer, left(d.Podtytul, 60) as subtitle
+from ModelDanychContainer.Dokumenty d
+left join ModelDanychContainer.Podmioty p on p.Id = d.PodmiotId
+left join ModelDanychContainer.Panstwa pa on pa.Id = p.Podmiot_PanstwoRejestracji_Id
+where d.Symbol in ('FS', 'FL', 'KFS', 'KFL') and pa.Id is null
+order by d.Id desc
+"@ @{}
+      $nd | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
+    } catch { Write-Host ('(could not read the invoices: ' + $_.Exception.Message + ')') }
   } finally { $conn.Close() }
   Write-Host 'Nothing was sent. Copy everything above into the chat with Claude.'
   exit 0
