@@ -37,6 +37,7 @@ import { attachJobs, jobOrders, syncOrdersFromJob, autoLinkZ, syncAfterLinks, jo
 import { listTasks as listProdTasks, importTasks as importProdTasks, addTask as addProdTask, setTaskActive, setTasksActive, deleteTasks as deleteProdTasks, listEditLog, listEntries as listTimeEntries, saveEntry as saveTimeEntry, deleteEntry as deleteTimeEntry, deleteEntries as deleteTimeEntries, listRates as listWorkerRates, setRate as setWorkerRate, hoursBetween, rateRows, rateBook, rateFor, removeRateRow, recordDefaultRate, todayPL, PROD_COMPANIES, prodCompanyOf, prodCompanyMap, userProdCompany, setUserProdCompany, type ProdCompany } from './prodTime';
 import { agentTenant, receiveSnapshot, lastSync, hasAgentKey, newAgentKey, setNotJob, setAssigned } from './subiekt';
 import { checkList, matchData, linkToOrder, linkMany, NOT_JOB_REASONS, NOT_JOB_LABEL } from './subiektMatch';
+import { keyFromRequest, rateLimited, parseQuery, readEntries, listApiKeys, createApiKey, revokeApiKey } from './timeApi';
 import * as scaf from './scaffolding';
 import * as scafQ from './scafQuotes';
 import * as scafJ from './scafJobs';
@@ -407,6 +408,18 @@ const server = createServer(async (req, res) => {
         res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
         res.end(bytes);
       } catch { res.writeHead(404); res.end('not found'); }
+      return;
+    }
+    // Production time API for an external system (no user session): read-only, its own API key. See timeApi.ts.
+    if (p === '/api/v1/time-entries') {
+      if (req.method !== 'GET') { res.setHeader('allow', 'GET'); send(res, 405, { error: 'Only GET.' }); return; }
+      const key = await keyFromRequest(req.headers as any);
+      if (!key) { send(res, 401, { error: 'Missing or unknown API key. Send it in the X-API-Key header.' }); return; }
+      if (rateLimited(key.id)) { res.setHeader('retry-after', '60'); send(res, 429, { error: 'Too many requests — at most 120 a minute.' }); return; }
+      const q = parseQuery(url.searchParams, key);
+      if (!q.ok) { send(res, 400, { error: q.error }); return; }
+      try { send(res, 200, await readEntries(key.tenant_id, q)); }
+      catch (e: any) { console.error('time api', e?.message ?? e); send(res, 500, { error: 'Could not read the time entries.' }); }
       return;
     }
     // Subiekt agent (a script on the Subiekt machine, no user session): authenticated by its own key,
@@ -822,6 +835,24 @@ const server = createServer(async (req, res) => {
     if (ctx.role === 'warehouse' && p !== '/api/me' && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
     if (ctx.role === 'production' && p !== '/api/me' && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
     if ((ctx.role === 'production_manager' || ctx.role === 'production_lead') && !(p === '/api/me' || (finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission') || p === '/api/production' || p.startsWith('/api/production/') || p.startsWith('/api/cortizo/'))) { send(res, 403, { error: 'Not allowed.' }); return; }
+    // Production time ▸ API access: the keys an external system uses (admin only; a key is shown once)
+    if (p === '/api/time-api/keys' || p.startsWith('/api/time-api/keys/')) {
+      if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin manages API keys.' }); return; }
+      if (p === '/api/time-api/keys' && req.method === 'GET') { send(res, 200, { keys: await listApiKeys(ctx.tenant_id) }); return; }
+      if (p === '/api/time-api/keys' && req.method === 'POST') {
+        const b = await readJson(req), r = await createApiKey(ctx.tenant_id, ctx.name, b.name, b.company);
+        if (!r.ok) { send(res, 400, { error: r.error }); return; }
+        audit(ctx, 'timeapi.key', null, r.id, `Created the time API key “${String(b.name ?? '').slice(0, 60)}”`);
+        send(res, 200, r); return;
+      }
+      const id = p.split('/')[4] ?? '';
+      if (id && req.method === 'DELETE') {
+        if (!(await revokeApiKey(ctx.tenant_id, id))) { send(res, 404, { error: 'Key not found.' }); return; }
+        audit(ctx, 'timeapi.key', null, id, 'Revoked a time API key');
+        send(res, 200, { ok: true }); return;
+      }
+      send(res, 404, { error: 'Not found.' }); return;
+    }
     if (p === '/api/production' || p.startsWith('/api/production/')) {
       if (!allow('time.manage')) return;
       const parts = p.split('/'), a = parts[3] ?? '', id = parts[4] ?? '', sub = parts[5] ?? '';
@@ -5071,7 +5102,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
   <div id="prodView" style="display:none">
     <main style="max-width:1300px">
-      <div class="titlerow"><div><h2 id="pv_title">Production time</h2><div class="sub" id="pv_sub"></div></div></div>
+      <div class="titlerow"><div><h2 id="pv_title">Production time</h2><div class="sub" id="pv_sub"></div></div><div style="align-self:center"><button class="pobtn" id="pv_api" style="display:none" onclick="taOpen()">API access</button></div></div>
       <div id="pv_run" style="margin-top:12px"></div>
       <div class="chips" id="pv_chips" style="margin:4px 0 12px"></div>
       <div id="pv_body"></div>
@@ -7587,8 +7618,30 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     pvCompanyHead();
     renderProd(quiet);
   }
+  // ---- Production time ▸ API access: keys for an external system (admin) ----
+  var TA={keys:null,fresh:null};
+  async function taOpen(){
+    try{ var r=await api('/api/time-api/keys'); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not load'); TA.keys=d.keys||[]; }catch(e){ tShow(e.message||'Could not load'); return; }
+    taRender();
+  }
+  function taRender(){
+    var base=location.origin, k=TA.keys||[];
+    var h='<div style="padding:16px 22px 22px"><p class="sub" style="margin:0 0 10px">'+esc(TR('An external system can read the time entries (who, which task and job, start, end, hours, time type and quantity — never pay rates) with a GET request and an API key. Give each system its own key, so it can be revoked on its own.'))+'</p>'
+      +'<div class="card2" style="padding:10px 12px;margin:0 0 12px;font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all">GET '+esc(base)+'/api/v1/time-entries?from=2026-11-01&amp;to=2026-11-30\\nX-API-Key: tak_…\\n\\n'+esc(TR('Optional: company=acemark|wem · limit (max 5000, default 1000) · offset (use next_offset). Days are in Polish time; at most 93 days per request; 120 requests a minute.'))+'</div>';
+    if(TA.fresh)h+='<div class="card2" style="padding:10px 12px;margin:0 0 12px;background:#fffbeb;border-color:#f59e0b"><div style="font-weight:800;color:#b45309;margin:0 0 6px">'+esc(TR('Copy the key now — it is shown only once.'))+'</div><input class="tinput" readonly style="width:100%;font-family:ui-monospace,Menlo,monospace" value="'+av(TA.fresh)+'" onclick="this.select()"></div>';
+    h+='<div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px;margin:0 0 6px">'+esc(T('KEYS ({0})',k.length))+'</div>';
+    h+=k.length?'<table class="fjl"><thead><tr><th>'+esc(TR('NAME'))+'</th><th>'+esc(TR('COMPANY'))+'</th><th>'+esc(TR('CREATED'))+'</th><th>'+esc(TR('LAST USED'))+'</th><th></th></tr></thead><tbody>'+k.map(function(x){ return '<tr><td style="font-weight:700">'+esc(x.name)+'</td><td>'+esc(x.company==='wem'?'WEM':x.company==='acemark'?'Acemark':TR('All'))+'</td><td>'+esc(sbWhen(x.created_at))+' · '+esc(x.created_by||'')+'</td><td>'+esc(x.last_used_at?sbWhen(x.last_used_at):TR('never'))+'</td><td><a class="codelink" style="color:#b42318" data-tarev="'+av(x.id)+'">'+esc(TR('revoke'))+'</a></td></tr>'; }).join('')+'</tbody></table>':'<div class="sub" style="margin:0">'+esc(TR('No keys yet.'))+'</div>';
+    h+='<div style="display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap"><input id="ta_name" class="tinput" style="min-width:260px" placeholder="'+av(TR('Name: the system that will use it'))+'"><select id="ta_co" class="tinput"><option value="">'+esc(TR('All companies'))+'</option><option value="acemark">Acemark</option><option value="wem">WEM</option></select><button class="add" id="ta_new">'+esc(TR('Create key'))+'</button></div></div>';
+    openModal(TR('API access'),h);
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='860px';
+    document.getElementById('ta_new').onclick=async function(){ var b={name:document.getElementById('ta_name').value,company:document.getElementById('ta_co').value};
+      try{ var r=await api('/api/time-api/keys',{method:'POST',body:JSON.stringify(b)}); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not save'); TA.fresh=d.key; await taOpen(); }catch(e){ tShow(e.message||'Could not save'); } };
+    document.querySelectorAll('[data-tarev]').forEach(function(a){ a.onclick=async function(){ if(!fConfirm('Revoke this key? The system using it stops getting data at once.'))return;
+      try{ var r=await api('/api/time-api/keys/'+encodeURIComponent(a.getAttribute('data-tarev')),{method:'DELETE'}); var d=await r.json(); if(!r.ok)throw new Error(d.error||'Could not save'); TA.fresh=null; await taOpen(); }catch(e){ tShow(e.message||'Could not save'); } }; });
+  }
   // Company context: Acemark or WEM. A production manager sees only theirs; admin switches between them.
   function pvCompanyHead(){
+    var apiB=document.getElementById('pv_api'); if(apiB)apiB.style.display=myRole==='admin'?'':'none';
     var d=PV.d||{}, cos=d.companies||[], cur=d.company||'acemark', name=(cos.filter(function(c){ return c.key===cur; })[0]||{name:'Acemark'}).name;
     var t=document.getElementById('pv_title');
     var cur0=document.getElementById('pv_co');
