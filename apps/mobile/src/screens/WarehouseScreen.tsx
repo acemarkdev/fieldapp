@@ -30,6 +30,8 @@ export default function WarehouseScreen() {
 }
 
 const EMPTY: WhForm = { job: '', symbol: '', qty: '', location: '', box: '', note: '' };
+/** A symbol compared without spaces or case: "4342 RAL 7044" is "4342 RAL7044". */
+const noSpaces = (v: string) => v.replace(/\s+/g, '').toUpperCase();
 
 function Issues({ kind }: { kind: 'issue' | 'return' }) {
   const ret = kind === 'return';
@@ -72,7 +74,7 @@ function Issues({ kind }: { kind: 'issue' | 'return' }) {
       const { data, error } = await supabase.rpc('wh_items', { p_query: q });
       if (error) return;
       const rows = ((data as any[]) ?? []).map((r) => ({ ...r, stock: r.stock == null ? null : Number(r.stock) })) as WhItem[];
-      const exact = rows.find((r) => r.symbol.toUpperCase() === q.toUpperCase()) ?? null;
+      const exact = rows.find((r) => noSpaces(r.symbol) === noSpaces(q)) ?? null;   // spacing does not matter (0117)
       setItem(exact); setHints(exact ? [] : rows.slice(0, 6));
     }, 300);
     return () => clearTimeout(t);
@@ -105,7 +107,7 @@ function Issues({ kind }: { kind: 'issue' | 'return' }) {
       if (!goOn) return;
     }
     if (busy) return; setBusy(true);
-    const { error } = await supabase.rpc('wh_save_issue', { p_id: editing, p_job: zRef(form.job), p_symbol: form.symbol.trim(), p_qty: parseQty(form.qty),
+    const { error } = await supabase.rpc('wh_save_issue', { p_id: editing, p_job: zRef(form.job), p_symbol: (item && noSpaces(item.symbol) === noSpaces(form.symbol) ? item.symbol : form.symbol).trim(), p_qty: parseQty(form.qty),
       p_location: form.location.trim(), p_box: form.box.trim(), p_note: form.note.trim(), p_kind: kind });
     setBusy(false);
     if (error) { Alert.alert('Nie udało się', plError(error)); return; }

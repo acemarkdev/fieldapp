@@ -76,4 +76,7 @@
 //   Moje wpisy show type and quantity and can correct them. Needs migrations 0114 and 0115; without them nothing changes.
 // 0.76.6 — WEM: the "Ilość wykonana" field at STOP and in the entry correction is full height on Android (it was a
 //   sliver that hid what was typed). Over the air on 0.76.0.
-export const APP_VERSION = '0.76.6';
+// 0.76.7 — Warehouse: a symbol typed with different spacing ("4342 RAL 7044 CM 4500 MM" / "4342 RAL7044 CM 4500MM")
+//   is recognised on the Subiekt stock list, saved with Subiekt's spelling, and a return counts what was issued
+//   under either spelling ("Więcej niż wydano" no longer appears just for spacing). Needs migration 0117. Over the air on 0.76.0.
+export const APP_VERSION = '0.76.7';
