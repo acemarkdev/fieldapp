@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.72.0';
+export const APP_VERSION = '1.72.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.72.1', date: '2026-11-04', changes: [
+    'Polish version: about 400 texts that were still in English are now translated \u2014 the Sales order window (quotes, documents, reps and bonuses, delivery address, countries), Performance (the Result options and the UoR / IFRS and production-month lines with their tips), Subiekt matching, Production time (WEM orders, catalogue, analysis, API access, deleting tasks and entries), Labels and Report confirmations (now translated too), and the common messages (saved, failed, uploading\u2026).',
+  ] },
   { version: '1.72.0', date: '2026-11-04', changes: [
     'Production time \u25b8 API access (admin): an external system can read the time entries with GET /api/v1/time-entries?from=\u2026&to=\u2026 and an API key (header X-API-Key). One key per system, optionally for one company (Acemark / WEM); the key is shown once, only its hash is kept, and it can be revoked at once. Returns worker, task, job, start, end, hours, time type and quantity done \u2014 never pay rates. Up to 93 days and 5000 entries a page, 120 requests a minute. See docs/time-api.md.',
   ] },
