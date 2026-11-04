@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.72.1';
+export const APP_VERSION = '1.72.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.72.2', date: '2026-11-04', changes: [
+    'Sales orders \u25b8 quotes: a third Scope, \u201cSelf pickup\u201d (Odbi\u00f3r w\u0142asny) \u2014 the customer collects, so neither the installation nor the delivery cost counts in the quote\u2019s cost, margin or the order\u2019s budget. Needs migration 0118.',
+  ] },
   { version: '1.72.1', date: '2026-11-04', changes: [
     'Polish version: about 400 texts that were still in English are now translated \u2014 the Sales order window (quotes, documents, reps and bonuses, delivery address, countries), Performance (the Result options and the UoR / IFRS and production-month lines with their tips), Subiekt matching, Production time (WEM orders, catalogue, analysis, API access, deleting tasks and entries), Labels and Report confirmations (now translated too), and the common messages (saved, failed, uploading\u2026).',
   ] },

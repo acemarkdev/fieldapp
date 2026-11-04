@@ -18,7 +18,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export const QUOTE_STATUSES = ['sent', 'approved', 'rejected', 'rework'] as const;
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
-export type QuoteScope = 'delivery' | 'install';
+export type QuoteScope = 'delivery' | 'install' | 'pickup';   // pickup = the customer collects (migration 0118)
 export const ORDER_FILE_BUCKET = 'orderfiles';
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
@@ -36,10 +36,11 @@ export function quoteInForce<T extends { version: number; status: string }>(quot
   if (!quotes.length) return null;
   return quotes.find((q) => q.status === 'approved') ?? quotes.reduce((a, b) => (b.version > a.version ? b : a));
 }
-/** A quote's total cost; installation does not count when we only deliver. `fees` = the other reps' fees at this
+/** A quote's total cost; installation does not count when we only deliver, and neither installation nor delivery
+ *  when the customer picks it up. `fees` = the other reps' fees at this
  *  quote's amount (a % of it, or a fixed sum). */
 export function quoteCost(q: { scope: QuoteScope; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null }, fees = 0): number {
-  return round2((q.cost_purchase ?? 0) + (q.scope === 'install' ? q.cost_install ?? 0 : 0) + (q.cost_delivery ?? 0) + fees);
+  return round2((q.cost_purchase ?? 0) + (q.scope === 'install' ? q.cost_install ?? 0 : 0) + (q.scope === 'pickup' ? 0 : q.cost_delivery ?? 0) + fees);
 }
 export function quoteMargin(q: Parameters<typeof quoteCost>[0] & { amount: number }, fees = 0): number | null {
   return q.amount ? round2((q.amount - quoteCost(q, fees)) / q.amount) : null;
@@ -50,7 +51,7 @@ export function orderFromQuotes(quotes: QuoteRow[]): { net: number; cost_purchas
   if (!q) return null;
   const newest = quotes.reduce((a, b) => (b.version > a.version ? b : a));
   const status = q.status === 'approved' ? 'accepted' : newest.status === 'rejected' ? 'lost' : 'offer';
-  return { net: q.amount, cost_purchase: q.cost_purchase, cost_install: q.scope === 'install' ? q.cost_install : 0, cost_delivery: q.cost_delivery, status };
+  return { net: q.amount, cost_purchase: q.cost_purchase, cost_install: q.scope === 'install' ? q.cost_install : 0, cost_delivery: q.scope === 'pickup' ? 0 : q.cost_delivery, status };
 }
 
 /** The form → a quote's fields. `creating`: amount and scope are set once (a change is a new version). */
@@ -60,7 +61,7 @@ export function quoteFields(b: any, creating: boolean): Result<{ fields: Record<
     const amount = parseMoney(b?.amount);
     if (amount === null || amount <= 0) return fail(400, 'Enter the quote amount.');
     f.amount = amount;
-    f.scope = b?.scope === 'delivery' ? 'delivery' : 'install';
+    f.scope = b?.scope === 'delivery' || b?.scope === 'pickup' ? b.scope : 'install';
   }
   for (const k of ['cost_purchase', 'cost_install', 'cost_delivery']) {
     if (!(k in (b ?? {}))) continue;
@@ -208,7 +209,7 @@ export async function addQuote(tenantId: string, orderId: string, by: string, b:
   const version = quotes.reduce((m, q) => Math.max(m, q.version), 0) + 1;
   const stored = await store(tenantId, orderId, file);
   const { error } = await db().from('fin_order_quotes').insert({ tenant_id: tenantId, order_id: orderId, version, created_by: by, status_by: by, ...f.fields, ...stored });
-  if (error) { await removeFiles([stored.storage_path]); throw error; }
+  if (error) { await removeFiles([stored.storage_path]); if (/scope_check/.test(String(error.message ?? ''))) return fail(409, 'Self pickup needs migration 0118 — run it in Supabase first.'); throw error; }
   await syncOrder(tenantId, orderId);
   return { ok: true, version };
 }

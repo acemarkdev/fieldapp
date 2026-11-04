@@ -25,6 +25,8 @@ ok('approved → accepted, its amount and budget', !!a && a.status === 'accepted
 ok('newest rejected (none approved) → lost', orderFromQuotes([q(1, 'rework', 10000), q(2, 'rejected', 9000)])?.status === 'lost');
 ok('an older rejection does not lose the order', orderFromQuotes([q(1, 'rejected', 10000), q(2, 'sent', 9000)])?.status === 'offer');
 ok('delivery only → no installation cost on the order', orderFromQuotes([q(1, 'sent', 8000, { scope: 'delivery' })])?.cost_install === 0);
+ok('self pickup: neither installation nor delivery counts', quoteCost(q(1, 'sent', 10000, { scope: 'pickup' })) === 5000 && JSON.stringify(orderFromQuotes([q(1, 'sent', 8000, { scope: 'pickup' })])) === JSON.stringify({ net: 8000, cost_purchase: 5000, cost_install: 0, cost_delivery: 0, status: 'offer' }));
+ok('self pickup is kept from the form', (quoteFields({ amount: '100', scope: 'pickup', status: 'sent' }, true) as any).fields.scope === 'pickup' && (quoteFields({ amount: '100', scope: 'xyz', status: 'sent' }, true) as any).fields.scope === 'install');
 
 // The form
 const c = quoteFields({ amount: '12 500,50', scope: 'delivery', cost_purchase: '7000', status: 'sent' }, true);
