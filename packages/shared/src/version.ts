@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.74.0';
+export const APP_VERSION = '1.75.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.75.0', date: '2026-11-05', changes: [
+    'Performance \u25b8 UoR / IFRS view closer to the books: the payroll group Other (employed here, cost recharged e.g. to the UK) now counts in Office and other overheads (from the loaded payroll files); invoices of 473 Investments are fixed assets, not a cost of the month (a memo line; they are depreciated in the Depreciation row); and in Books (RZiS) a switch marks leasing 457 as finance leasing, so its instalments leave the costs (the books show depreciation and interest instead). Books (RZiS) counts the Other group in wages too.',
+  ] },
   { version: '1.74.0', date: '2026-11-05', changes: [
     'Performance \u25b8 Books (RZiS): upload the accountant\u2019s profit and loss statement (rachunek zysk\u00f3w i strat, comparative variant, PDF from IPS) for the period from 1 January. It is shown next to the UoR view of the same months \u2014 revenue, operating costs (depreciation, wages and social security, materials and goods, services and other), profit on sales, other operating, financial and gross / net profit \u2014 with the difference on each line and what the app holds back (work in progress, undelivered prepayments). One click fills the Depreciation and Financial cost rows on Performance from the statement: the months since the previous statement of the year get the difference, spread evenly. One statement per period; a new upload for the same dates replaces it.',
   ] },
