@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.72.3';
+export const APP_VERSION = '1.73.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.73.0', date: '2026-11-05', changes: [
+    'Performance \u25b8 management sheet and production month: Trade from Poland now counts once. Its sales are in Sales and its purchase invoices (499.V Handel) in Sales costs; the line \u201cOther income (Trade from Poland)\u201d that took the sales out a second time before Profit before tax is gone (a memo line shows the trade sales). Profit before tax = Operating profit \u2212 Financial cost. Jan\u2013Sep 2026 moves from \u2212676 677 z\u0142 to +328 532 z\u0142.',
+  ] },
   { version: '1.72.3', date: '2026-11-05', changes: [
     'Sales: an invoice typed by hand whose number already came from Subiekt was counted twice (Sales, Sales orders, Performance) \u2014 FS 14/ACE/07/2026, FL 28/ACE/07/2026, FS 4/ACE/02/2026 and FL 2/ACE/10/2026, 197 852 z\u0142. The next Subiekt sync removes such copies; a job typed on the copy is kept as the Subiekt document\u2019s placement (when Subiekt has no number of its own). Typing or importing an invoice that Subiekt already has is now refused, with a pointer to Subiekt \u25b8 Place it.',
   ] },
