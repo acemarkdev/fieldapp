@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.75.0';
+export const APP_VERSION = '1.76.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.76.0', date: '2026-11-05', changes: [
+    'Performance \u25b8 UoR / IFRS, as agreed: a prepayment invoice (FL) is revenue in the month it is issued, and there is no work in progress \u2014 the Z jobs\u2019 material (RW) counts in the job\u2019s month and their other invoices with their department, trade purchases in their invoice month. Both are switches in Books (RZiS) \u25b8 How the UoR view counts (with the finance-leasing switch); turned off, the view works as before.',
+  ] },
   { version: '1.75.0', date: '2026-11-05', changes: [
     'Performance \u25b8 UoR / IFRS view closer to the books: the payroll group Other (employed here, cost recharged e.g. to the UK) now counts in Office and other overheads (from the loaded payroll files); invoices of 473 Investments are fixed assets, not a cost of the month (a memo line; they are depreciated in the Depreciation row); and in Books (RZiS) a switch marks leasing 457 as finance leasing, so its instalments leave the costs (the books show depreciation and interest instead). Books (RZiS) counts the Other group in wages too.',
   ] },
