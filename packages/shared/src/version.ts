@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.76.0';
+export const APP_VERSION = '1.76.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.76.1', date: '2026-11-05', changes: [
+    'Books (RZiS) \u25b8 How the UoR view counts: prepayment invoices (FL) have three choices \u2014 revenue in the month issued; revenue when issued but not while the job has no final invoice (as the books seem to do: Jan\u2013Sep 2026 revenue then matches the books within 4 596 z\u0142); or revenue in the month of the job\u2019s final invoice.',
+  ] },
   { version: '1.76.0', date: '2026-11-05', changes: [
     'Performance \u25b8 UoR / IFRS, as agreed: a prepayment invoice (FL) is revenue in the month it is issued, and there is no work in progress \u2014 the Z jobs\u2019 material (RW) counts in the job\u2019s month and their other invoices with their department, trade purchases in their invoice month. Both are switches in Books (RZiS) \u25b8 How the UoR view counts (with the finance-leasing switch); turned off, the view works as before.',
   ] },
