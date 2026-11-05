@@ -67,8 +67,16 @@ async function selectAll(cols: string, tenantId: string): Promise<any[]> {
 const out = (r: any) => ({ ...r, net: Number(r.net) || 0, gross: r.gross === null || r.gross === undefined ? null : Number(r.gross), channel: saleChannel(r.producer, r) });
 
 export async function listSales(tenantId: string): Promise<any[]> { return (await selectAll('*', tenantId)).map(out); }
+const alnumNo = (v: unknown) => String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+/** Invoice numbers that came from Subiekt (letters and digits only) — such an invoice is never typed a second time. */
+async function subiektNumbers(tenantId: string): Promise<Set<string>> {
+  try { return new Set((await selectAll('invoice_no,source', tenantId)).filter((r: any) => r.source === 'subiekt' && r.invoice_no).map((r: any) => alnumNo(r.invoice_no))); }
+  catch { return new Set(); }   // before migration 0074
+}
+export const alreadyFromSubiekt = (no: string) => `${no} already comes from Subiekt — it is on the Sales tab once. To put it on a job, use Subiekt ▸ Place it (or write the number in its Podtytuł in Subiekt).`;
 export async function createSale(tenantId: string, by: string, b: any): Promise<Result<{ id: string }>> {
   const f = saleFields(b); if (!f.ok) return f;
+  if (f.fields.invoice_no && (await subiektNumbers(tenantId)).has(alnumNo(f.fields.invoice_no))) return fail(409, alreadyFromSubiekt(f.fields.invoice_no));
   const { data, error } = await db().from('fin_sales').insert({ tenant_id: tenantId, created_by: by, ...f.fields }).select('id').single();
   if (error) throw error;
   return { ok: true, id: data.id };
@@ -82,6 +90,7 @@ async function fromSubiekt(tenantId: string, id: string): Promise<boolean> {
 export async function updateSale(tenantId: string, id: string, b: any): Promise<Result> {
   const f = saleFields(b); if (!f.ok) return f;
   if (await fromSubiekt(tenantId, id)) return fail(409, FROM_SUBIEKT);
+  if (f.fields.invoice_no && (await subiektNumbers(tenantId)).has(alnumNo(f.fields.invoice_no))) return fail(409, alreadyFromSubiekt(f.fields.invoice_no));
   const { data, error } = await db().from('fin_sales').update({ ...f.fields, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId).eq('id', id).select('id').maybeSingle();
   if (error) throw error;
   return data ? { ok: true } : fail(404, 'Invoice not found.');
@@ -106,12 +115,13 @@ export async function deleteSales(tenantId: string, ids: string[]): Promise<{ de
 /** Import pasted sheet rows; lines that are already there (see saleKey) are skipped, so pasting twice is safe. */
 export async function importSales(tenantId: string, by: string, rows: any[]): Promise<{ added: number; skipped: number; invalid: number }> {
   const have = new Set((await selectAll('invoice_no,job_key,period_year,period_month,net', tenantId)).map((r) => saleKey({ ...r, net: Number(r.net) || 0 })));
+  const fromSub = await subiektNumbers(tenantId);   // an invoice Subiekt already brought is not imported again
   const fresh: Record<string, any>[] = []; let skipped = 0, invalid = 0;
   for (const r of rows) {
     const f = saleFields(r);
     if (!f.ok) { invalid++; continue; }
     const k = saleKey(f.fields as any);
-    if (have.has(k)) { skipped++; continue; }
+    if (have.has(k) || (f.fields.invoice_no && fromSub.has(alnumNo(f.fields.invoice_no)))) { skipped++; continue; }
     have.add(k); fresh.push({ tenant_id: tenantId, created_by: by, ...f.fields });
   }
   for (let i = 0; i < fresh.length; i += 500) { const { error } = await db().from('fin_sales').insert(fresh.slice(i, i + 500)); if (error) throw error; }

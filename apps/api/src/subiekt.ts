@@ -124,6 +124,22 @@ const same = (a: any, b: any) => (a === null || a === undefined ? '' : typeof a 
 export const rowDiffers = (cur: Record<string, any>, next: Record<string, any>, cols: readonly string[]) => cols.some((k) => !same(cur[k], next[k]));
 const noKey = (v: unknown) => clean(v).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
+/** Typed invoices (Sales tab, by hand) whose number Subiekt already has as a sales document: each is the same
+ *  invoice counted twice. The typed copy goes; a job typed on it is kept as the document's placement when Subiekt
+ *  has no number of its own (`job` null otherwise). */
+export function typedDuplicates(docs: SubDoc[], sales: Record<string, any>[]): { typedId: string; doc_id: number; job: string | null }[] {
+  const byNo = new Map<string, SubDoc>();
+  for (const d of docs) if ((SALE_SYMBOLS as readonly string[]).includes(d.symbol) && d.number) byNo.set(noKey(d.number), d);
+  const byId = new Map(docs.map((d) => [d.doc_id, d]));
+  const out: { typedId: string; doc_id: number; job: string | null }[] = [];
+  for (const r of sales) {
+    if (r.source || !r.invoice_no) continue;
+    const d = byNo.get(noKey(r.invoice_no)); if (!d) continue;
+    const job = clean(r.job_ref);
+    out.push({ typedId: r.id, doc_id: d.doc_id, job: job && !clean(d.assigned_ref) && classifyDoc(d, byId).check === 'no_number' ? job.slice(0, 80) : null });
+  }
+  return out;
+}
 export interface SalesPlan { insert: Record<string, any>[]; update: { id: string; fields: Record<string, any>; adopted: boolean }[]; remove: string[] }
 /** What has to change on the Sales tab. A typed invoice with the same number is taken over
  *  ("adopted") instead of being duplicated; rows that came from Subiekt and are gone there are removed. */
@@ -262,7 +278,7 @@ async function pool<T>(list: T[], n: number, fn: (x: T) => Promise<void>): Promi
 }
 
 export interface SyncSummary {
-  at: string; docs: number; sales: { added: number; updated: number; adopted: number; removed: number };
+  at: string; docs: number; sales: { added: number; updated: number; adopted: number; removed: number; duplicatesRemoved?: number };
   material: { lines: number; removed: number; jobsCreated: number; typedReplaced: number; lockedSkipped: string[] }; toCheck: number; agent?: string | null;
 }
 /** Rebuild the Sales tab and the material lines from the stored documents. */
@@ -277,7 +293,18 @@ export async function applyDocs(tenantId: string): Promise<SyncSummary> {
   let custCountry = new Map<string, string>();
   try { custCountry = new Map((await all<any>('fin_customers', 'id,country', tenantId)).filter((c) => c.country).map((c) => [c.id, countryCode(c.country) ?? String(c.country)])); } catch { /* before 0111 */ }
   for (const o of orders) { const cc = refCountry(o.order_ref) ?? (o.customer_id ? custCountry.get(o.customer_id) : null); const code = orderCode(o.job_ref ?? ''); if (cc && code && !country.has(noKey(code))) country.set(noKey(code), cc); }
-  const docs = withLinks(await listDocs(tenantId), notedInvoices(orders));
+  let stored = await listDocs(tenantId);
+  // a typed copy of an invoice that came from Subiekt is the same invoice twice: drop it (keeping a job typed on it)
+  const dups = typedDuplicates(stored, sales);
+  if (dups.length) {
+    const canPlace = await colReady('fin_subiekt_docs', 'assigned_ref');
+    for (const x of dups) if (x.job && canPlace) { const { error } = await db().from('fin_subiekt_docs').update({ assigned_ref: x.job, assigned_by: 'typed invoice' }).eq('tenant_id', tenantId).eq('doc_id', x.doc_id); if (error) throw error; }
+    const ids = dups.map((x) => x.typedId);
+    for (let i = 0; i < ids.length; i += 100) { const { error } = await db().from('fin_sales').delete().eq('tenant_id', tenantId).in('id', ids.slice(i, i + 100)); if (error) throw error; }
+    stored = await listDocs(tenantId);
+    const gone = new Set(ids); sales.splice(0, sales.length, ...sales.filter((r) => !gone.has(r.id)));
+  }
+  const docs = withLinks(stored, notedInvoices(orders));
   const sp = planSales(docs, sales, (ref) => supplier.get(noKey(ref)) ?? null, (ref) => { const code = orderCode(ref); return code ? country.get(noKey(code)) ?? null : null; });
   const now = new Date().toISOString();
   for (let i = 0; i < sp.insert.length; i += 200) { const { error } = await db().from('fin_sales').insert(sp.insert.slice(i, i + 200).map((r) => ({ tenant_id: tenantId, created_by: 'Subiekt', ...r }))); if (error) throw error; }
@@ -295,7 +322,7 @@ export async function applyDocs(tenantId: string): Promise<SyncSummary> {
   for (let i = 0; i < fresh.length; i += 200) { const { error } = await db().from('fin_job_items').insert(fresh.slice(i, i + 200)); if (error) throw error; }
   await pool(mp.upsert.filter((u) => u.id), 6, async (u) => { const { error } = await db().from('fin_job_items').update({ ...u.fields, updated_at: now }).eq('tenant_id', tenantId).eq('id', u.id!); if (error) throw error; });
 
-  return { at: now, docs: docs.length, sales: { added: sp.insert.length, updated: sp.update.filter((u) => !u.adopted).length, adopted: sp.update.filter((u) => u.adopted).length, removed: sp.remove.length },
+  return { at: now, docs: docs.length, sales: { added: sp.insert.length, updated: sp.update.filter((u) => !u.adopted).length, adopted: sp.update.filter((u) => u.adopted).length, removed: sp.remove.length, duplicatesRemoved: dups.length },
     material: { lines: mp.upsert.length, removed: mp.remove.length - mp.typedReplaced, jobsCreated: mp.createJobs.length, typedReplaced: mp.typedReplaced, lockedSkipped: mp.lockedSkipped }, toCheck: docsToCheck(docs).length };
 }
 /** A snapshot from the agent: store it (documents no longer in Subiekt are dropped) and rebuild. */

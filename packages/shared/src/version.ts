@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.72.2';
+export const APP_VERSION = '1.72.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.72.3', date: '2026-11-05', changes: [
+    'Sales: an invoice typed by hand whose number already came from Subiekt was counted twice (Sales, Sales orders, Performance) \u2014 FS 14/ACE/07/2026, FL 28/ACE/07/2026, FS 4/ACE/02/2026 and FL 2/ACE/10/2026, 197 852 z\u0142. The next Subiekt sync removes such copies; a job typed on the copy is kept as the Subiekt document\u2019s placement (when Subiekt has no number of its own). Typing or importing an invoice that Subiekt already has is now refused, with a pointer to Subiekt \u25b8 Place it.',
+  ] },
   { version: '1.72.2', date: '2026-11-04', changes: [
     'Sales orders \u25b8 quotes: a third Scope, \u201cSelf pickup\u201d (Odbi\u00f3r w\u0142asny) \u2014 the customer collects, so neither the installation nor the delivery cost counts in the quote\u2019s cost, margin or the order\u2019s budget. Needs migration 0118.',
   ] },

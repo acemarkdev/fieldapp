@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/subiekt.test.ts   (the examples are real subtitles from the Subiekt database)
-import { zNumbers, okCode, classifyDoc, toPln, saleRow, planSales, planMaterial, docsToCheck, docFromAgent, countryCode, refCountry, withLinks, notedInvoices, type SubDoc } from './subiekt';
+import { zNumbers, okCode, classifyDoc, toPln, saleRow, planSales, planMaterial, docsToCheck, docFromAgent, countryCode, refCountry, withLinks, notedInvoices, typedDuplicates, type SubDoc } from './subiekt';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -101,5 +101,22 @@ ok('an RW marked as overhead leaves the list', !docsToCheck([rwOver]).length && 
 const noted = doc('FS', 'EQ - L2025 12462 - 3Sphere', null, 10455, { number: 'FS 3/ACE/08/2026' });
 const linkedDocs = withLinks([noted, doc('RW', null, null, 5, { number: 'FS 3/ACE/08/2026' })], notedInvoices([{ invoice_refs: 'FS 1/ACE/08/2026; fs 3/ace/08/2026' }, { invoice_refs: null }]));
 ok('an invoice noted on an order leaves the list (an RW never counts as noted)', linkedDocs[0].linked === true && !linkedDocs[1].linked && docsToCheck(linkedDocs).length === 1 && saleRow(linkedDocs[0], classifyDoc(linkedDocs[0])).needs_check === null);
+// A typed copy of an invoice Subiekt already has (counted twice on Sales and Performance)
+const fs14 = doc('FS', ' EQ - L2025 12462 - 3Sphere - 80 Buckingham Road ', null, 152006.26, { number: 'FS 14/ACE/07/2026' });
+const fs4 = doc('FS', 'na magazyn UK', null, 485, { number: 'FS 4/ACE/02/2026' });
+const fl2b = doc('FL', 'Z.419', null, 6910, { number: 'FL 2/ACE/10/2026' });
+const placedFs = doc('FS', null, null, 10, { number: 'FS 9/ACE/09/2026', assigned_ref: 'Z.401' });
+const dups = typedDuplicates([fs14, fs4, fl2b, placedFs, doc('RW', null, null, 5, { number: 'RW 1/ACE/01/2026' })], [
+  { id: 'T1', source: null, invoice_no: 'FS 14/ACE/07/2026', job_ref: 'EQ - L2025 12462 - 3Sphere - 80 Buckingham Road' },
+  { id: 'T2', source: null, invoice_no: 'fs 4/ace/02/2026', job_ref: 'akcesoria' },
+  { id: 'T3', source: null, invoice_no: 'FL 2/ACE/10/2026', job_ref: 'Z.419' },
+  { id: 'T4', source: null, invoice_no: 'FS 9/ACE/09/2026', job_ref: 'Z.999' },
+  { id: 'T5', source: null, invoice_no: 'KLF 1/ACE/07/2026', job_ref: 'Z.381' },
+  { id: 'T6', source: null, invoice_no: 'RW 1/ACE/01/2026', job_ref: null },
+  { id: 'S1', source: 'subiekt', invoice_no: 'FS 14/ACE/07/2026', job_ref: null },
+]);
+ok('typed copies of Subiekt invoices are found (any spelling), others and RW numbers are not', dups.map((x) => x.typedId).join() === 'T1,T2,T3,T4', dups);
+ok('the job typed on a copy is kept when Subiekt has no number of its own', dups[0].job === 'EQ - L2025 12462 - 3Sphere - 80 Buckingham Road' && dups[1].job === 'akcesoria');
+ok('…but not when Subiekt has its own number or the document is already placed', dups[2].job === null && dups[3].job === null);
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('subiekt: all passed');
