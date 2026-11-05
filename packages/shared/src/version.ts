@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.73.0';
+export const APP_VERSION = '1.74.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.74.0', date: '2026-11-05', changes: [
+    'Performance \u25b8 Books (RZiS): upload the accountant\u2019s profit and loss statement (rachunek zysk\u00f3w i strat, comparative variant, PDF from IPS) for the period from 1 January. It is shown next to the UoR view of the same months \u2014 revenue, operating costs (depreciation, wages and social security, materials and goods, services and other), profit on sales, other operating, financial and gross / net profit \u2014 with the difference on each line and what the app holds back (work in progress, undelivered prepayments). One click fills the Depreciation and Financial cost rows on Performance from the statement: the months since the previous statement of the year get the difference, spread evenly. One statement per period; a new upload for the same dates replaces it.',
+  ] },
   { version: '1.73.0', date: '2026-11-05', changes: [
     'Performance \u25b8 management sheet and production month: Trade from Poland now counts once. Its sales are in Sales and its purchase invoices (499.V Handel) in Sales costs; the line \u201cOther income (Trade from Poland)\u201d that took the sales out a second time before Profit before tax is gone (a memo line shows the trade sales). Profit before tax = Operating profit \u2212 Financial cost. Jan\u2013Sep 2026 moves from \u2212676 677 z\u0142 to +328 532 z\u0142.',
   ] },
