@@ -4469,8 +4469,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
   .fjgrp{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;color:#fff;font-size:10.5px;font-weight:700;white-space:nowrap;vertical-align:1px;text-shadow:0 0 2px rgba(0,0,0,.25)}
   .fj td{cursor:pointer}.fj tr:hover td{background:#fbf3f8!important}.fj td:first-child{min-width:130px;font-weight:700}
   .fj tr.lk td{color:#6b6786}.fj tr.ctrl:hover td{background:#fff8eb!important}
-  /* Sales orders: the column names stay at the top while the list scrolls */
-  .fol{border-collapse:separate;border-spacing:0}.fol thead th{position:sticky;top:0;z-index:2;background:#fff;border-top:0;box-shadow:inset 0 -1px 0 #e4e2ee}
+  /* Sales orders and Sales: the column names stay at the top while the list scrolls */
+  .fol,.fsl{border-collapse:separate;border-spacing:0}.fol thead th,.fsl thead th{position:sticky;top:0;z-index:2;background:#fff;border-top:0;box-shadow:inset 0 -1px 0 #e4e2ee}
   .fjl{width:100%;border-collapse:collapse;font-size:12.5px}.fjl td,.fjl th{padding:6px 8px;border-top:1px solid #f2f0f8;text-align:left;vertical-align:top}.fjl th{font-size:10px;color:#9a97ad;letter-spacing:.04em}
   .fyt td{vertical-align:middle}.fyt input.tinput{width:110px;padding:6px 8px;text-align:right;font-size:12.5px}.fyt input.tinput::placeholder{color:#b9b6c9;font-style:italic}
   .fyt input.tinput:disabled{background:#f6f5fa;color:var(--ink)}.fyt tr.fut td{opacity:.75}
@@ -5090,7 +5090,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
         <select id="fs_state" class="tinput"><option value="">All</option><option value="multi">Jobs with several invoices</option><option value="prepaid">With a prepayment</option><option value="planned">Planned (no invoice number)</option><option value="nojob">Not tied to a job</option><option value="linked">Linked to a sales order</option><option value="unlinked">Not linked to a sales order</option></select>
         <input id="fs_q" class="tinput" placeholder="Search job, invoice no, buyer" style="min-width:220px;flex:1">
       </div>
-      <div class="card2" style="overflow-x:auto"><table class="fjl fsl"><thead><tr><th><input type="checkbox" id="fs_all_cb" title="Select all the invoices shown" style="display:none;margin-right:7px;vertical-align:-2px">JOB</th><th>BUYER</th><th>COUNTRY</th><th>FROM</th><th style="text-align:right">INVOICES</th><th style="text-align:right">PREPAID NET</th><th style="text-align:right">FINAL NET</th><th style="text-align:right">TOTAL NET</th><th style="text-align:right">TOTAL GROSS</th><th>PERIOD</th></tr></thead><tbody id="fs_rows"></tbody></table></div>
+      <div class="card2" style="overflow:auto;max-height:calc(100vh - 260px)"><table class="fjl fsl"><thead><tr><th><input type="checkbox" id="fs_all_cb" title="Select all the invoices shown" style="display:none;margin-right:7px;vertical-align:-2px">JOB</th><th>BUYER</th><th>COUNTRY</th><th>FROM</th><th style="text-align:right">INVOICES</th><th style="text-align:right">PREPAID NET</th><th style="text-align:right">FINAL NET</th><th style="text-align:right">TOTAL NET</th><th style="text-align:right">TOTAL GROSS</th><th>PERIOD</th></tr></thead><tbody id="fs_rows"></tbody></table></div>
       <div class="sub" id="fs_more" style="margin:10px 0 30px"></div>
     </main>
   </div>
