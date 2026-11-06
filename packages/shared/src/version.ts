@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.78.0';
+export const APP_VERSION = '1.79.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.79.0', date: '2026-11-06', changes: [
+    'Books (RZiS): type the inventories (Zapasy) from the balance sheets for each statement \u2014 at 31.12 of the year before and at the statement\u2019s date. A new choice under How the UoR view counts, \u201cMaterials: as the books\u201d, counts the material purchase invoices (631) in their month and the change in inventories as its own line (an increase lowers the cost), as the accountant does; the other choice keeps RW issued from the warehouse.',
+  ] },
   { version: '1.78.0', date: '2026-11-06', changes: [
     'Books (RZiS) \u25b8 Costs by account: upload the accountant\u2019s ledger of accounts 4xx (XLS from IPS, every posting with its date and document number) or the one-page summary (PDF). In the accounts ticked there (by default all but depreciation 400, production materials 401-01 and payroll 404/405), every posting whose document number is not a monday cost invoice \u2014 bank fees, diets, insurance, small purchases \u2014 counts in all three Performance views, in Overheads, in its month (a memo line shows it). The table shows, per account, the amount in the books and how much of it is not a monday invoice.',
   ] },

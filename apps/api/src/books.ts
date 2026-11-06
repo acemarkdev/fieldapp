@@ -74,6 +74,13 @@ export async function addBook(tenantId: string, by: string, fileName: string, by
   await setConfig(CFG, JSON.stringify([...all.filter((b) => !(b.tenant_id === tenantId && b.from === p.st.from && b.to === p.st.to)), book]));
   return { ok: true, book, replaced };
 }
+/** Inventories (Zapasy, B.I on the balance sheet) at the start of the year and at the statement's last day, typed in Books. */
+export async function setBookStock(tenantId: string, id: string, open: number | null, close: number | null): Promise<boolean> {
+  const all = await readAll(), b = all.find((x) => x.tenant_id === tenantId && x.id === id);
+  if (!b) return false;
+  (b as any).stock = open === null && close === null ? null : { open, close };
+  await setConfig(CFG, JSON.stringify(all)); return true;
+}
 export async function deleteBook(tenantId: string, id: string): Promise<boolean> {
   const all = await readAll(), next = all.filter((b) => !(b.tenant_id === tenantId && b.id === id));
   if (next.length === all.length) return false;
