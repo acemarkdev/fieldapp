@@ -57,7 +57,8 @@ export const COMMISSION_BANDS = [
   { from: 450000, inclusive: false, rate: 0.015 },
   { from: 600000, inclusive: false, rate: 0.02 },
 ] as const;
-/** Company turnover in the calendar year → the ceiling of the yearly bonus (share of the rep's yearly gross pay). */
+/** The rep's own sales in the calendar year (accepted orders where they are the main rep, counted in the month of the
+ *  first payment) → the ceiling of their yearly bonus (share of the rep's yearly gross pay). */
 export const ANNUAL_BANDS = [
   { from: 3600000, inclusive: true, max: 0.05 },
   { from: 5000000, inclusive: false, max: 0.10 },
@@ -412,10 +413,11 @@ export async function tradeToCheck(tenantId: string) {
   const r = tradeAllocation(orders.map(rowOut), trade);
   return { toCheck: r.toCheck, invoices: trade.invoices.length, read: trade.invoices.filter((i) => i.pdf_status === 'ok').length };
 }
-/** Company turnover for the yearly bonus: net of all sales invoices counted in the year (Sales tab). */
+/** Company turnover, for information next to the yearly bonus: Acemark's sales invoices of the year (Sales tab) —
+ *  without recharges of costs or commission (not sales) and without other sellers' invoices. */
 export async function companyTurnover(tenantId: string, year: number): Promise<number> {
-  const rows = await page<any>('fin_sales', 'net,period_year', tenantId);
-  return round2(rows.filter((r) => r.period_year === year).reduce((s, r) => s + (Number(r.net) || 0), 0));
+  const rows = await page<any>('fin_sales', 'net,period_year,producer,seller', tenantId);
+  return round2(rows.filter((r) => r.period_year === year && !/^recharge/i.test(String(r.producer ?? '')) && (!r.seller || /^acemark/i.test(String(r.seller)))).reduce((s, r) => s + (Number(r.net) || 0), 0));
 }
 
 export async function getOrder(tenantId: string, id: string): Promise<any | null> {

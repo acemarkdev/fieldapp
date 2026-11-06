@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.80.1';
+export const APP_VERSION = '1.81.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.81.0', date: '2026-11-06', changes: [
+    'Commission \u25b8 Yearly bonus: the thresholds (3.6 M / 5 M / 10 M) now apply to each rep\u2019s own sales in the year \u2014 the accepted orders where they are the main rep, counted in the month of the first payment, as for the monthly commission \u2014 not to the company turnover. With all reps shown, each rep with sales gets their own bar. The company turnover is shown below for information only, and now leaves out recharges (of costs or commission) and other sellers\u2019 invoices. The rules text and the manual (Zam\u00f3wienia i prowizja) say the same.',
+  ] },
   { version: '1.80.1', date: '2026-11-06', changes: [
     'Subiekt \u25b8 not a job: a second recharge mark, \u201cRecharge of commission (not sales)\u201d, e.g. the sales rep\u2019s commission recharged to WEM. It also leaves Sales, but is taken off Sales costs (where the commission is) instead of Overheads; a memo line shows it in all Performance views.',
   ] },

@@ -117,9 +117,9 @@ Suma miesiąca to pełna wartość netto zaakceptowanych zamówień, których pi
 
 **Bonus roczny**
 
-Zależy od obrotu firmy w roku kalendarzowym (faktury sprzedaży netto z zakładki Sprzedaż). Strona pokazuje osiągnięty próg i ile obrotu brakuje do następnego.
+Zależy od własnej sprzedaży handlowca w roku kalendarzowym: pełnej wartości netto zaakceptowanych zamówień, w których jest **głównym handlowcem**, liczonej w miesiącu pierwszej wpłaty — tak jak prowizja miesięczna. Zamówienia bez handlowca i zamówienia innych handlowców się nie liczą. Strona pokazuje osiągnięty próg i ile sprzedaży brakuje do następnego. Obrót firmy (faktury z zakładki Sprzedaż, bez refaktur) jest pod spodem tylko informacyjnie.
 
-| Obrót firmy w roku | Maksymalny bonus |
+| Sprzedaż handlowca w roku | Maksymalny bonus |
 | --- | --- |
 | od 3,6 mln zł do 5 mln zł | do 5% rocznego wynagrodzenia brutto |
 | powyżej 5 mln zł do 10 mln zł | do 10% |
