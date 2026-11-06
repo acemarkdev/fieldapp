@@ -112,7 +112,7 @@ export function saleRow(d: SubDoc, c: DocClass, supplierOf?: (jobRef: string) =>
     invoice_no: d.number, invoice_date: date, job_ref: c.job_ref, job_key: c.job_ref ? referenceKey(c.job_ref).slice(0, 80) : null,
     period_year: date ? +date.slice(0, 4) : null, period_month: date ? +date.slice(5, 7) : null,
     // a recharge of costs (e.g. a person employed here, cost recharged to the UK) is not a sale: Performance nets it against the cost
-    producer: d.not_job && d.not_job_reason === 'recharge' ? 'Recharge' : production ? 'Acemark PL' : (c.job_ref && supplierOf ? supplierOf(c.job_ref) : null), buyer: d.customer,
+    producer: d.not_job && d.not_job_reason === 'recharge' ? 'Recharge' : d.not_job && d.not_job_reason === 'recharge_commission' ? 'Recharge commission' : production ? 'Acemark PL' : (c.job_ref && supplierOf ? supplierOf(c.job_ref) : null), buyer: d.customer,
     net: net ?? 0, gross, country: countryCode(d.country) ?? (c.job_ref ? refCountry(c.job_ref) ?? countryOf?.(c.job_ref) ?? null : null),
     // an advance invoice (and its correction) is a prepayment; the closing advance and FS are final
     kind: (d.symbol === 'FL' && d.flag !== 3) || d.symbol === 'KFL' ? 'prepaid' : 'final',

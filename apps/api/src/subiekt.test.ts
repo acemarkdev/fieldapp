@@ -120,6 +120,6 @@ ok('the job typed on a copy is kept when Subiekt has no number of its own', dups
 ok('…but not when Subiekt has its own number or the document is already placed', dups[2].job === null && dups[3].job === null);
 const jsz = doc('FS', 'J.Sz. ', 'Prowizja - sierpień 2026 J.Sz. ', 13560, { number: 'FS 1/ACE/09/2026', not_job: true, not_job_reason: 'recharge' });
 ok('an invoice marked as a recharge of costs is not a sale (producer Recharge) and leaves the list', saleRow(jsz, classifyDoc(jsz)).producer === 'Recharge' && saleRow(jsz, classifyDoc(jsz)).needs_check === null && !docsToCheck([jsz]).length
-  && saleRow({ ...jsz, not_job_reason: 'other_income' }, classifyDoc(jsz)).producer === null);
+  && saleRow({ ...jsz, not_job_reason: 'other_income' }, classifyDoc(jsz)).producer === null && saleRow({ ...jsz, not_job_reason: 'recharge_commission' }, classifyDoc(jsz)).producer === 'Recharge commission');
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('subiekt: all passed');

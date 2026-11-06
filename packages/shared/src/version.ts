@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.80.0';
+export const APP_VERSION = '1.80.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.80.1', date: '2026-11-06', changes: [
+    'Subiekt \u25b8 not a job: a second recharge mark, \u201cRecharge of commission (not sales)\u201d, e.g. the sales rep\u2019s commission recharged to WEM. It also leaves Sales, but is taken off Sales costs (where the commission is) instead of Overheads; a memo line shows it in all Performance views.',
+  ] },
   { version: '1.80.0', date: '2026-11-06', changes: [
     'Sales \u25b8 Subiekt: a sales invoice can be marked \u201cRecharge of costs (not sales)\u201d (Place it \u25b8 not a job), e.g. the monthly invoice that recharges the cost of a person in the payroll group Other to the UK. Such an invoice leaves Sales Results and Revenue in all Performance views and is taken off Overheads instead, against the cost it recharges (a memo line shows it). On the Sales tab it is hidden from the totals; the channel filter shows it under \u201cRecharges of costs\u201d.',
   ] },
