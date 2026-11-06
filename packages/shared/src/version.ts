@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.77.2';
+export const APP_VERSION = '1.78.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.78.0', date: '2026-11-06', changes: [
+    'Books (RZiS) \u25b8 Costs by account: upload the accountant\u2019s ledger of accounts 4xx (XLS from IPS, every posting with its date and document number) or the one-page summary (PDF). In the accounts ticked there (by default all but depreciation 400, production materials 401-01 and payroll 404/405), every posting whose document number is not a monday cost invoice \u2014 bank fees, diets, insurance, small purchases \u2014 counts in all three Performance views, in Overheads, in its month (a memo line shows it). The table shows, per account, the amount in the books and how much of it is not a monday invoice.',
+  ] },
   { version: '1.77.2', date: '2026-11-06', changes: [
     'Sales: the column names stay at the top of the list while you scroll down (as on Sales orders).',
   ] },

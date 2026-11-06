@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import { getConfig, setConfig } from './store';
 import { pdfLines } from './labels';
+import * as XLSX from 'xlsx';
 
 export const RZIS_LINES: { code: string; label: string }[] = [
   { code: 'A', label: 'Przychody netto ze sprzedaży i zrównane z nimi' }, { code: 'A.I', label: 'Przychody netto ze sprzedaży produktów' },
@@ -91,4 +92,82 @@ export function monthlyFromBooks(book: Pick<Statement, 'to' | 'values'>, earlier
   const fin = (v: Record<string, number>) => (v.H ?? 0) - (v.G ?? 0);
   const spread = (total: number) => { const each = r2(total / months.length); const out = months.map(() => each); out[out.length - 1] = r2(total - each * (months.length - 1)); return out; };
   return { year, months, depreciation: spread((book.values['B.I'] ?? 0) - (prev?.values['B.I'] ?? 0)), financial_cost: spread(fin(book.values) - (prev ? fin(prev.values) : 0)) };
+}
+
+// ---- Costs by account (zestawienie kont 4xx): the accountant's ledger (XLS, every posting with its date → monthly
+// amounts) or its one-page summary (PDF, a total per account → spread evenly over the months). Accounts that never reach
+// the monday cost board (bank fees, employee costs, other costs, NKUP…) can then count in Performance month by month.
+export interface AccountLine { code: string; name: string; total: number; months: Record<string, number> | null; postings?: [string, string, string, number][] }   // posting: day, document no., operation, Wn − Ma
+export interface AccountSheet { from: string; to: string; source: 'ledger' | 'summary'; accounts: AccountLine[] }
+/** Accounts left out of the "costs outside invoices" check unless ticked in Books: depreciation, production materials
+ *  (counted as RW) and payroll have their own lines in Performance. */
+export const SKIP_OUTSIDE = ['400', '401-01', '404', '405'];
+const dmy = (s: string) => { const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s.trim()); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
+const r2b = (n: number) => Math.round(n * 100) / 100;
+/** The ledger exported from IPS ("Księgowania na koncie 401-01 - … w przedziale od 01.01.2026 do 30.09.2026", then
+ *  Data · Nr dowodu · Operacja · Wn · Ma rows) → each account's monthly Wn − Ma. */
+export function parseLedger(rows: unknown[][]): { ok: true; sheet: AccountSheet } | { ok: false; error: string } {
+  const accounts: AccountLine[] = []; let cur: AccountLine | null = null, from = '', to = '';
+  for (const r of rows) {
+    const a = String(r[0] ?? '').replace(/\s+/g, ' ').trim();
+    const head = /Księgowania na koncie ([0-9][0-9-]*) - (.*?) w przedziale od (\S+) do (\S+)/i.exec(a);
+    if (head) { cur = { code: head[1], name: head[2].trim(), total: 0, months: {}, postings: [] }; accounts.push(cur); from = dmy(head[3]) ?? from; to = dmy(head[4]) ?? to; continue; }
+    if (!cur) continue;
+    const day = typeof r[0] === 'string' ? dmy(r[0]) : null;
+    if (!day) continue;
+    const v = (Number(r[3]) || 0) - (Number(r[4]) || 0), k = day.slice(0, 7);
+    cur.months![k] = r2b((cur.months![k] ?? 0) + v); cur.total = r2b(cur.total + v);
+    cur.postings!.push([day, String(r[1] ?? '').trim().slice(0, 60), String(r[2] ?? '').trim().slice(0, 60), r2b(v)]);
+  }
+  if (!accounts.length || !from || !to) return { ok: false, error: 'No account was found — upload the ledger (księgowania na kontach) or the summary of accounts 4xx from IPS.' };
+  return { ok: true, sheet: { from, to, source: 'ledger', accounts } };
+}
+/** The one-page summary (PDF): "za okres od 01.01.2026 do 30.09.2026", then "name   401-01   2258905,46" lines. */
+export function parseAccountSummary(lines: string[]): { ok: true; sheet: AccountSheet } | { ok: false; error: string } {
+  const per = /za okres od\s+(\d{2})\.(\d{2})\.(\d{4})\s+do\s+(\d{2})\.(\d{2})\.(\d{4})/i.exec(lines.join(' '));
+  if (!per) return { ok: false, error: 'The period ("za okres od … do …") was not found.' };
+  const accounts: AccountLine[] = [];
+  for (const l of lines) {
+    const m = /^(.*?)\s{2,}(4\d{2}(?:-\d{2})?)\s{2,}(-?\d[\d ]*(?:,\d{1,2})?)\s*$/.exec(l.trim());
+    if (m) accounts.push({ code: m[2], name: m[1].trim(), total: Number(m[3].replace(/\s/g, '').replace(',', '.')), months: null });
+  }
+  if (!accounts.length) return { ok: false, error: 'No account line (name · 4xx · amount) was found.' };
+  return { ok: true, sheet: { from: `${per[3]}-${per[2]}-${per[1]}`, to: `${per[6]}-${per[5]}-${per[4]}`, source: 'summary', accounts } };
+}
+/** The monthly amount of one account (a summary's total spread evenly over its months). */
+export function accountMonths(a: AccountLine, from: string, to: string): Record<string, number> {
+  if (a.months) return a.months;
+  const ms: string[] = []; let y = +from.slice(0, 4), m = +from.slice(5, 7);
+  while (y * 100 + m <= +to.slice(0, 4) * 100 + +to.slice(5, 7)) { ms.push(`${y}-${String(m).padStart(2, '0')}`); m++; if (m > 12) { m = 1; y++; } }
+  const each = r2b(a.total / ms.length), out: Record<string, number> = {};
+  ms.forEach((k, i) => { out[k] = i === ms.length - 1 ? r2b(a.total - each * (ms.length - 1)) : each; });
+  return out;
+}
+export interface AccountRecord extends AccountSheet { id: string; tenant_id: string; file_name: string; uploaded_by: string; uploaded_at: string }
+const ACFG = 'books_accounts';
+async function readAcc(): Promise<AccountRecord[]> { try { const v = JSON.parse((await getConfig(ACFG)) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
+export async function listAccountSheets(tenantId: string): Promise<AccountRecord[]> { return (await readAcc()).filter((x) => x.tenant_id === tenantId).sort((a, b) => b.to.localeCompare(a.to)); }
+export async function addAccountSheet(tenantId: string, by: string, fileName: string, bytes: Uint8Array): Promise<{ ok: true; sheet: AccountRecord; replaced: boolean } | { ok: false; error: string }> {
+  let p: ReturnType<typeof parseLedger>;
+  if (Buffer.from(bytes.subarray(0, 5)).toString() === '%PDF-') {
+    let lines: string[]; try { lines = await pdfLines(bytes); } catch { return { ok: false, error: 'The PDF could not be read.' }; }
+    p = parseAccountSummary(lines);
+  } else {
+    let rows: unknown[][];
+    try { const wb = XLSX.read(Buffer.from(bytes), { type: 'buffer' }); rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true }) as unknown[][]; } catch { return { ok: false, error: 'The file could not be read — upload the XLS ledger or the PDF summary.' }; }
+    p = parseLedger(rows);
+  }
+  if (!p.ok) return p;
+  if (p.sheet.from.slice(5) !== '01-01') return { ok: false, error: 'Upload the accounts from 1 January (cumulative for the year).' };
+  const all = await readAcc();
+  const same = (x: AccountRecord) => x.tenant_id === tenantId && x.from === p.sheet.from && x.to === p.sheet.to;
+  const replaced = all.some(same);
+  const rec: AccountRecord = { id: randomBytes(6).toString('hex'), tenant_id: tenantId, file_name: fileName.slice(0, 160), uploaded_by: by, uploaded_at: new Date().toISOString(), ...p.sheet };
+  await setConfig(ACFG, JSON.stringify([...all.filter((x) => !same(x)), rec]));
+  return { ok: true, sheet: rec, replaced };
+}
+export async function deleteAccountSheet(tenantId: string, id: string): Promise<boolean> {
+  const all = await readAcc(), next = all.filter((x) => !(x.tenant_id === tenantId && x.id === id));
+  if (next.length === all.length) return false;
+  await setConfig(ACFG, JSON.stringify(next)); return true;
 }
