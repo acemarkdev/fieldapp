@@ -9,7 +9,8 @@ const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
 /** Orpiszew (producer Acemark PL) or Trade from Poland. A Subiekt invoice with no job read from its Podtytuł has
  *  no producer either; it is Acemark's own invoice, so it counts as Orpiszew — not as trade, which Performance
  *  takes out of the result again. */
-export const saleChannel = (producer: unknown, row?: { source?: unknown; job_ref?: unknown }): 'production' | 'trade' => {
+export const saleChannel = (producer: unknown, row?: { source?: unknown; job_ref?: unknown }): 'production' | 'trade' | 'recharge' => {
+  if (/^recharge$/i.test(clean(producer))) return 'recharge';   // a recharge of costs, not a sale (Subiekt ▸ not a job ▸ recharge)
   if (/^acemark/i.test(clean(producer))) return 'production';
   if (!clean(producer) && row?.source === 'subiekt' && !clean(row.job_ref)) return 'production';
   return 'trade';

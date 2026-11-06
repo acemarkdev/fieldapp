@@ -118,5 +118,8 @@ const dups = typedDuplicates([fs14, fs4, fl2b, placedFs, doc('RW', null, null, 5
 ok('typed copies of Subiekt invoices are found (any spelling), others and RW numbers are not', dups.map((x) => x.typedId).join() === 'T1,T2,T3,T4', dups);
 ok('the job typed on a copy is kept when Subiekt has no number of its own', dups[0].job === 'EQ - L2025 12462 - 3Sphere - 80 Buckingham Road' && dups[1].job === 'akcesoria');
 ok('…but not when Subiekt has its own number or the document is already placed', dups[2].job === null && dups[3].job === null);
+const jsz = doc('FS', 'J.Sz. ', 'Prowizja - sierpień 2026 J.Sz. ', 13560, { number: 'FS 1/ACE/09/2026', not_job: true, not_job_reason: 'recharge' });
+ok('an invoice marked as a recharge of costs is not a sale (producer Recharge) and leaves the list', saleRow(jsz, classifyDoc(jsz)).producer === 'Recharge' && saleRow(jsz, classifyDoc(jsz)).needs_check === null && !docsToCheck([jsz]).length
+  && saleRow({ ...jsz, not_job_reason: 'other_income' }, classifyDoc(jsz)).producer === null);
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('subiekt: all passed');

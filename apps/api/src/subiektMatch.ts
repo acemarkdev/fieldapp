@@ -15,11 +15,11 @@ export interface OrderLite { id: string; order_ref: string; job_ref: string | nu
 export interface DocLite { doc_id: number; symbol: string; number: string | null; subtitle: string | null; notes: string | null; customer: string | null; net_pln: number | null }
 
 /** The reasons a document can belong to no job. RW: overhead of production; sales: other income. */
-export const NOT_JOB_REASONS = ['trials', 'scrap', 'warranty', 'shipment', 'production', 'stock', 'sample', 'other_income', 'other'] as const;
+export const NOT_JOB_REASONS = ['trials', 'scrap', 'warranty', 'shipment', 'production', 'stock', 'sample', 'other_income', 'recharge', 'other'] as const;
 export type NotJobReason = (typeof NOT_JOB_REASONS)[number];
 export const NOT_JOB_LABEL: Record<NotJobReason, string> = {
   trials: 'Trials / CNC tests', scrap: 'Scrap', warranty: 'Warranty / complaint', shipment: 'Shipment to the UK / abroad',
-  production: 'Production consumables', stock: 'Stock correction (missing in the warehouse)', sample: 'Samples / showroom', other_income: 'Other income (not a job)', other: 'Other',
+  production: 'Production consumables', stock: 'Stock correction (missing in the warehouse)', sample: 'Samples / showroom', other_income: 'Other income (not a job)', recharge: 'Recharge of costs (not sales)', other: 'Other',
 };
 
 /** Reference numbers written on a document, letters and digits only. */
