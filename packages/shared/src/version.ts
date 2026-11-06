@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.77.0';
+export const APP_VERSION = '1.77.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.77.1', date: '2026-11-06', changes: [
+    'Sales orders: the column names stay at the top of the list while you scroll down.',
+  ] },
   { version: '1.77.0', date: '2026-11-05', changes: [
     'Performance \u25b8 management sheet and production month, as in the books: the payroll group Other now counts in Overheads, and with leasing set as finance leasing (Books (RZiS) \u25b8 How the UoR view counts) the Sales and Office leasing instalments (457) leave Sales costs and Overheads. Both show as memo lines under the result.',
   ] },
