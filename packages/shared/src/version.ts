@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.81.1';
+export const APP_VERSION = '1.82.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.82.0', date: '2026-11-07', changes: [
+    'Job costs: \u201cDecide: produce\u2026\u201d (admin) decides all the ticked jobs at once as produced in Orpiszew \u2014 only jobs with a saved budget that is still undecided and not locked; a confirmation lists them and says how many are left as they are (no budget, already decided, locked). Each decision is copied to the job\u2019s sales order as a single decision would be, and logged.',
+  ] },
   { version: '1.81.1', date: '2026-11-06', changes: [
     'Sales orders: the order window says when invoices are not all in the app \u2014 a WEM order (invoiced from WEM\u2019s own Subiekt) or a timber + alu / PVC order (Acemark invoices its part, WEM the timber). Commission counts the whole order from \u201cCounts from\u201d, so type it when the first payment comes in. Tick both materials on a mixed order.',
   ] },
