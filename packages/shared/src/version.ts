@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.83.4';
+export const APP_VERSION = '1.84.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.84.0', date: '2026-11-07', changes: [
+    'Sales orders: every sales rep now sees and can edit all sales orders (not only their own), with the rep filter above the list \u2014 so a rep can place and keep orders for another rep. On the order form a rep picks the main sales rep (by default themselves). Finance-only fields (Z number, invoice numbers, payments, bonus) stay with finance; the Commission page still shows the rep\u2019s own commission.',
+  ] },
   { version: '1.83.4', date: '2026-11-07', changes: [
     'Login: refreshing the page no longer logs you out. The login is kept in the browser (it also survives a new tab and closing the browser; open tabs share it and renew it together), a page that slept in the background renews as soon as you look at it, and a slow or failed load no longer logs you out \u2014 only a refused login does. Log out still logs out every tab.',
   ] },

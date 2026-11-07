@@ -1113,7 +1113,9 @@ const server = createServer(async (req, res) => {
     // production job number (Z.xxx), register cash payments and import; only admin deletes in bulk.
     if (p.startsWith('/api/finops/orders') || p === '/api/finops/commission') {
       if (!allow('sales.orders')) return;
-      const isRep = ctx.role === 'sales_rep', finance = !isRep, own = isRep ? ctx.id : null;
+      // For now every sales rep sees and edits every order (Tomasz and Beata work together; Beata places orders for
+      // Tomasz). `own` would narrow a rep to their own orders again — the commission page still shows the rep's own.
+      const isRep = ctx.role === 'sales_rep', finance = !isRep, own: string | null = null;
       const reps = async () => (await listAppUsers(ctx.tenant_id)).filter((u: any) => u.role === 'sales_rep' && u.active !== false).map((u: any) => ({ id: u.id, name: u.name || u.email }));
       const repFor = async (id: unknown) => { const r = (await reps()).find((x) => x.id === String(id ?? '')); return r ? { id: r.id, name: r.name } : { id: null, name: null }; };
       const isAdmin = ctx.role === 'admin';
@@ -1137,12 +1139,14 @@ const server = createServer(async (req, res) => {
       if (p === '/api/finops/orders' && req.method === 'GET') {
         const lq = await latestQuotes(ctx.tenant_id);
         const withQuotes = (await attachJobs(ctx.tenant_id, await listOrderViews(ctx.tenant_id, own))).map((o: any) => ({ ...o, quote: lq.get(o.id) ?? null }));
-        send(res, 200, { orders: withQuotes, papersReady: await papersReady(), repsReady: await colReady('fin_order_reps', 'id'), reps: finance ? await reps() : [], isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
+        send(res, 200, { orders: withQuotes, papersReady: await papersReady(), repsReady: await colReady('fin_order_reps', 'id'), reps: await reps(), isRep, canFinance: finance, canManage: can(ctx.role, 'finops.manage'), me: { id: ctx.id, name: ctx.name },
           isAdmin, customers: await listOrderCustomers(ctx.tenant_id), customersReady: await customersReady(), countries: COUNTRIES, nextNumber: await peekOrderNumber(ctx.tenant_id) }); return;
       }
       if (p === '/api/finops/orders' && req.method === 'POST') {
         const b = await readJson(req);
-        const rep = isRep ? { id: ctx.id as string, name: ctx.name as string } : await repFor(b.rep_user_id);
+        // a rep may place the order for another rep (the main rep); by default it is their own
+        const picked = isRep && b.rep_user_id ? await repFor(b.rep_user_id) : null;
+        const rep = isRep ? (picked?.id ? picked : { id: ctx.id as string, name: ctx.name as string }) : await repFor(b.rep_user_id);
         // check the form before a number is taken, so a refused save does not use one up
         if ('ok_text' in b) { const pre = orderFields({ ...b, order_ref: 'OK' }, finance); if (!pre.ok) { send(res, pre.status, { error: pre.error }); return; } }
         const xr = finance && 'extra_reps' in b && await colReady('fin_order_reps', 'id') ? extraRepsFields(b.extra_reps, await reps()) : null;
@@ -1290,7 +1294,7 @@ const server = createServer(async (req, res) => {
         }
         const xr = finance && 'extra_reps' in b && await colReady('fin_order_reps', 'id') ? extraRepsFields(b.extra_reps, await reps()) : null;
         if (xr && !xr.ok) { send(res, xr.status, { error: xr.error }); return; }
-        const r = await updateOrder(ctx.tenant_id, oid, b, { finance, ownerOnly: own, rep: finance && 'rep_user_id' in b ? await repFor(b.rep_user_id) : undefined });
+        const r = await updateOrder(ctx.tenant_id, oid, b, { finance, ownerOnly: own, rep: 'rep_user_id' in b ? await (async () => { const r = await repFor(b.rep_user_id); return finance || r.id ? r : undefined; })() : undefined });
         if (!r.ok) { send(res, r.status, { error: r.error }); return; }
         if (xr?.ok) await saveExtraReps(ctx.tenant_id, oid, ctx.name, xr.rows);
         // with quotes, the value, budget and status come from the quote in force — not from the form
@@ -6855,7 +6859,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     fcOpts('fo_month','All months',FC_MONTHS.map(function(m,i){return [i+1,m];}),!first);
     var co={}; FO.orders.forEach(function(o){ if(o.company)co[o.company]=1; });
     fcOpts('fo_company','All companies',Object.keys(co).sort().map(function(v){return [v,v];}),!first);
-    var rs=document.getElementById('fo_rep'); rs.style.display=FO.canFinance?'':'none';
+    var rs=document.getElementById('fo_rep'); rs.style.display=(FO.canFinance||FO.isRep)?'':'none';
     var rn={}; FO.orders.forEach(function(o){ rn[o.rep_user_id||'~']=o.rep_name||TR('(no rep)'); });
     fcOpts('fo_rep','All reps',Object.keys(rn).map(function(k){return [k,rn[k]];}).sort(function(a,b){return String(a[1]).localeCompare(String(b[1]));}),!first);
     renderFinOrders();
@@ -7252,6 +7256,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       +f('Delivery cost (zł)','<input id="foe_cd" class="tinput" inputmode="decimal" style="background:'+FO_BUD.bg+'" value="'+av(v('cost_delivery'))+'">')))
       +f(TR('Vendor quote (link or note)')+(o&&/^https?:/i.test(o.vendor_quote||'')?' <a class="codelink" href="'+av(o.vendor_quote)+'" target="_blank" rel="noopener" style="font-weight:400">'+esc(TR('open'))+' \u203a</a>':''),'<input id="foe_vq" class="tinput" style="background:'+FO_BUD.bg+'" value="'+av(v('vendor_quote'))+'" placeholder="'+av(TR('OneDrive / monday file link, or the vendor and quote number'))+'">',true)
       +foDatesBlock(o,f);
+    if(!FO.canFinance&&FO.isRep&&FO.reps.length){ var curRep=(o&&o.rep_user_id)||(FO.me&&FO.me.id)||''; h+=f(esc(TR('Sales rep (main)')),'<select id="foe_rep">'+(curRep&&!FO.reps.some(function(r){return r.id===curRep;})?'<option value="" selected>'+esc(o&&o.rep_name||TR('(no rep)'))+'</option>':'')+FO.reps.map(function(r){ return '<option value="'+av(r.id)+'"'+(curRep===r.id?' selected':'')+'>'+esc(r.name)+'</option>'; }).join('')+'</select>'); }
     if(FO.canFinance){
       h+='<div class="field full" style="border-top:1px solid var(--line);padding-top:12px;font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR('FINANCE'))+'</div>'
         +foRepsBlock(o)
@@ -7289,6 +7294,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     document.getElementById('foe_save').onclick=async function(){
       var b=foFormBody(o,{customer:g('foe_cust'),status:g('foe_status'),company:g('foe_company'),supplier:g('foe_supplier'),net:g('foe_net'),offer_month:g('foe_om'),offer_year:g('foe_oy'),
         cost_purchase:g('foe_cp'),cost_install:g('foe_ci'),cost_delivery:g('foe_cd'),note:g('foe_note'),comment:g('foe_comment'),vendor_quote:g('foe_vq')});
+      if(!FO.canFinance&&document.getElementById('foe_rep')&&g('foe_rep'))b.rep_user_id=g('foe_rep');
       if(FO.canFinance){ b.rep_user_id=g('foe_rep'); b.job_ref=g('foe_job'); b.invoice_refs=g('foe_inv'); b.first_payment_date=g('foe_first'); foRepsBody(b); }
       var msg=document.getElementById('foe_msg'); msg.textContent=TR('Saving…');
       try{ var r=await api(o?'/api/finops/orders/'+encodeURIComponent(o.id):'/api/finops/orders',{method:o?'PUT':'POST',body:JSON.stringify(b)}); var d=await r.json();
