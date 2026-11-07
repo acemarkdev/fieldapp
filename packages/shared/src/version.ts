@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.84.0';
+export const APP_VERSION = '1.84.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.84.1', date: '2026-11-07', changes: [
+    'Sales orders: opening an order that has no sales rep no longer fills in the rep who opened it \u2014 the form shows \u201c(no rep)\u201d and saving keeps it without a rep unless one is picked. Only a new order starts with the person entering it.',
+  ] },
   { version: '1.84.0', date: '2026-11-07', changes: [
     'Sales orders: every sales rep now sees and can edit all sales orders (not only their own), with the rep filter above the list \u2014 so a rep can place and keep orders for another rep. On the order form a rep picks the main sales rep (by default themselves). Finance-only fields (Z number, invoice numbers, payments, bonus) stay with finance; the Commission page still shows the rep\u2019s own commission.',
   ] },
