@@ -1,13 +1,13 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.83.0';
+export const APP_VERSION = '1.83.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
-  { version: '1.83.0', date: '2026-11-07', changes: [
-    'Commission \u25b8 Yearly bonus: the base is now what is invoiced \u2014 the net of the year\u2019s sales invoices on the accepted orders where the rep is the main rep (bonus on), each invoice once. An order counts as it is invoiced, not with its full value from the first payment, so the figure cannot run ahead of the books. The monthly commission is unchanged.',
+  { version: '1.83.1', date: '2026-11-07', changes: [
+    'Commission \u25b8 Yearly bonus: an order counts with its full value once it has at least one sales invoice (in the month of the first payment, as before). An accepted order with no invoice yet \u2014 only a typed payment date or cash \u2014 waits until it is invoiced. The monthly commission is unchanged.',
   ] },
   { version: '1.82.0', date: '2026-11-07', changes: [
     'Job costs: \u201cDecide: produce\u2026\u201d (admin) decides all the ticked jobs at once as produced in Orpiszew \u2014 only jobs with a saved budget that is still undecided and not locked; a confirmation lists them and says how many are left as they are (no budget, already decided, locked). Each decision is copied to the job\u2019s sales order as a single decision would be, and logged.',

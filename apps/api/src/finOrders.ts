@@ -199,19 +199,17 @@ export function commissionYear(orders: OrderView[], year: number): CommissionYea
   return { year, months, waiting, open, noBonus, total: { sales: round2(months.reduce((s, m) => s + m.sales, 0)), commission: round2(months.reduce((s, m) => s + m.commission, 0)) } };
 }
 
-/** The base of the yearly bonus: the net of the year's sales invoices on the rep's own accepted orders (main rep,
- *  bonus on). Each invoice counts once even when it is linked to several of the rep's orders; orders that are not
- *  invoiced yet add nothing until they are. */
+/** The base of the yearly bonus: the full net value of the rep's own accepted orders (main rep, bonus on) that have
+ *  at least one sales invoice, counted in the year the order starts to count (its first payment). An order with no
+ *  invoice yet — only a typed payment date or cash — waits until it is invoiced. */
 export function annualSales(orders: OrderView[], year: number): number {
-  const seen = new Map<string, number>();
+  let sum = 0;
   for (const o of orders) {
-    if (o.status !== 'accepted' || o.rep_bonus === false) continue;
-    for (const i of o.invoices ?? []) {
-      const y = i.period_year ?? (i.invoice_date ? +String(i.invoice_date).slice(0, 4) : null);
-      if (y === year) seen.set(i.id, Number(i.net) || 0);
-    }
+    if (o.status !== 'accepted' || o.rep_bonus === false || !(o.invoices ?? []).length) continue;
+    if (!o.counted_date || +o.counted_date.slice(0, 4) !== year) continue;
+    sum += Number(o.net) || 0;
   }
-  return round2([...seen.values()].reduce((s, v) => s + v, 0));
+  return round2(sum);
 }
 
 export interface ExtraBonus { order_id: string; code: string; customer: string | null; rep: string; user_id: string | null; net: number; kind: 'amount' | 'pct'; value: number; amount: number; date: string; month: number }

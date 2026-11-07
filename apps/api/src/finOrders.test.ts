@@ -141,16 +141,16 @@ ok('materials: ticked list in a fixed order; old text kept', materialText(['Timb
   ok('form: missing name or value, or over 100 %, refused', !extraRepsFields([{ name: '', value: '5' }], reps).ok && !extraRepsFields([{ name: 'A' }], reps).ok && !extraRepsFields([{ name: 'A', kind: 'pct', value: '120' }], reps).ok);
 }
 
-// The yearly bonus base: the year's invoices on the rep's own accepted orders, each invoice once
+// The yearly bonus base: the full value of the rep's accepted orders that have an invoice, in the year they count
 {
   const views = buildOrderViews([
-    O({ id: 'a', net: 300000, order_ref: 'OK DE11' }),                         // invoiced 100 000 so far → counts 100 000
-    O({ id: 'b', net: 50000, order_ref: 'OK DE11 part 2' }),                   // shares the OK number → the same invoice, counted once
-    O({ id: 'c', net: 80000, order_ref: 'OK DE12', first_payment_date: '2026-03-01' }), // no invoice → nothing yet
+    O({ id: 'a', net: 300000, order_ref: 'OK DE11' }),                         // one invoice of 100 000 → the full 300 000 counts
+    O({ id: 'c', net: 80000, order_ref: 'OK DE12', first_payment_date: '2026-03-01' }), // no invoice → waits
     O({ id: 'd', net: 40000, order_ref: 'OK DE13', status: 'offer' }),          // an offer never counts
     O({ id: 'e', net: 20000, order_ref: 'OK DE14', rep_bonus: false }),         // bonus off
-  ], [S('s1', 'OKDE11', '2026-05-05', 100000), { ...S('s2', 'OKDE11', '2025-12-20', 7000), period_year: 2025 }, S('s3', 'OKDE13', '2026-06-01', 40000), S('s4', 'OKDE14', '2026-06-01', 20000)], []);
-  ok('yearly bonus: only this year\'s invoices on accepted orders, each once', annualSales(views, 2026) === 100000 && annualSales(views, 2025) === 7000);
+    O({ id: 'f', net: 50000, order_ref: 'OK DE15' }),                          // first invoiced in 2025 → counts in 2025
+  ], [S('s1', 'OKDE11', '2026-05-05', 100000), S('s3', 'OKDE13', '2026-06-01', 40000), S('s4', 'OKDE14', '2026-06-01', 20000), S('s5', 'OKDE15', '2025-12-20', 9000), S('s6', 'OKDE15', '2026-02-01', 41000)], []);
+  ok('yearly bonus: full value of invoiced accepted orders, in the year they count', annualSales(views, 2026) === 300000 && annualSales(views, 2025) === 50000);
 }
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
