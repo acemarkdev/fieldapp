@@ -201,11 +201,13 @@ export function commissionYear(orders: OrderView[], year: number): CommissionYea
 
 /** The base of the yearly bonus: the full net value of the rep's own accepted orders (main rep, bonus on) that have
  *  at least one sales invoice, counted in the year the order starts to count (its first payment). An order with no
- *  invoice yet — only a typed payment date or cash — waits until it is invoiced. */
+ *  invoice yet — only a typed payment date or cash — waits until it is invoiced. A WEM order is invoiced from WEM's
+ *  own Subiekt (never an Acemark invoice), so it counts from its payment date without one. */
 export function annualSales(orders: OrderView[], year: number): number {
   let sum = 0;
   for (const o of orders) {
-    if (o.status !== 'accepted' || o.rep_bonus === false || !(o.invoices ?? []).length) continue;
+    if (o.status !== 'accepted' || o.rep_bonus === false) continue;
+    if (!(o.invoices ?? []).length && !/^wem$/i.test(String(o.company ?? '').trim())) continue;
     if (!o.counted_date || +o.counted_date.slice(0, 4) !== year) continue;
     sum += Number(o.net) || 0;
   }

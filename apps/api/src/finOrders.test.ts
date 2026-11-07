@@ -151,6 +151,8 @@ ok('materials: ticked list in a fixed order; old text kept', materialText(['Timb
     O({ id: 'f', net: 50000, order_ref: 'OK DE15' }),                          // first invoiced in 2025 → counts in 2025
   ], [S('s1', 'OKDE11', '2026-05-05', 100000), S('s3', 'OKDE13', '2026-06-01', 40000), S('s4', 'OKDE14', '2026-06-01', 20000), S('s5', 'OKDE15', '2025-12-20', 9000), S('s6', 'OKDE15', '2026-02-01', 41000)], []);
   ok('yearly bonus: full value of invoiced accepted orders, in the year they count', annualSales(views, 2026) === 300000 && annualSales(views, 2025) === 50000);
+  const wem = buildOrderViews([O({ id: 'w', net: 70000, order_ref: 'Q083104 - Timber', company: 'WEM', first_payment_date: '2026-02-01' })], [], []);
+  ok('yearly bonus: a WEM order (invoiced by WEM) counts from its payment date', annualSales(wem, 2026) === 70000);
 }
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
