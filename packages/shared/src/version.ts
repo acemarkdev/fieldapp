@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.83.3';
+export const APP_VERSION = '1.83.4';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.83.4', date: '2026-11-07', changes: [
+    'Login: refreshing the page no longer logs you out. The login is kept in the browser (it also survives a new tab and closing the browser; open tabs share it and renew it together), a page that slept in the background renews as soon as you look at it, and a slow or failed load no longer logs you out \u2014 only a refused login does. Log out still logs out every tab.',
+  ] },
   { version: '1.83.3', date: '2026-11-07', changes: [
     'Commission: the orders listed under each month show the company the order is for \u2014 Acemark or WEM.',
   ] },
