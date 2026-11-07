@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.83.2';
+export const APP_VERSION = '1.83.3';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.83.3', date: '2026-11-07', changes: [
+    'Commission: the orders listed under each month show the company the order is for \u2014 Acemark or WEM.',
+  ] },
   { version: '1.83.2', date: '2026-11-07', changes: [
     'Commission \u25b8 Yearly bonus: a WEM order counts from its payment date without an Acemark invoice \u2014 WEM invoices it from its own Subiekt, so it would otherwise never count.',
   ] },

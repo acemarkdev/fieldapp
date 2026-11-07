@@ -176,7 +176,7 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
   return views;
 }
 
-export interface CommissionMonth extends MonthCommission { month: number; orders: { id: string; code: string; customer: string | null; net: number; date: string }[] }
+export interface CommissionMonth extends MonthCommission { month: number; orders: { id: string; code: string; customer: string | null; company: string | null; net: number; date: string }[] }
 export interface CommissionYear {
   year: number; months: CommissionMonth[]; total: { sales: number; commission: number };
   waiting: { count: number; net: number };       // accepted, nothing paid yet — will count when the first payment is booked
@@ -193,7 +193,7 @@ export function commissionYear(orders: OrderView[], year: number): CommissionYea
     if (o.rep_bonus === false) { if (o.counted_date && +o.counted_date.slice(0, 4) === year) { noBonus.count++; noBonus.net = round2(noBonus.net + o.net); } continue; }
     if (!o.counted_date) { waiting.count++; waiting.net = round2(waiting.net + o.net); continue; }
     if (+o.counted_date.slice(0, 4) !== year) continue;
-    buckets[+o.counted_date.slice(5, 7) - 1].push({ id: o.id, code: o.code, customer: o.customer, net: o.net, date: o.counted_date });
+    buckets[+o.counted_date.slice(5, 7) - 1].push({ id: o.id, code: o.code, customer: o.customer, company: o.company, net: o.net, date: o.counted_date });
   }
   const months = buckets.map((list, i) => ({ month: i + 1, orders: list.sort((a, b) => a.date.localeCompare(b.date) || b.net - a.net), ...monthlyCommission(list.reduce((s, x) => s + x.net, 0)) }));
   return { year, months, waiting, open, noBonus, total: { sales: round2(months.reduce((s, m) => s + m.sales, 0)), commission: round2(months.reduce((s, m) => s + m.commission, 0)) } };
