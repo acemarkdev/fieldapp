@@ -199,6 +199,21 @@ export function commissionYear(orders: OrderView[], year: number): CommissionYea
   return { year, months, waiting, open, noBonus, total: { sales: round2(months.reduce((s, m) => s + m.sales, 0)), commission: round2(months.reduce((s, m) => s + m.commission, 0)) } };
 }
 
+/** The base of the yearly bonus: the net of the year's sales invoices on the rep's own accepted orders (main rep,
+ *  bonus on). Each invoice counts once even when it is linked to several of the rep's orders; orders that are not
+ *  invoiced yet add nothing until they are. */
+export function annualSales(orders: OrderView[], year: number): number {
+  const seen = new Map<string, number>();
+  for (const o of orders) {
+    if (o.status !== 'accepted' || o.rep_bonus === false) continue;
+    for (const i of o.invoices ?? []) {
+      const y = i.period_year ?? (i.invoice_date ? +String(i.invoice_date).slice(0, 4) : null);
+      if (y === year) seen.set(i.id, Number(i.net) || 0);
+    }
+  }
+  return round2([...seen.values()].reduce((s, v) => s + v, 0));
+}
+
 export interface ExtraBonus { order_id: string; code: string; customer: string | null; rep: string; user_id: string | null; net: number; kind: 'amount' | 'pct'; value: number; amount: number; date: string; month: number }
 /** The other reps' lump sums due in the year: an accepted order's extra reps, in the month it starts to count.
  *  `userId` = one rep's only; null = everyone's. */

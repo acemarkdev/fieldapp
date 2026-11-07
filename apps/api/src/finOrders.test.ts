@@ -1,5 +1,5 @@
 // Run: npx tsx apps/api/src/finOrders.test.ts
-import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, parseDay, materialText, extraBonuses, extraRepsFields, extraPay, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
+import { buildCatalogue, orderCode, orderKeys, monthlyCommission, annualBonus, annualSales, buildOrderViews, commissionYear, orderFields, importRowToOrder, importKey, monthFromText, parseDay, materialText, extraBonuses, extraRepsFields, extraPay, type OrderRow, type SaleLite, type PaymentRow } from './finOrders';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (!cond) { fail++; console.error('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -139,6 +139,18 @@ ok('materials: ticked list in a fixed order; old text kept', materialText(['Timb
   const f = extraRepsFields([{ name: 'ola nowak', kind: 'pct', value: '2,5' }, { name: '', value: '' }, { name: 'Agent X', value: '300' }], reps);
   ok('form: a known rep is linked, empty rows dropped, others kept by name', f.ok && f.rows.length === 2 && f.rows[0].user_id === 'R2' && f.rows[0].name === 'Ola Nowak' && f.rows[0].value === 2.5 && f.rows[1].user_id === null && f.rows[1].kind === 'amount', f);
   ok('form: missing name or value, or over 100 %, refused', !extraRepsFields([{ name: '', value: '5' }], reps).ok && !extraRepsFields([{ name: 'A' }], reps).ok && !extraRepsFields([{ name: 'A', kind: 'pct', value: '120' }], reps).ok);
+}
+
+// The yearly bonus base: the year's invoices on the rep's own accepted orders, each invoice once
+{
+  const views = buildOrderViews([
+    O({ id: 'a', net: 300000, order_ref: 'OK DE11' }),                         // invoiced 100 000 so far → counts 100 000
+    O({ id: 'b', net: 50000, order_ref: 'OK DE11 part 2' }),                   // shares the OK number → the same invoice, counted once
+    O({ id: 'c', net: 80000, order_ref: 'OK DE12', first_payment_date: '2026-03-01' }), // no invoice → nothing yet
+    O({ id: 'd', net: 40000, order_ref: 'OK DE13', status: 'offer' }),          // an offer never counts
+    O({ id: 'e', net: 20000, order_ref: 'OK DE14', rep_bonus: false }),         // bonus off
+  ], [S('s1', 'OKDE11', '2026-05-05', 100000), { ...S('s2', 'OKDE11', '2025-12-20', 7000), period_year: 2025 }, S('s3', 'OKDE13', '2026-06-01', 40000), S('s4', 'OKDE14', '2026-06-01', 20000)], []);
+  ok('yearly bonus: only this year\'s invoices on accepted orders, each once', annualSales(views, 2026) === 100000 && annualSales(views, 2025) === 7000);
 }
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
