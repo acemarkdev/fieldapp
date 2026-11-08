@@ -85,4 +85,6 @@
 //   Photos upload one by one in the background. Needs office 1.86.0 (migration 0119). Over the air on 0.76.0.
 // 0.77.1 — Logistics and Acemark finance logins open straight on Wysyłki (the shipments being loaded). Their role is
 //   read from the office server when the database does not show it to the phone (logistics). Over the air on 0.76.0.
-export const APP_VERSION = '0.77.1';
+// 0.77.2 — Production and production manager: two tabs on the phone — Czas pracy and Wysyłki (loading the shipments,
+//   as the warehouse). Needs office 1.86.2. Over the air on 0.76.0.
+export const APP_VERSION = '0.77.2';

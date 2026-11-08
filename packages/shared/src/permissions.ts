@@ -34,6 +34,7 @@ export type Capability =
   | 'labels.print'     // Logistics ▸ Labels: turn an Archimede PDF into a sheet of window/door labels
   | 'confirmations.manage' // share report-confirmation links, track approvals, download the signed PDF
   | 'shipments.manage' // Logistics ▸ Shipments: shipments to the UK, their lines, photos, papers and the packing list
+  | 'shipments.load'   // phone ▸ Wysyłki only: tick lines loaded, weights, photos, CMR, status — no office page, no edits
   | 'finops.view'      // Fin&Ops: company costs synced from the monday invoices board
   | 'finops.manage'    // Fin&Ops: accept an edited invoice as the new trusted record (admin)
   | 'sales.orders'     // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
@@ -67,6 +68,7 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'labels.print', label: 'Print labels', desc: 'Window/door labels from an Archimede PDF' },
   { key: 'confirmations.manage', label: 'Report confirmations', desc: 'Share reports for sign-off, track approvals' },
   { key: 'shipments.manage', label: 'Shipments', desc: 'Shipments to the UK: lines, photos, papers (CMR, CC599) and the packing list' },
+  { key: 'shipments.load', label: 'Load shipments (phone)', desc: 'Phone ▸ Wysyłki: tick lines as loaded, weights, photos, CMR and status — cannot add, edit or delete shipments' },
   { key: 'finops.view', label: 'Fin&Ops costs', desc: 'Company costs from the monday invoices board; run the sync' },
   { key: 'finops.manage', label: 'Manage Fin&Ops', desc: 'Accept edited invoices as the new trusted record' },
   { key: 'expenses.report', label: 'Report costs', desc: 'Report an extra installation cost against a sales order; sees only own reports' },
@@ -96,13 +98,13 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   // Cost reports form only (extra installation costs on a sales order) — nothing else, no mobile app.
   acemark_fitter: ['expenses.report'],
   // Production time: workers log time in the phone app; the manager runs the office pages only.
-  production: ['time.log'],
-  production_manager: ['time.manage', 'time.rates', 'stock.view', 'time.log'],   // time.log: also logs own time in the phone app
+  production: ['time.log', 'shipments.load'],   // + the phone's Wysyłki screen (loading)
+  production_manager: ['time.manage', 'time.rates', 'stock.view', 'time.log', 'shipments.load'],   // time.log: also logs own time in the phone app
   // A team leader among the production workers: logs own time on the phone and runs the Production time
   // pages (tasks, entries) — but never sees rates or zł amounts (the server leaves them out).
   production_lead: ['time.manage', 'time.log'],
   // Warehouse: logs issues for Z orders on the phone (Wydania), own production time and the shipments being loaded (Wysyłki) — no office pages.
-  warehouse: ['time.log', 'shipments.manage'],   // + the phone's Wysyłki screen: photos, weights, loaded, sent
+  warehouse: ['time.log', 'shipments.load'],   // + the phone's Wysyłki screen: photos, weights, loaded, sent
   // ACE Scaffolding office: only the Scaffolding business; its screens follow App access (scaf.*), no capability here.
   scaffolding: [],
   // ACE Scaffolding crew: the phone app's crew screen only (through the office server).

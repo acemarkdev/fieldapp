@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.86.1';
+export const APP_VERSION = '1.86.2';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.86.2', date: '2026-11-08', changes: [
+    'Shipments on the phone for Production and Production manager too (mobile 0.77.2: Czas pracy \u00b7 Wysy\u0142ki). A new permission, \u201cLoad shipments (phone)\u201d (Admin \u25b8 Roles), gives the loading screen only \u2014 tick lines, weights, photos, CMR, status \u2014 without the office page or edits; the warehouse now has this one too.',
+  ] },
   { version: '1.86.1', date: '2026-11-08', changes: [
     'Manuals: a Polish user manual for Shipments (Wysy\u0142ki) \u2014 the office screens and loading on the phone, with screenshots. Logistics users now see Fin&Ops \u25b8 Instrukcje with this manual.',
   ] },

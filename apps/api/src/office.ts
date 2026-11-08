@@ -835,8 +835,8 @@ const server = createServer(async (req, res) => {
     }
     // ---- Production: workers use the phone app only; the manager the Production pages only ----
     if (ctx.role === 'warehouse' && p !== '/api/me' && p !== '/api/shipments' && !p.startsWith('/api/shipments/') && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
-    if (ctx.role === 'production' && p !== '/api/me' && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
-    if ((ctx.role === 'production_manager' || ctx.role === 'production_lead') && !(p === '/api/me' || (finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission') || p === '/api/production' || p.startsWith('/api/production/') || p.startsWith('/api/cortizo/'))) { send(res, 403, { error: 'Not allowed.' }); return; }
+    if (ctx.role === 'production' && p !== '/api/me' && p !== '/api/shipments' && !p.startsWith('/api/shipments/') && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
+    if ((ctx.role === 'production_manager' || ctx.role === 'production_lead') && !(p === '/api/me' || (finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission') || p === '/api/production' || p.startsWith('/api/production/') || p.startsWith('/api/cortizo/') || p === '/api/shipments' || p.startsWith('/api/shipments/'))) { send(res, 403, { error: 'Not allowed.' }); return; }
     // Production time ▸ API access: the keys an external system uses (admin only; a key is shown once)
     if (p === '/api/time-api/keys' || p.startsWith('/api/time-api/keys/')) {
       if (ctx.role !== 'admin') { send(res, 403, { error: 'Only an admin manages API keys.' }); return; }
@@ -1072,11 +1072,12 @@ const server = createServer(async (req, res) => {
     }
     // ---- Logistics ▸ Shipments (replaces the monday board "DostawyUK/Deliveries from PL" and Eledo) ----
     if (p === '/api/shipments' || p.startsWith('/api/shipments/')) {
-      if (!allow('shipments.manage')) return;
+      if (!can(ctx.role, 'shipments.manage') && !can(ctx.role, 'shipments.load')) { allow('shipments.manage'); return; }
       if (!(await shipmentsReady())) { send(res, p === '/api/shipments' && req.method === 'GET' ? 200 : 409, { ready: false, shipments: [], error: 'Shipments are not set up yet — run migration 0119_shipments.sql in Supabase.' }); return; }
       const by = { id: (ctx.id as string) ?? null, name: (ctx.name as string) ?? null };
-      // the warehouse (phone) loads: photos, weights, loaded ticks, papers and the status — it does not create, edit or delete shipments
-      const phone = ctx.role === 'warehouse';
+      // the phone loaders (warehouse, production — shipments.load) tick lines, weights, photos, papers and the status;
+      // they do not create, edit or delete shipments or their lines
+      const phone = !can(ctx.role, 'shipments.manage');
       if (phone && ((p === '/api/shipments' && req.method === 'POST') || p === '/api/shipments/parse-lines' || (/^\/api\/shipments\/[^/]+$/.test(p) && (req.method === 'PUT' || req.method === 'DELETE')) || /\/lines$/.test(p))) { send(res, 403, { error: 'Not allowed.' }); return; }
       if (p === '/api/shipments' && req.method === 'GET') { send(res, 200, { ready: true, shipments: await listShipments(ctx.tenant_id) }); return; }
       if (p === '/api/shipments' && req.method === 'POST') {

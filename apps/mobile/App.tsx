@@ -21,6 +21,7 @@ import ScheduleScreen from './src/screens/ScheduleScreen';
 import TimeScreen from './src/screens/TimeScreen';
 import WarehouseScreen from './src/screens/WarehouseScreen';
 import ShipmentsScreen from './src/screens/ShipmentsScreen';
+import ProductionShell from './src/screens/ProductionShell';
 import { officeUrl } from './src/lib/crewLogic';
 import CrewScreen from './src/screens/CrewScreen';
 import { APP_VERSION } from './src/lib/version';
@@ -131,7 +132,7 @@ export default function App() {
           <TouchableOpacity onPress={() => setCrewMode(!crewMode)} style={{ paddingVertical: 6, alignItems: 'center', backgroundColor: C.soft }}>
             <Text style={{ color: C.purple, fontWeight: '800' }}>{crewMode ? '‹ Back to the jobs' : 'ACE Scaffolding — crew screen ›'}</Text>
           </TouchableOpacity>) : null}
-        {(role === 'scaffolder' || role === 'scaffolding' || (role === 'admin' && crewMode)) ? <CrewScreen /> : role === 'warehouse' ? <WarehouseScreen /> : (role === 'logistics' || role === 'acemark_finance') ? <ShipmentsScreen /> : (role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
+        {(role === 'scaffolder' || role === 'scaffolding' || (role === 'admin' && crewMode)) ? <CrewScreen /> : role === 'warehouse' ? <WarehouseScreen /> : (role === 'logistics' || role === 'acemark_finance') ? <ShipmentsScreen /> : (role === 'production' || role === 'production_manager') ? <ProductionShell /> : role === 'production_lead' ? <TimeScreen /> : !job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
               ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />
