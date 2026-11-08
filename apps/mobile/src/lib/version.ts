@@ -83,4 +83,6 @@
 //   loaded, put in the net / gross kg, take photos of each line, photograph the CMR and the signed packing list, then
 //   "Wysłane" (warns about unticked lines, missing weights or no CMR; without a CMR it is sent without documents).
 //   Photos upload one by one in the background. Needs office 1.86.0 (migration 0119). Over the air on 0.76.0.
-export const APP_VERSION = '0.77.0';
+// 0.77.1 — Logistics and Acemark finance logins open straight on Wysyłki (the shipments being loaded). Their role is
+//   read from the office server when the database does not show it to the phone (logistics). Over the air on 0.76.0.
+export const APP_VERSION = '0.77.1';

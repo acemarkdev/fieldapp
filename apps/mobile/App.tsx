@@ -20,6 +20,8 @@ import MappingStepperScreen from './src/screens/MappingStepperScreen';
 import ScheduleScreen from './src/screens/ScheduleScreen';
 import TimeScreen from './src/screens/TimeScreen';
 import WarehouseScreen from './src/screens/WarehouseScreen';
+import ShipmentsScreen from './src/screens/ShipmentsScreen';
+import { officeUrl } from './src/lib/crewLogic';
 import CrewScreen from './src/screens/CrewScreen';
 import { APP_VERSION } from './src/lib/version';
 import type { Pending } from './src/lib/offline';
@@ -66,7 +68,15 @@ export default function App() {
       try { await supabase.rpc('link_current_user'); } catch { /* older DB without the fn */ }
       const { data } = await supabase.from('app_users').select('role,team_id').eq('auth_user_id', session.user.id).maybeSingle();
       if (cancelled) return;
-      const row = data as { role?: string; team_id?: string | null } | null;
+      let row = data as { role?: string; team_id?: string | null } | null;
+      // Roles that may not read tables directly (logistics) get their role from the office server instead.
+      if (!row?.role) {
+        try {
+          const r = await fetch(officeUrl(process.env.EXPO_PUBLIC_OFFICE_URL, process.env.EXPO_PUBLIC_SUPABASE_URL) + '/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
+          if (r.ok) { const me = await r.json(); if (me?.role) row = { role: me.role, team_id: me.team_id ?? null }; }
+        } catch { /* offline: stays without a role */ }
+      }
+      if (cancelled) return;
       setRole(row?.role ?? null);
       setTeamId(row?.team_id ?? null);
     })();
@@ -121,7 +131,7 @@ export default function App() {
           <TouchableOpacity onPress={() => setCrewMode(!crewMode)} style={{ paddingVertical: 6, alignItems: 'center', backgroundColor: C.soft }}>
             <Text style={{ color: C.purple, fontWeight: '800' }}>{crewMode ? '‹ Back to the jobs' : 'ACE Scaffolding — crew screen ›'}</Text>
           </TouchableOpacity>) : null}
-        {(role === 'scaffolder' || role === 'scaffolding' || (role === 'admin' && crewMode)) ? <CrewScreen /> : role === 'warehouse' ? <WarehouseScreen /> : (role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
+        {(role === 'scaffolder' || role === 'scaffolding' || (role === 'admin' && crewMode)) ? <CrewScreen /> : role === 'warehouse' ? <WarehouseScreen /> : (role === 'logistics' || role === 'acemark_finance') ? <ShipmentsScreen /> : (role === 'production' || role === 'production_manager' || role === 'production_lead') ? <TimeScreen /> : !job
           ? (itemId
               // A fitter opened an item straight from their schedule (no job context) — Back returns to the schedule.
               ? <ItemDetailScreen key={itemId} id={itemId} role={role} onEditItem={setEditingItem} onOpenItem={(nid) => setItemId(nid)} onBack={() => setItemId(null)} onChanged={() => {}} />
