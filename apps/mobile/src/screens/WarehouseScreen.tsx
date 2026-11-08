@@ -1,4 +1,4 @@
-// Warehouse (role "warehouse"): three tabs — Wydania (what was issued from the warehouse for a Z order),
+// Warehouse (role "warehouse"): four tabs — Wysyłki (loading the shipments: see ShipmentsScreen), Wydania (what was issued from the warehouse for a Z order),
 // Zwroty (what came back from production: the same form, booked as PW instead of RW) and Czas pracy
 // (the production time screen). A return shows how much of the symbol was issued to that Z and warns when
 // more comes back than went out (wh_balance). An issue: the Z order, the Subiekt item symbol (scan the
@@ -12,19 +12,20 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { supabase } from '../lib/supabase';
 import { C } from '../lib/theme';
 import TimeScreen from './TimeScreen';
+import ShipmentsScreen from './ShipmentsScreen';
 import { zRef, parseQty, formProblem, scanned, jobChoices, qtyLabel, forJob, type WhIssue, type WhItem, type WhForm } from '../lib/whLogic';
 import { useKeyboardPad } from '../lib/useKeyboardPad';
 
 export default function WarehouseScreen() {
-  const [tab, setTab] = useState<'issue' | 'return' | 'time'>('issue');
+  const [tab, setTab] = useState<'issue' | 'return' | 'ship' | 'time'>('issue');
   return (
     <View style={s.fill}>
       <View style={[s.tabs, { marginHorizontal: 12, marginTop: 10 }]}>
-        {([['issue', 'Wydania'], ['return', 'Zwroty'], ['time', 'Czas pracy']] as const).map(([k, l]) => (
+        {([['issue', 'Wydania'], ['return', 'Zwroty'], ['ship', 'Wysyłki'], ['time', 'Czas']] as const).map(([k, l]) => (
           <TouchableOpacity key={k} style={[s.tab, tab === k && s.tabOn]} onPress={() => setTab(k)} activeOpacity={0.8}><Text style={[s.tabT, tab === k && s.tabTOn]}>{l}</Text></TouchableOpacity>
         ))}
       </View>
-      {tab === 'time' ? <TimeScreen /> : <Issues key={tab} kind={tab} />}
+      {tab === 'time' ? <TimeScreen /> : tab === 'ship' ? <ShipmentsScreen /> : <Issues key={tab} kind={tab} />}
     </View>
   );
 }
@@ -261,7 +262,7 @@ const s = StyleSheet.create({
   tabs: { flexDirection: 'row', backgroundColor: C.soft, borderRadius: 12, padding: 4, gap: 4 },
   tab: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
   tabOn: { backgroundColor: C.white, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
-  tabT: { fontSize: 15, fontWeight: '700', color: C.muted },
+  tabT: { fontSize: 14, fontWeight: '700', color: C.muted },
   tabTOn: { color: C.purple, fontWeight: '800' },
   card: { backgroundColor: C.white, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: C.line },
   title: { fontSize: 17, fontWeight: '800', color: C.ink, marginBottom: 2 },

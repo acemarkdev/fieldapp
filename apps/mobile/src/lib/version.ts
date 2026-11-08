@@ -79,4 +79,8 @@
 // 0.76.7 — Warehouse: a symbol typed with different spacing ("4342 RAL 7044 CM 4500 MM" / "4342 RAL7044 CM 4500MM")
 //   is recognised on the Subiekt stock list, saved with Subiekt's spelling, and a return counts what was issued
 //   under either spelling ("Więcej niż wydano" no longer appears just for spacing). Needs migration 0117. Over the air on 0.76.0.
-export const APP_VERSION = '0.76.7';
+// 0.77.0 — Warehouse ▸ Wysyłki: the shipments being loaded (office: Logistics ▸ Shipments). Open one, tick each line as
+//   loaded, put in the net / gross kg, take photos of each line, photograph the CMR and the signed packing list, then
+//   "Wysłane" (warns about unticked lines, missing weights or no CMR; without a CMR it is sent without documents).
+//   Photos upload one by one in the background. Needs office 1.86.0 (migration 0119). Over the air on 0.76.0.
+export const APP_VERSION = '0.77.0';

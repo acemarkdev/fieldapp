@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.85.1';
+export const APP_VERSION = '1.86.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.86.0', date: '2026-11-08', changes: [
+    'Shipments on the phone (warehouse login, mobile 0.77.0, Magazyn \u25b8 Wysy\u0142ki): the warehouse ticks each line as loaded, puts in the weights, adds photos per line and of the CMR / signed packing list, and marks the shipment sent \u2014 all of it shows here at once. The warehouse cannot add, edit or delete shipments.',
+  ] },
   { version: '1.85.1', date: '2026-11-08', changes: [
     'Shipments: every packing list downloaded is kept on the shipment under Papers \u25b8 Packing lists (generated) \u2014 the latest with photos and the latest without (migration 0120; before it they are filed under Other).',
     'Logistics menu in Polish: Logistyka \u25b8 Etykiety, Potwierdzenia, Wysy\u0142ki.',

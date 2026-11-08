@@ -79,7 +79,7 @@ import { buildJobReportPdf } from './reportPdf';
 import { buildJobPricePdf } from './pricingPdf';
 import { buildInvoicePdf } from './invoicePdf';
 import { buildFlatSignoffPdf } from './signoffPdf';
-import { shipmentsReady, listShipments, getShipment, createShipment, updateShipment, deleteShipment, saveLines, addFile, getFile, deleteFile, shipmentLookups, linesFromSpec, buildPackingListPdf, linePhotos, savePackingList } from './shipments';
+import { shipmentsReady, listShipments, getShipment, createShipment, updateShipment, deleteShipment, saveLines, addFile, getFile, deleteFile, shipmentLookups, linesFromSpec, buildPackingListPdf, linePhotos, savePackingList, patchLine, setShipmentStatus } from './shipments';
 import { notifyPoSubmitted, notifyPoDecision, notifyConfirmationApproved } from './notify';
 import { parseLabelPdf, buildLabelsPdf, formatLabelPhone, labelCopies, labelPhoneKey, defaultLabelPhone } from './labels';
 import { JOB_KINDS, JOB_KIND_LABEL, listJobs as listFinJobs, getJob as getFinJob, createJob as createFinJob, updateJob as updateFinJob, deleteJob as deleteFinJob, deleteJobs as deleteFinJobs, setJobLock, setJobCell, addJobItem, updateJobItem, deleteJobItem, importJobs, getLabourRate, setLabourRate, parseMoney as parseJobMoney } from './finJobs';
@@ -834,7 +834,7 @@ const server = createServer(async (req, res) => {
       if (!allowedForCustomer) { send(res, 403, { error: 'Not allowed.' }); return; }
     }
     // ---- Production: workers use the phone app only; the manager the Production pages only ----
-    if (ctx.role === 'warehouse' && p !== '/api/me' && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
+    if (ctx.role === 'warehouse' && p !== '/api/me' && p !== '/api/shipments' && !p.startsWith('/api/shipments/') && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
     if (ctx.role === 'production' && p !== '/api/me' && !(finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission')) { send(res, 403, { error: 'Not allowed.' }); return; }
     if ((ctx.role === 'production_manager' || ctx.role === 'production_lead') && !(p === '/api/me' || (finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission') || p === '/api/production' || p.startsWith('/api/production/') || p.startsWith('/api/cortizo/'))) { send(res, 403, { error: 'Not allowed.' }); return; }
     // Production time ▸ API access: the keys an external system uses (admin only; a key is shown once)
@@ -1075,6 +1075,9 @@ const server = createServer(async (req, res) => {
       if (!allow('shipments.manage')) return;
       if (!(await shipmentsReady())) { send(res, p === '/api/shipments' && req.method === 'GET' ? 200 : 409, { ready: false, shipments: [], error: 'Shipments are not set up yet — run migration 0119_shipments.sql in Supabase.' }); return; }
       const by = { id: (ctx.id as string) ?? null, name: (ctx.name as string) ?? null };
+      // the warehouse (phone) loads: photos, weights, loaded ticks, papers and the status — it does not create, edit or delete shipments
+      const phone = ctx.role === 'warehouse';
+      if (phone && ((p === '/api/shipments' && req.method === 'POST') || p === '/api/shipments/parse-lines' || (/^\/api\/shipments\/[^/]+$/.test(p) && (req.method === 'PUT' || req.method === 'DELETE')) || /\/lines$/.test(p))) { send(res, 403, { error: 'Not allowed.' }); return; }
       if (p === '/api/shipments' && req.method === 'GET') { send(res, 200, { ready: true, shipments: await listShipments(ctx.tenant_id) }); return; }
       if (p === '/api/shipments' && req.method === 'POST') {
         const b = await readJson(req); const r = await createShipment(ctx.tenant_id, by, b);
@@ -1104,6 +1107,16 @@ const server = createServer(async (req, res) => {
       if (!ssub && req.method === 'DELETE') {
         const r = await deleteShipment(ctx.tenant_id, sid); if (!r.ok) { send(res, r.status, { error: r.error }); return; }
         audit(ctx, 'shipment.delete', 'shipment', sid, 'Deleted a shipment'); send(res, 200, { ok: true }); return;
+      }
+      if (!ssub && req.method === 'PATCH') {
+        const b = await readJson(req); const r = await setShipmentStatus(ctx.tenant_id, sid, b.status);
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        audit(ctx, 'shipment.status', 'shipment', sid, `Shipment status: ${String(b.status).slice(0, 20)}`); send(res, 200, { ok: true }); return;
+      }
+      if (ssub === 'lines' && sfid && req.method === 'PATCH') {
+        const r = await patchLine(ctx.tenant_id, sid, sfid, await readJson(req));
+        if (!r.ok) { send(res, r.status, { error: r.error }); return; }
+        send(res, 200, { ok: true }); return;
       }
       if (ssub === 'lines' && req.method === 'PUT') {
         const b = await readJson(req); const r = await saveLines(ctx.tenant_id, sid, b.lines);

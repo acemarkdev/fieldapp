@@ -1,0 +1,11 @@
+import { forPhone, kg, kgText, progress, beforeSending, type PShip, type PLine } from './shipLogic';
+let fail = 0; const ok = (n: string, c: boolean, g?: unknown) => { if (c) console.log('✓ ' + n); else { fail++; console.log('✗ ' + n, JSON.stringify(g)); } };
+const S = (id: string, status: string, ship_date: string | null): PShip => ({ id, name: id, status, ship_date, company: 'acemark', importer: null });
+const now = new Date('2026-11-08T10:00:00Z');
+const f = forPhone([S('old', 'sent', '2026-10-01'), S('a', 'new', null), S('b', 'sent', '2026-11-06'), S('c', 'in_progress', '2026-11-09')], now);
+ok('open first, then sent this week; old ones hidden', f.map((s) => s.id).join() === 'a,c,b', f.map((s) => s.id));
+ok('kg: comma, spaces; empty → null; nonsense → undefined', kg('17,5') === 17.5 && kg('1 200.5') === 1200.5 && kg('') === null && kg('abc') === undefined && kgText(17.5) === '17,5');
+const L = (loaded: boolean, n: number | null): PLine => ({ id: 'x', qty: 1, unit: 'Szt.', description: 'd', net_kg: n, gross_kg: n, comment: null, loaded });
+ok('progress counts loaded lines', JSON.stringify(progress([L(true, 1), L(false, 1)])) === '{"loaded":1,"total":2}');
+ok('before sending: unticked, no weights, no CMR', beforeSending([L(true, 1), L(false, null)], []).length === 3 && beforeSending([L(true, 1)], [{ id: 'f', line_id: null, kind: 'cmr', file_name: null }]).length === 0);
+if (fail) { console.error(fail + ' FAIL'); process.exit(1); } console.log('All shipment (phone) tests passed.');

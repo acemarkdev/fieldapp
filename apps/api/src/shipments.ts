@@ -235,6 +235,31 @@ export async function saveLines(tenantId: string, shipmentId: string, rows: any[
   return { ok: true, saved: pos };
 }
 
+/** The phone while loading: tick a line as loaded, or put in its weights / quantity — the rest of the line stays. */
+export async function patchLine(tenantId: string, shipmentId: string, lineId: string, b: any): Promise<Result> {
+  const cur = await db().from('shipment_lines').select('id,net_kg,gross_kg').eq('tenant_id', tenantId).eq('shipment_id', shipmentId).eq('id', lineId).maybeSingle();
+  if (cur.error) throw cur.error; if (!cur.data) return fail(404, 'Line not found.');
+  const f: Record<string, any> = { updated_at: new Date().toISOString() };
+  if ('loaded' in (b ?? {})) f.loaded = b.loaded === true;
+  for (const k of ['net_kg', 'gross_kg', 'qty'] as const) if (k in (b ?? {})) { const n = num(b[k]); if (n === undefined) return fail(400, 'The weight is not a number (kg).'); f[k] = n; }
+  const net = 'net_kg' in f ? f.net_kg : cur.data.net_kg, gross = 'gross_kg' in f ? f.gross_kg : cur.data.gross_kg;
+  if (net != null && gross != null && Number(gross) < Number(net)) return fail(400, 'The gross weight is lower than the net weight.');
+  const { error } = await db().from('shipment_lines').update(f).eq('tenant_id', tenantId).eq('id', lineId);
+  if (error) throw error;
+  await db().from('shipments').update({ updated_at: new Date().toISOString() }).eq('tenant_id', tenantId).eq('id', shipmentId);
+  return { ok: true };
+}
+/** Only the status (the phone: "W trakcie" when loading starts, "Wysłane" when the truck leaves). */
+export async function setShipmentStatus(tenantId: string, shipmentId: string, status: unknown): Promise<Result> {
+  if (!(STATUSES as readonly string[]).includes(String(status))) return fail(400, 'Unknown status.');
+  const cur = await db().from('shipments').select('id,sent_at').eq('tenant_id', tenantId).eq('id', shipmentId).maybeSingle();
+  if (cur.error) throw cur.error; if (!cur.data) return fail(404, 'Shipment not found.');
+  const sent = status === 'sent' || status === 'sent_no_docs';
+  const { error } = await db().from('shipments').update({ status, sent_at: sent ? (cur.data.sent_at ?? new Date().toISOString()) : null, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId).eq('id', shipmentId);
+  if (error) throw error;
+  return { ok: true };
+}
+
 async function rememberCarrier(tenantId: string, f: Record<string, any>) {
   const name = lines(f.carrier); if (!name) return;
   try { await db().from('shipment_carriers').upsert({ tenant_id: tenantId, name, driver: f.driver ?? null, plates: f.plates ?? null, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id,name' }); } catch { /* the list is only a help */ }

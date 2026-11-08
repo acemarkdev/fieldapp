@@ -101,8 +101,8 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   // A team leader among the production workers: logs own time on the phone and runs the Production time
   // pages (tasks, entries) — but never sees rates or zł amounts (the server leaves them out).
   production_lead: ['time.manage', 'time.log'],
-  // Warehouse: logs issues for Z orders on the phone (Wydania) and own production time — no office pages.
-  warehouse: ['time.log'],
+  // Warehouse: logs issues for Z orders on the phone (Wydania), own production time and the shipments being loaded (Wysyłki) — no office pages.
+  warehouse: ['time.log', 'shipments.manage'],   // + the phone's Wysyłki screen: photos, weights, loaded, sent
   // ACE Scaffolding office: only the Scaffolding business; its screens follow App access (scaf.*), no capability here.
   scaffolding: [],
   // ACE Scaffolding crew: the phone app's crew screen only (through the office server).
