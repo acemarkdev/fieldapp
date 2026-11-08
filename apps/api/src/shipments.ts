@@ -25,7 +25,7 @@ export const COMPANIES = {
 export type Company = keyof typeof COMPANIES;
 export const STATUSES = ['new', 'in_progress', 'sent', 'sent_no_docs'] as const;
 export type ShipStatus = (typeof STATUSES)[number];
-export const FILE_KINDS = ['photo', 'invoice', 'cmr', 'packing_signed', 'cc599', 'other'] as const;
+export const FILE_KINDS = ['photo', 'invoice', 'cmr', 'packing_signed', 'cc599', 'packing_list', 'other'] as const;
 export type FileKind = (typeof FILE_KINDS)[number];
 export const UNITS = ['Szt.', 'kpl.', 'm2', 'mb', 'm', 'L', 'Sztanga', 'paleta'];
 
@@ -412,6 +412,24 @@ export function buildPackingListPdf(inp: PackingInput): Promise<Buffer> {
     }
     doc.end();
   });
+}
+
+/** Keep the packing list just generated on the shipment: the latest with photos and the latest without
+ *  (the earlier one of the same kind is replaced). Before migration 0120 it is filed under "other". */
+export async function savePackingList(tenantId: string, shipmentId: string, by: string | null, pdf: Buffer, withPhotos: boolean, shipName: string): Promise<void> {
+  const tag = withPhotos ? 'foto' : 'bez foto';
+  const pp = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const name = `Lista pakowa ${shipName} (${tag}) ${pp.day}.${pp.month}.${pp.year} ${pp.hour}-${pp.minute}.pdf`.replace(/[\\/]/g, '_');
+  const prev = await db().from('shipment_files').select('id,storage_path,file_name').eq('tenant_id', tenantId).eq('shipment_id', shipmentId).in('kind', ['packing_list', 'other']).like('file_name', `Lista pakowa % (${tag}) %`);
+  const path = `${tenantId}/${shipmentId}/${Date.now()}-packing-${withPhotos ? 'foto' : 'nofoto'}.pdf`;
+  const up = await db().storage.from(BUCKET).upload(path, pdf, { contentType: 'application/pdf', upsert: false });
+  if (up.error) throw up.error;
+  const row = { tenant_id: tenantId, shipment_id: shipmentId, line_id: null, storage_path: path, file_name: name, content_type: 'application/pdf', size: pdf.length, created_by_name: by };
+  let ins = await db().from('shipment_files').insert({ ...row, kind: 'packing_list' });
+  if (ins.error) ins = await db().from('shipment_files').insert({ ...row, kind: 'other' });   // migration 0120 not run yet
+  if (ins.error) { await db().storage.from(BUCKET).remove([path]); throw ins.error; }
+  const old = (prev.data ?? []) as any[];
+  if (old.length) { await db().from('shipment_files').delete().in('id', old.map((r) => r.id)); await db().storage.from(BUCKET).remove(old.map((r) => r.storage_path)); }
 }
 
 /** The first photo of each line (JPEG / PNG only), for the packing list with photos. */

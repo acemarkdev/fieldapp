@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.85.0';
+export const APP_VERSION = '1.85.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.85.1', date: '2026-11-08', changes: [
+    'Shipments: every packing list downloaded is kept on the shipment under Papers \u25b8 Packing lists (generated) \u2014 the latest with photos and the latest without (migration 0120; before it they are filed under Other).',
+    'Logistics menu in Polish: Logistyka \u25b8 Etykiety, Potwierdzenia, Wysy\u0142ki.',
+  ] },
   { version: '1.85.0', date: '2026-11-08', changes: [
     'Logistics \u25b8 Shipments (replaces the monday board \u201cDostawyUK/Deliveries from PL\u201d and Eledo): shipments to the UK for Acemark and WEM with the importer, delivery address, carrier, driver, plates and invoices (picked from Sales, carriers and importers remembered), the lines with quantity, unit, description, net / gross kg and comment (added by hand or read from the production list PDF, as on Labels), photos per line, and the papers \u2014 invoices, CMR scan, signed packing list, CC599. The packing list PDF (Polish / English) is built in the app, with or without photos. A shipment sent without its CC599 or CMR shows as waiting for documents. Needs migration 0119_shipments.sql.',
   ] },
