@@ -14,6 +14,7 @@ export const MANUALS: ManualDef[] = [
   { key: 'job-costs', file: 'koszty-zlecen.md', title: 'Koszty zleceń', cap: 'finops.view' },
   { key: 'sales', file: 'sprzedaz.md', title: 'Sprzedaż', cap: 'finops.view' },
   { key: 'orders', file: 'zamowienia-i-prowizja.md', title: 'Zamówienia i prowizja', cap: 'sales.orders' },
+  { key: 'shipments', file: 'wysylki.md', title: 'Wysyłki', cap: 'shipments.manage' },
 ];
 
 export function manualsFor(can: (cap: Capability) => boolean): ManualDef[] { return MANUALS.filter((m) => can(m.cap)); }

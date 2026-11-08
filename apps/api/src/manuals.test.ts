@@ -18,6 +18,7 @@ ok('an image may only name a plain png file', !manualHtml('![x](../secret.png)')
 const keys = (caps: string[]) => manualsFor((c) => caps.includes(c)).map((m) => m.key).join(',');
 ok('finance sees all three', keys(['finops.view', 'sales.orders']) === 'job-costs,sales,orders');
 ok('a sales rep sees only the orders manual', keys(['sales.orders']) === 'orders');
+ok('logistics sees only the shipments manual', keys(['shipments.manage']) === 'shipments');
 ok('no Fin&Ops capability, no manuals', keys(['items.view']) === '');
 
 // The real files: every manual renders, and every picture it shows exists

@@ -987,7 +987,7 @@ const server = createServer(async (req, res) => {
       send(res, 403, { error: 'Not allowed.' }); return;
     }
     // ---- Logistics: the Logistics menu only (labels, confirmations); everything else is refused ----
-    if (ctx.role === 'logistics' && !(p === '/api/me' || (finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission') || p.startsWith('/api/labels/') || p === '/api/confirmations' || p.startsWith('/api/confirmations/') || p.startsWith('/api/cortizo/') || p === '/api/shipments' || p.startsWith('/api/shipments/'))) {
+    if (ctx.role === 'logistics' && !(p === '/api/me' || (finGranted && p.startsWith('/api/finops/') && !p.startsWith('/api/finops/orders') && p !== '/api/finops/commission') || p.startsWith('/api/labels/') || p === '/api/confirmations' || p.startsWith('/api/confirmations/') || p.startsWith('/api/cortizo/') || p === '/api/shipments' || p.startsWith('/api/shipments/') || p.startsWith('/api/finops/manuals'))) {
       send(res, 403, { error: 'Not allowed.' }); return;
     }
     // ---- Production ▸ Cortizo profiles: catalogue references + Subiekt stock (see cortizo.ts) ----
@@ -5795,7 +5795,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(scafTabs.indexOf(t)>=0)return myBiz().some(function(b){ return b.key==='scaffolding'; })?t:'home';
     if(myRole==='scaffolding')return 'scafenq';
     if(myRole==='scaffolder')return 'home';
-    if(myRole==='logistics') return (t==='confirm'||t==='labels'||t==='ship')?t:'labels';
+    if(myRole==='logistics') return (t==='confirm'||t==='labels'||t==='ship'||t==='finman')?t:'labels';
     if(myRole==='acemark_finance'&&t!=='finwh'&&t!=='finstock'&&t!=='labels'&&t!=='confirm'&&t!=='ship') return (t==='fincosts'||t==='finperf'||t==='finjobs'||t==='finsales'||t==='finpay'||t==='finorders'||t==='fincomm'||t==='finman')?t:'finperf';
     // a rep keeps their own tabs, plus any Fin&Ops app granted on Admin ▸ Roles (e.g. Job costs)
     if(myRole==='sales_rep'){ var repApp={finperf:'fin.performance',fincosts:'fin.costs',finjobs:'fin.jobs',finsales:'fin.sales',finpay:'fin.payroll',finstock:'fin.stock',finwh:'wh.issues'}; return (t==='finorders'||t==='fincomm'||t==='finman'||(repApp[t]&&canApp(repApp[t])!=='off'))?t:'finorders'; }
@@ -5807,7 +5807,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var need={prod:'time.manage',myexp:'expenses.report',finorders:'sales.orders',fincomm:'sales.orders',fincosts:'finops.view',finperf:'finops.view',finjobs:'finops.view',finsales:'finops.view',finpay:'finops.view',confirm:'confirmations.manage',labels:'labels.print',dashboard:'dashboard.view',teams:'teams.manage',sync:'monday.sync',plans:'dashboard.view',mapping:'items.create'};
     if((t==='users'||t==='roles'||t==='logs')&&myRole!=='admin')t='items';
     else if(need[t]&&!canCap(need[t]))t='items';
-    else if(t==='finman'&&!canCap('finops.view')&&!canCap('sales.orders'))t='items';
+    else if(t==='finman'&&!canCap('finops.view')&&!canCap('sales.orders')&&!canCap('shipments.manage'))t='items';
     return t;
   }
   var myRole=authGet('ace_role')||''; var myTeam=authGet('ace_team')||''; var USER_ROLES=['admin','office','surveyor','scanner','fitter'];
@@ -10123,7 +10123,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     show('tabItems',!isCustomer&&!isLogistics&&!isFin);
     show('tabFinOrders',canCap('sales.orders'));
     show('tabFinComm',canCap('sales.orders'));
-    show('tabFinMan',canCap('finops.view')||canCap('sales.orders'));
+    show('tabFinMan',canCap('finops.view')||canCap('sales.orders')||canCap('shipments.manage'));
     show('tabFinStock',canApp('fin.stock')!=='off');
     show('tabMyExp',canCap('expenses.report'));
     show('tabProd',canCap('time.manage'));
