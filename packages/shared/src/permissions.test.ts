@@ -30,7 +30,7 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
 // --- logistics: the Logistics menu (labels + confirmations) and the Cortizo profiles stock, nothing else ---
 {
   const { CAPABILITIES } = await import('./permissions');
-  const LOGI = ['labels.print', 'confirmations.manage', 'stock.view'];
+  const LOGI = ['labels.print', 'confirmations.manage', 'shipments.manage', 'stock.view'];
   for (const c of CAPABILITIES) ok(`logistics ${c.key} === ${LOGI.includes(c.key)}`, can('logistics', c.key) === LOGI.includes(c.key));
   ok('office lacks confirmations.manage', can('office', 'confirmations.manage') === false);
   ok('admin has labels.print', can('admin', 'labels.print') === true);
@@ -40,7 +40,7 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
 // --- acemark_finance: Fin&Ops (view) + sales orders + Logistics (labels, confirmations), and nothing else ---
 {
   const { CAPABILITIES } = await import('./permissions');
-  const fin = new Set(['finops.view', 'sales.orders', 'labels.print', 'confirmations.manage']);
+  const fin = new Set(['finops.view', 'sales.orders', 'labels.print', 'confirmations.manage', 'shipments.manage']);
   for (const c of CAPABILITIES) ok(`acemark_finance ${c.key} === ${fin.has(c.key)}`, can('acemark_finance', c.key) === fin.has(c.key));
   for (const r of ['office', 'surveyor', 'scanner', 'fitter', 'invoice_manager', 'customer', 'logistics', 'sales_rep'] as const) ok(`${r} lacks finops.view`, can(r, 'finops.view') === false);
   // --- sales_rep: the sales orders register and nothing else ---

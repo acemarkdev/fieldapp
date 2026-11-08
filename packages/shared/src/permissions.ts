@@ -33,6 +33,7 @@ export type Capability =
   | 'finance.manage'   // edit pricing rules, assign to jobs, set variations
   | 'labels.print'     // Logistics ▸ Labels: turn an Archimede PDF into a sheet of window/door labels
   | 'confirmations.manage' // share report-confirmation links, track approvals, download the signed PDF
+  | 'shipments.manage' // Logistics ▸ Shipments: shipments to the UK, their lines, photos, papers and the packing list
   | 'finops.view'      // Fin&Ops: company costs synced from the monday invoices board
   | 'finops.manage'    // Fin&Ops: accept an edited invoice as the new trusted record (admin)
   | 'sales.orders'     // Fin&Ops: sales orders register + commission (a sales rep sees only their own)
@@ -65,6 +66,7 @@ export const CAPABILITIES: { key: Capability; label: string; desc: string }[] = 
   { key: 'finance.manage', label: 'Manage finance', desc: 'Edit pricing rules, variations' },
   { key: 'labels.print', label: 'Print labels', desc: 'Window/door labels from an Archimede PDF' },
   { key: 'confirmations.manage', label: 'Report confirmations', desc: 'Share reports for sign-off, track approvals' },
+  { key: 'shipments.manage', label: 'Shipments', desc: 'Shipments to the UK: lines, photos, papers (CMR, CC599) and the packing list' },
   { key: 'finops.view', label: 'Fin&Ops costs', desc: 'Company costs from the monday invoices board; run the sync' },
   { key: 'finops.manage', label: 'Manage Fin&Ops', desc: 'Accept edited invoices as the new trusted record' },
   { key: 'expenses.report', label: 'Report costs', desc: 'Report an extra installation cost against a sales order; sees only own reports' },
@@ -87,9 +89,9 @@ export const ROLE_CAPS: Record<Role, Capability[]> = {
   // Customer self-service: no operational capabilities; handled via the customer portal + RLS.
   customer: [],
   // Logistics menu only (Labels, Confirmations) — no jobs, items, finance or anything else (see 0053_logistics_scope.sql).
-  logistics: ['labels.print', 'confirmations.manage', 'stock.view'],
+  logistics: ['labels.print', 'confirmations.manage', 'shipments.manage', 'stock.view'],
   // Fin&Ops menu (company cost control) and Logistics (labels, report confirmations) — no jobs, items or anything else.
-  acemark_finance: ['finops.view', 'sales.orders', 'labels.print', 'confirmations.manage'],   // + Logistics (Labels, Confirmations), Acemark PL
+  acemark_finance: ['finops.view', 'sales.orders', 'labels.print', 'confirmations.manage', 'shipments.manage'],   // + Logistics (Labels, Confirmations), Acemark PL
   sales_rep: ['sales.orders'],
   // Cost reports form only (extra installation costs on a sales order) — nothing else, no mobile app.
   acemark_fitter: ['expenses.report'],
