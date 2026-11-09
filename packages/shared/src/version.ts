@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.88.0';
+export const APP_VERSION = '1.88.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.88.1', date: '2026-11-09', changes: [
+    'Sales orders \u25b8 quotes: a second approved quote failed with \u201cduplicate key \u2026 fin_order_quotes_one_approved\u201d \u2014 the database still allowed one approved quote per order. Migration 0122 removes that limit; until it runs, the app says so instead of the database error.',
+  ] },
   { version: '1.88.0', date: '2026-11-09', changes: [
     'Sales orders \u25b8 quotes: \u201cedit\u201d on every quote \u2014 the price, scope, budget, comment and (optionally) a new file; the version number stays.',
     'The price to the customer is entered in parts \u2014 products, installation for the customer, transport for the customer \u2014 and the quote amount is their sum (installation only with Deliver and install, transport not for Self pickup). Needs migration 0121 to keep the parts; before it the total is still right.',

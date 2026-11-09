@@ -232,7 +232,7 @@ export async function addQuote(tenantId: string, orderId: string, by: string, b:
   const version = quotes.reduce((m, q) => Math.max(m, q.version), 0) + 1;
   const stored = await store(tenantId, orderId, file);
   const { error } = await db().from('fin_order_quotes').insert({ tenant_id: tenantId, order_id: orderId, version, created_by: by, status_by: by, ...f.fields, ...stored });
-  if (error) { await removeFiles([stored.storage_path]); if (/scope_check/.test(String(error.message ?? ''))) return fail(409, 'Self pickup needs migration 0118 — run it in Supabase first.'); throw error; }
+  if (error) { await removeFiles([stored.storage_path]); if (/scope_check/.test(String(error.message ?? ''))) return fail(409, 'Self pickup needs migration 0118 — run it in Supabase first.'); if (/one_approved/.test(String(error.message ?? ''))) return fail(409, 'Several approved quotes need migration 0122 — run it in Supabase first.'); throw error; }
   await syncOrder(tenantId, orderId);
   return { ok: true, version };
 }
@@ -247,7 +247,7 @@ export async function updateQuote(tenantId: string, orderId: string, quoteId: st
   let stored: Awaited<ReturnType<typeof store>> | null = null;
   if (b?.file) { const file = fileFrom(b.file); if (!file.ok) return file; stored = await store(tenantId, orderId, file); Object.assign(patch, stored); }
   const { error } = await db().from('fin_order_quotes').update(patch).eq('tenant_id', tenantId).eq('id', quoteId);
-  if (error) { if (stored) await removeFiles([stored.storage_path]); if (/scope_check/.test(String(error.message ?? ''))) return fail(409, 'Self pickup needs migration 0118 — run it in Supabase first.'); throw error; }
+  if (error) { if (stored) await removeFiles([stored.storage_path]); if (/scope_check/.test(String(error.message ?? ''))) return fail(409, 'Self pickup needs migration 0118 — run it in Supabase first.'); if (/one_approved/.test(String(error.message ?? ''))) return fail(409, 'Several approved quotes need migration 0122 — run it in Supabase first.'); throw error; }
   if (stored && q.storage_path) await removeFiles([q.storage_path]);
   await syncOrder(tenantId, orderId);
   return { ok: true };
