@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.90.0';
+export const APP_VERSION = '1.90.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.90.1', date: '2026-11-09', changes: [
+    'Shipments: the status \u201cSent without documents\u201d is now \u201cSent \u2014 papers to complete\u201d (Polish: \u201cWys\u0142ane \u2014 dokumenty do uzupe\u0142nienia\u201d): the CMR scan is still to be added to the app; it does not say the goods left without papers. Same in the phone app (0.77.4) and the manual.',
+  ] },
   { version: '1.90.0', date: '2026-11-09', changes: [
     'Sales orders \u25b8 purchase invoices: finance and admin link a trade purchase invoice (499.V Handel) to its Acemark order in the app \u2014 from the \u201cPurchase invoices\u201d list (suggestions by supplier, amount against the budgeted purchase and the invoice\u2019s references) or from the order window. One invoice can be split over several orders; a link made in the app replaces the Zlecenie / PDF match for that invoice; \u00d7 removes it. WEM orders are left out. Needs migration 0123.',
     'Filter \u201cAccepted, supplier invoice missing\u201d: the accepted Acemark orders bought from a supplier (not Acemark PL, not WEM) with no purchase invoice yet.',

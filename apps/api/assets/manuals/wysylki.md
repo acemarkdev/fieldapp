@@ -28,7 +28,7 @@ Zakładka **Wysyłki** prowadzi wysyłki do UK (i innych krajów) dla Acemark i 
 | Pozycje, Netto kg, Brutto kg | Liczba pozycji i suma wag z pozycji |
 | Zdjęcia | Ile zdjęć pozycji jest w wysyłce |
 | Dokumenty | Znaczniki: **zielony** — dokument jest; **czerwony** — wysyłka już wyjechała, a dokumentu brak (CMR, CC599); **szary** — jeszcze go nie ma |
-| Status | **Nowy** — dopiero przygotowana; **W trakcie** — trwa załadunek; **Wysłane** — wyjechała; **Wysłane bez dokumentów** — wyjechała bez CMR |
+| Status | **Nowy** — dopiero przygotowana; **W trakcie** — trwa załadunek; **Wysłane** — wyjechała; **Wysłane — dokumenty do uzupełnienia** — wyjechała, a skan CMR nie jest jeszcze dodany do aplikacji |
 
 Kliknięcie wiersza otwiera wysyłkę.
 
@@ -90,13 +90,13 @@ Lista pakowa ma te same pola co dotychczasowy formularz, z opisami po polsku i a
 3. **Zaczynam załadunek** ustawia status **W trakcie** (biuro widzi to od razu).
 4. Przy każdej pozycji stuknij duży kwadrat, gdy jest załadowana (zrobi się zielony), wpisz **netto kg** i **brutto kg** (zapisują się po wyjściu z pola) i zrób zdjęcie: **📷 Zdjęcie** — aparatem, **Z galerii** — gotowe zdjęcia, kilka naraz.
 5. W części **Dokumenty** zrób zdjęcie **CMR** i **podpisanej listy pakowej**.
-6. Stuknij **Wysłane**. Jeśli nie wszystkie pozycje są zaznaczone, brakuje wag albo zdjęcia CMR, aplikacja o tym przypomni. Bez CMR wysyłka zapisze się jako **Wysłane bez dokumentów**.
+6. Stuknij **Wysłane**. Jeśli nie wszystkie pozycje są zaznaczone, brakuje wag albo zdjęcia CMR, aplikacja o tym przypomni. Jeśli zdjęcia CMR nie ma jeszcze w aplikacji, wysyłka zapisze się jako **Wysłane — dokumenty do uzupełnienia** — wystarczy później dodać skan.
 
 Zdjęcia wysyłają się po kolei w tle — napis „Wysyłanie zdjęć… zostało N” pokazuje, ile jeszcze zostało. W tym czasie można dalej pracować. Jeśli zdjęcie nie wyśle się (brak internetu), aplikacja to zgłosi — zrób je ponownie, gdy będzie zasięg.
 
 ## 8. Czekają na dokumenty
 
-Wysyłka, która już wyjechała (status **Wysłane** albo **Wysłane bez dokumentów**), czeka na dokumenty, dopóki nie ma w niej **CMR** i **CC599**. Na liście te znaczniki są czerwone, a kafelek **Czekają na dokumenty** pokazuje, ile takich wysyłek jest.
+Wysyłka, która już wyjechała (status **Wysłane** albo **Wysłane — dokumenty do uzupełnienia**), czeka na dokumenty, dopóki nie ma w niej **CMR** i **CC599**. Na liście te znaczniki są czerwone, a kafelek **Czekają na dokumenty** pokazuje, ile takich wysyłek jest.
 
 1. Na liście wybierz filtr **Czekają na dokumenty**.
 2. Otwórz wysyłkę i w **Dokumenty** dodaj brakujący CMR (skan albo zdjęcie z telefonu) lub CC599, gdy przyjdzie z urzędu celnego.

@@ -88,4 +88,6 @@
 // 0.77.2 — Production and production manager: two tabs on the phone — Czas pracy and Wysyłki (loading the shipments,
 //   as the warehouse). Needs office 1.86.2. Over the air on 0.76.0.
 // 0.77.3 — Production lead: the two tabs too — Czas pracy and Wysyłki. Needs office 1.89.0. Over the air on 0.76.0.
-export const APP_VERSION = '0.77.3';
+// 0.77.4 — Wysyłki: the status "Wysłana bez dokumentów" now reads "Wysłana — dokumenty do uzupełnienia" (the scan is still to
+//   be added — the goods did not leave without papers). Over the air on 0.76.0.
+export const APP_VERSION = '0.77.4';

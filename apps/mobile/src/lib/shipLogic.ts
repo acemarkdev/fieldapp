@@ -4,7 +4,7 @@ export interface PShip { id: string; name: string; status: string; ship_date: st
 export interface PLine { id: string; qty: number | null; unit: string | null; description: string; net_kg: number | null; gross_kg: number | null; comment: string | null; loaded: boolean }
 export interface PFile { id: string; line_id: string | null; kind: string; file_name: string | null }
 
-export const STATUS_PL: Record<string, string> = { new: 'Nowa', in_progress: 'W trakcie', sent: 'Wysłana', sent_no_docs: 'Wysłana bez dokumentów' };
+export const STATUS_PL: Record<string, string> = { new: 'Nowa', in_progress: 'W trakcie', sent: 'Wysłana', sent_no_docs: 'Wysłana — dokumenty do uzupełnienia' };
 const DAY = 864e5;
 /** Not sent yet, and the ones sent in the last `days` days (photos of the CMR often come a day later). */
 export function forPhone(list: PShip[], now = new Date(), days = 7): PShip[] {
