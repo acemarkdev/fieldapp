@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.87.0';
+export const APP_VERSION = '1.87.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.87.1', date: '2026-11-09', changes: [
+    'Sales orders \u25b8 quotes: several quotes can be approved (separate parts of one order). The order\u2019s net value and budget costs are then the sum of all approved quotes (installation only from quotes with installation, delivery not for self pickup); the order shows \u201csum of N approved quotes\u201d. With none approved the newest quote counts, as before.',
+  ] },
   { version: '1.87.0', date: '2026-11-09', changes: [
     'Sales orders: a sort choice above the list \u2014 Newest first (default: the offer month, then when the order was added) or Oldest first; the choice is remembered on this computer.',
     'Sales orders: \u201cSave, keep open\u201d saves what is typed and leaves the order open; closing an order with unsaved changes asks first.',

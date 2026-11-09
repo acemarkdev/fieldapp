@@ -22,6 +22,9 @@ ok('cost: other reps fees count in the cost and margin', quoteCost(q(1, 'sent', 
 // What the order gets
 const a = orderFromQuotes([q(1, 'rework', 10000), q(2, 'approved', 9000, { cost_purchase: 4000 }), q(3, 'sent', 9900)]);
 ok('approved → accepted, its amount and budget', !!a && a.status === 'accepted' && a.net === 9000 && a.cost_purchase === 4000 && a.cost_install === 1000, a);
+const two = orderFromQuotes([q(1, 'approved', 10000, { cost_purchase: 4000, cost_install: 1000, cost_delivery: 500, scope: 'install' }), q(2, 'approved', 6000, { cost_purchase: 2000, cost_install: 800, cost_delivery: 300, scope: 'delivery' }), q(3, 'sent', 9000)]);
+ok('several approved quotes add up: net, purchase, installation (install scope only), delivery', !!two && two.status === 'accepted' && two.net === 16000 && two.cost_purchase === 6000 && two.cost_install === 1000 && two.cost_delivery === 800, two);
+ok('a sent or rejected quote next to approved ones does not count', orderFromQuotes([q(1, 'approved', 5000), q(2, 'approved', 2500), q(3, 'rejected', 99999)])?.net === 7500);
 ok('newest rejected (none approved) → lost', orderFromQuotes([q(1, 'rework', 10000), q(2, 'rejected', 9000)])?.status === 'lost');
 ok('an older rejection does not lose the order', orderFromQuotes([q(1, 'rejected', 10000), q(2, 'sent', 9000)])?.status === 'offer');
 ok('delivery only → no installation cost on the order', orderFromQuotes([q(1, 'sent', 8000, { scope: 'delivery' })])?.cost_install === 0);

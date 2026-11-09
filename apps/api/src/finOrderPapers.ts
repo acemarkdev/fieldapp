@@ -3,9 +3,10 @@
 //   • Documents: v1 = the first note + file; every later file is the next version and needs a comment. The newest is
 //     the current one; older ones stay, marked outdated.
 //   • Quotes: one per version — amount, scope (delivery only / delivery + install), the file sent and the budget
-//     behind it, with a status: sent, approved, rejected, rework. At most one version is approved. The quote in force
-//     (the approved one, else the newest) sets the order's net value and budget costs; the order's status follows:
-//     approved → accepted, the newest rejected → lost, otherwise offer. An order without quotes is left as it is.
+//     behind it, with a status: sent, approved, rejected, rework. Several quotes may be approved (separate parts of
+//     one order): the order's net value and budget costs are then the sum of the approved quotes; while none is
+//     approved, the newest quote sets them. The order's status follows: any approved → accepted, the newest rejected
+//     → lost, otherwise offer. An order without quotes is left as it is.
 import { db } from './supabase';
 import { parseMoney } from './finJobs';
 import { colReady } from './schemaReady';
@@ -45,8 +46,15 @@ export function quoteCost(q: { scope: QuoteScope; cost_purchase: number | null; 
 export function quoteMargin(q: Parameters<typeof quoteCost>[0] & { amount: number }, fees = 0): number | null {
   return q.amount ? round2((q.amount - quoteCost(q, fees)) / q.amount) : null;
 }
-/** What the quotes set on the order; null when the order has no quotes (it is then left as typed). */
+/** What the quotes set on the order; null when the order has no quotes (it is then left as typed).
+ *  Approved quotes add up (net and budget costs); with none approved the newest one counts. */
 export function orderFromQuotes(quotes: QuoteRow[]): { net: number; cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null; status: 'offer' | 'accepted' | 'lost' } | null {
+  const approved = quotes.filter((x) => x.status === 'approved');
+  if (approved.length > 1) {
+    const sum = (f: (x: QuoteRow) => number | null) => { const v = approved.map(f); return v.every((x) => x == null) ? null : round2(v.reduce((a: number, x) => a + (x ?? 0), 0)); };
+    return { net: round2(approved.reduce((a, x) => a + (Number(x.amount) || 0), 0)), cost_purchase: sum((x) => x.cost_purchase),
+      cost_install: sum((x) => (x.scope === 'install' ? x.cost_install : 0)), cost_delivery: sum((x) => (x.scope === 'pickup' ? 0 : x.cost_delivery)), status: 'accepted' };
+  }
   const q = quoteInForce(quotes);
   if (!q) return null;
   const newest = quotes.reduce((a, b) => (b.version > a.version ? b : a));
@@ -157,7 +165,7 @@ export async function latestQuotes(tenantId: string): Promise<Map<string, { vers
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db().from('fin_order_quotes').select('order_id,version,status').eq('tenant_id', tenantId).eq('status', 'approved').order('id').range(from, from + 999);
     if (error) throw error;
-    for (const r of data ?? []) { const cur = out.get(r.order_id); if (cur) { cur.version = r.version; cur.status = 'approved'; } }
+    for (const r of data ?? []) { const cur: any = out.get(r.order_id); if (cur) { cur.approved = (cur.approved ?? 0) + 1; if (cur.status !== 'approved' || r.version > cur.version) { cur.version = r.version; cur.status = 'approved'; } } }
     if (!data || data.length < 1000) break;
   }
   return out;
@@ -205,7 +213,6 @@ export async function addQuote(tenantId: string, orderId: string, by: string, b:
   const f = quoteFields(b, true); if (!f.ok) return f;
   const file = fileFrom(b?.file); if (!file.ok) return fail(400, 'Attach the quote sent to the customer.');
   const quotes = await listQuotes(tenantId, orderId);
-  if (f.fields.status === 'approved' && quotes.some((q) => q.status === 'approved')) return fail(409, `v${quotes.find((q) => q.status === 'approved')!.version} is already approved — change its status first.`);
   const version = quotes.reduce((m, q) => Math.max(m, q.version), 0) + 1;
   const stored = await store(tenantId, orderId, file);
   const { error } = await db().from('fin_order_quotes').insert({ tenant_id: tenantId, order_id: orderId, version, created_by: by, status_by: by, ...f.fields, ...stored });
@@ -217,10 +224,6 @@ export async function updateQuote(tenantId: string, orderId: string, quoteId: st
   const quotes = await listQuotes(tenantId, orderId), q = quotes.find((x) => x.id === quoteId);
   if (!q) return fail(404, 'Quote not found.');
   const f = quoteFields(b, false); if (!f.ok) return f;
-  if (f.fields.status === 'approved' && q.status !== 'approved') {
-    const other = quotes.find((x) => x.status === 'approved' && x.id !== q.id);
-    if (other) return fail(409, `v${other.version} is already approved — change its status first.`);
-  }
   const patch: Record<string, any> = { ...f.fields, updated_at: new Date().toISOString() };
   if (f.fields.status && f.fields.status !== q.status) { patch.status_at = patch.updated_at; patch.status_by = by; }
   const { error } = await db().from('fin_order_quotes').update(patch).eq('tenant_id', tenantId).eq('id', quoteId);
