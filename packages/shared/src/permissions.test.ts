@@ -47,7 +47,7 @@ for (const r of ['surveyor', 'scanner', 'fitter'] as const) {
   for (const c of CAPABILITIES) ok(`sales_rep ${c.key} === ${c.key === 'sales.orders'}`, can('sales_rep', c.key) === (c.key === 'sales.orders'));
   for (const c of CAPABILITIES) ok(`production ${c.key}`, can('production', c.key) === (c.key === 'time.log' || c.key === 'shipments.load'));
   for (const c of CAPABILITIES) ok(`production_manager ${c.key}`, can('production_manager', c.key) === (c.key === 'time.manage' || c.key === 'time.rates' || c.key === 'stock.view' || c.key === 'time.log' || c.key === 'shipments.load'));
-  for (const c of CAPABILITIES) ok(`production_lead ${c.key}`, can('production_lead', c.key) === (c.key === 'time.manage' || c.key === 'time.log'));
+  for (const c of CAPABILITIES) ok(`production_lead ${c.key}`, can('production_lead', c.key) === (c.key === 'time.manage' || c.key === 'time.log' || c.key === 'shipments.load'));
   for (const c of CAPABILITIES) ok(`warehouse ${c.key}`, can('warehouse', c.key) === (c.key === 'time.log' || c.key === 'shipments.load'));
   for (const c of CAPABILITIES) ok(`scaffolding ${c.key}`, can('scaffolding', c.key) === false);
   for (const c of CAPABILITIES) ok(`scaffolder ${c.key}`, can('scaffolder', c.key) === false);

@@ -1,11 +1,17 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.88.2';
+export const APP_VERSION = '1.89.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.89.0', date: '2026-11-09', changes: [
+    'Shipments: a sort choice above the list \u2014 Newest first (default: the shipment date, shipments without a date on top) or Oldest first; remembered on this computer.',
+    'Production lead: Wysy\u0142ki on the phone too (mobile 0.77.3), with the same loading rights as the warehouse.',
+    'Manuals: Sales orders updated \u2014 quotes to the customer (price in parts, several approved quotes adding up, editing), sorting, \u201cZapisz, nie zamykaj\u201d, every rep seeing all orders and the yearly bonus rule; Shipments \u2014 sorting and the production roles.',
+    'Sales orders \u25b8 quotes: the table and statuses are in Polish for Polish users (Zatwierdzona, Wys\u0142ana, Do poprawy; Oferta, Zakres, Zakup, Monta\u017c, Dostawa, Plik).',
+  ] },
   { version: '1.88.2', date: '2026-11-09', changes: [
     'Sales orders: the order window is wider (up to 1200 px, never wider than the screen), and a quote\u2019s \u201cedit\u201d / \u201cdelete\u201d sit next to its version number \u2014 no scrolling to the right to reach them.',
   ] },

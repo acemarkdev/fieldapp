@@ -5,14 +5,14 @@ Zakładka **Wysyłki** prowadzi wysyłki do UK (i innych krajów) dla Acemark i 
 ## 1. Jak wejść i kto co widzi
 
 1. Biuro: otwórz **office.acemark.com.pl**, zaloguj się i w górnym menu kliknij **Logistyka ▸ Wysyłki**.
-2. Telefon: otwórz aplikację **FitAWindow** i zaloguj się. Magazyn widzi zakładkę **Wysyłki** obok Wydań i Zwrotów; logistyka i księgowość od razu po zalogowaniu.
+2. Telefon: otwórz aplikację **FitAWindow** i zaloguj się. Magazyn widzi zakładkę **Wysyłki** obok Wydań i Zwrotów, produkcja obok **Czasu pracy**; logistyka i księgowość od razu po zalogowaniu.
 
 | Rola | Co widzi i może |
 | --- | --- |
 | **Logistyka** | Wszystkie wysyłki w biurze i w telefonie: dodaje, zmienia i usuwa wysyłki, pozycje, zdjęcia i dokumenty, pobiera listę pakową |
 | **Księgowość** (Acemark Finance) | To samo co logistyka; dodatkowo pilnuje dokumentów CC599 do VAT 0% |
 | **Administrator** | Wszystko |
-| **Magazyn** | Tylko telefon: zaznacza załadowane pozycje, wpisuje wagi, robi zdjęcia pozycji, CMR i podpisanej listy pakowej, ustawia „W trakcie” i „Wysłane”. Nie dodaje, nie zmienia i nie usuwa wysyłek ani pozycji |
+| **Magazyn**, **Produkcja**, **Kierownik produkcji**, **Lider zmiany** | Tylko telefon: zaznacza załadowane pozycje, wpisuje wagi, robi zdjęcia pozycji, CMR i podpisanej listy pakowej, ustawia „W trakcie” i „Wysłane”. Nie dodaje, nie zmienia i nie usuwa wysyłek ani pozycji |
 
 ## 2. Lista wysyłek
 
@@ -24,6 +24,7 @@ Zakładka **Wysyłki** prowadzi wysyłki do UK (i innych krajów) dla Acemark i 
 | --- | --- |
 | Kafelki u góry | Ile wysyłek jeszcze nie wysłano, ile **czeka na dokumenty**, ile wysyłek było w tym roku i ich łączna waga brutto |
 | Filtry | Spółka (Acemark / WEM), status — w tym **Czekają na dokumenty** — oraz wyszukiwanie po nazwie, importerze, fakturze i komentarzu |
+| Kolejność | **Od najnowszych** (domyślnie: data wysyłki, wysyłki bez daty na górze) albo **Od najstarszych**. Wybór zapamiętuje się na tym komputerze |
 | Pozycje, Netto kg, Brutto kg | Liczba pozycji i suma wag z pozycji |
 | Zdjęcia | Ile zdjęć pozycji jest w wysyłce |
 | Dokumenty | Znaczniki: **zielony** — dokument jest; **czerwony** — wysyłka już wyjechała, a dokumentu brak (CMR, CC599); **szary** — jeszcze go nie ma |

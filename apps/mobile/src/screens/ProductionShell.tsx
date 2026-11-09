@@ -1,4 +1,4 @@
-// Production (roles "production" and "production_manager") on the phone: two tabs — Czas pracy (the production
+// Production (roles "production", "production_manager" and "production_lead") on the phone: two tabs — Czas pracy (the production
 // time screen) and Wysyłki (loading the shipments: see ShipmentsScreen).
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
