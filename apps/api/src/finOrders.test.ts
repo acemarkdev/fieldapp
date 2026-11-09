@@ -155,5 +155,12 @@ ok('materials: ticked list in a fixed order; old text kept', materialText(['Timb
   ok('yearly bonus: a WEM order (invoiced by WEM) counts from its payment date', annualSales(wem, 2026) === 70000);
 }
 
+// a purchase invoice linked in the app belongs to that order (by id), even when its name has no number
+{
+  const pu = (order_id: string | undefined, key: string, net: number) => ({ order_key: key, order_code: key, invoice_no: 'FS/1', supplier: 'Eko-Okna', invoice_date: '2026-10-01', net, from: 'manual' as const, order_id });
+  const v = buildOrderViews([O({ id: 'a', order_ref: 'BRIKSTON', net: 1000 }), O({ id: 'b', order_ref: 'BRIKSTON', net: 500 })], [], [], [], [pu('a', 'BRIKSTON', 600)]);
+  ok('a manual link goes to its own order only (two orders with the same name)', v[0].actual_purchase === 600 && v[1].actual_purchase === null, [v[0].actual_purchase, v[1].actual_purchase]);
+}
+
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
 console.log('All sales-order tests passed.');

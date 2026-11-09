@@ -1,6 +1,6 @@
 // Run: npx tsx apps/api/src/ksefInvoice.test.ts   (text in the layout of the KSeF PDF generator, as unpdf extracts it)
 import { parseKsef, splitByOrder, plMoney } from './ksefInvoice';
-import { allocatePurchases, assetIdOf, isTradeInvoice, type TradeInvoice } from './tradeCosts';
+import { allocatePurchases, assetIdOf, isTradeInvoice, suggestOrders, isTradeOrder, type TradeInvoice } from './tradeCosts';
 import { buildOrderViews, type OrderRow } from './finOrders';
 
 let fail = 0;
@@ -79,6 +79,20 @@ const pr = allocatePurchases([inv('8'), inv('9', { invoice_no: 'FR/K2/26/10/0248
 const v = buildOrderViews([order, { ...order, id: 'o2', order_ref: 'OK DE209999' }], [], [], [], pr);
 ok('order: actual purchase from the invoices, actual margin with installation and delivery', v[0].actual_purchase === 18666.11 && v[0].actual_costs === 21666.11 && v[0].actual_margin === 0.28 && v[0].purchases.length === 2 && v[0].costs === 20000, [v[0].actual_purchase, v[0].actual_costs, v[0].actual_margin]);
 ok('order without purchase invoices has no actual figures', v[1].actual_purchase === null && v[1].actual_margin === null && !v[1].purchases.length);
+
+// Links made in the app replace the automatic match for that invoice; the rest waits on the list
+const m1 = allocatePurchases([inv('9', { order_ref: 'OK DE202763', net: 1000 })], [L('9', 1000, 'OK DE203066')], known, [{ cost_id: '9', order_id: 'oA', code: 'BRIKSTON', net: 700 }]);
+ok('a manual link wins over Zlecenie and the PDF lines', m1.purchases.length === 1 && m1.purchases[0].from === 'manual' && m1.purchases[0].order_id === 'oA' && m1.purchases[0].net === 700, m1.purchases);
+ok('the part not linked stays to check', m1.toCheck.length === 1 && m1.toCheck[0].unassigned === 300, m1.toCheck);
+const m2 = allocatePurchases([inv('8', { net: 500 })], [], known, [{ cost_id: '8', order_id: 'oB', code: 'X', net: 200 }, { cost_id: '8', order_id: 'oC', code: 'Y', net: 300 }]);
+ok('an invoice split over two orders: fully placed', m2.purchases.length === 2 && m2.toCheck.length === 0);
+// Suggestions
+const O2 = (id: string, supplier: string, cost_purchase: number | null, over: any = {}) => ({ id, order_ref: 'OK DE2031' + id + ' - Klient ' + id, customer: 'Klient ' + id, supplier, company: 'Acemark', status: 'accepted', cost_purchase, offer_year: 2026, offer_month: 9, ...over });
+const sug = suggestOrders({ supplier: 'Eko-Okna', net: 19039.65, invoice_date: '2026-10-08' }, ['Kowalski okna'], 19039.65,
+  [O2('1', 'EKO_OKNA', 19000), O2('2', 'EKO_OKNA', 5000), O2('3', 'ACEMARK', 19100), O2('4', 'EKO_OKNA', 19039, { company: 'WEM' }), O2('5', 'EKO_OKNA', null, { customer: 'Jan Kowalski' }), O2('6', 'ACEMARK PL', 19039)]);
+ok('suggestions: same supplier and close amount first; WEM and Acemark PL left out', sug[0].order_id === '1' && !sug.some((x) => x.order_id === '4' || x.order_id === '6'), sug.map((x) => [x.order_id, x.score]));
+ok('suggestions: a reference word in the customer counts', sug.some((x) => x.order_id === '5' && x.why.includes('reference')), sug);
+ok('trade orders: not WEM, not Acemark PL', isTradeOrder({ company: 'Acemark', supplier: 'EKO_OKNA' }) && isTradeOrder({ company: 'Acemark', supplier: 'ACEMARK' }) && !isTradeOrder({ company: 'WEM', supplier: 'WEM' }) && !isTradeOrder({ company: 'Acemark', supplier: 'Acemark PL' }));
 
 if (fail) { console.error(fail + ' failed'); process.exit(1); }
 console.log('ksefInvoice: all passed');

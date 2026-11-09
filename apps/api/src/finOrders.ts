@@ -5,7 +5,7 @@
 // Commission (sheet "Zasady Prowizji"): an accepted order counts with its FULL net value in the month
 // its first payment is booked; the month's total decides the rate, which applies to the whole month.
 import { listExpenses, type ExpenseRow } from './finExpenses';
-import { loadTrade, allocatePurchases, type OrderPurchase } from './tradeCosts';
+import { loadTrade, allocatePurchases, suggestOrders, type OrderPurchase } from './tradeCosts';
 import { db } from './supabase';
 import { parseMoney, referenceKey } from './finJobs';
 import { parseDate } from './finSales';
@@ -137,7 +137,8 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
   const payBy = new Map<string, PaymentRow[]>();
   for (const p of payments) (payBy.get(p.order_id) ?? payBy.set(p.order_id, []).get(p.order_id)!).push(p);
   const purBy = new Map<string, OrderPurchase[]>();
-  for (const pu of purchases) (purBy.get(pu.order_key) ?? purBy.set(pu.order_key, []).get(pu.order_key)!).push(pu);
+  const purById = new Map<string, OrderPurchase[]>();
+  for (const pu of purchases) { if (pu.order_id) (purById.get(pu.order_id) ?? purById.set(pu.order_id, []).get(pu.order_id)!).push(pu); else (purBy.get(pu.order_key) ?? purBy.set(pu.order_key, []).get(pu.order_key)!).push(pu); }
   const expBy = new Map<string, ExpenseRow[]>();
   for (const e of expenses) (expBy.get(e.order_id) ?? expBy.set(e.order_id, []).get(e.order_id)!).push(e);
   const views: OrderView[] = orders.map((o) => {
@@ -167,7 +168,8 @@ export function buildOrderViews(orders: OrderRow[], sales: SaleLite[], payments:
   // the reps' fees count on the actual side once due (the order has started to count)
   function actual(o: OrderRow, paidReports: number, feesDue: number) {
     const seen = new Set<OrderPurchase>(); const mine: OrderPurchase[] = [];
-    for (const k of orderKeys(o)) for (const pu of purBy.get(k) ?? []) if (!seen.has(pu)) { seen.add(pu); mine.push(pu); }
+    for (const k of orderKeys(o)) for (const pu of purBy.get(k) ?? []) if (!seen.has(pu) && (!pu.order_id || pu.order_id === o.id)) { seen.add(pu); mine.push(pu); }
+    for (const pu of purById.get(o.id) ?? []) if (!seen.has(pu)) { seen.add(pu); mine.push(pu); }
     if (!mine.length) return { purchases: [], actual_purchase: null, actual_costs: null, actual_margin: null };
     const actual_purchase = round2(mine.reduce((s, x) => s + x.net, 0));
     const actual_costs = round2(actual_purchase + (o.cost_install ?? 0) + paidReports + (o.cost_delivery ?? 0) + feesDue);
@@ -420,13 +422,53 @@ export async function listOrderViews(tenantId: string, repUserId?: string | null
 /** Trade purchase invoices split by order, judged against the whole register (not one rep's part of it). */
 export function tradeAllocation(orders: OrderRow[], trade: Awaited<ReturnType<typeof loadTrade>>) {
   const keys = new Set<string>(); for (const o of orders) for (const k of orderKeys(o)) keys.add(k);
-  return allocatePurchases(trade.invoices, trade.lines, (code) => orderKeys({ order_ref: code }).some((k) => keys.has(k)));
+  const byId = new Map(orders.map((o) => [o.id, o]));
+  const manual = (trade.links ?? []).filter((l) => byId.has(l.order_id)).map((l) => { const o = byId.get(l.order_id)!; return { cost_id: l.cost_id, order_id: l.order_id, code: orderCode(o.job_ref) || orderCode(o.order_ref) || o.order_ref, net: l.net }; });
+  return allocatePurchases(trade.invoices, trade.lines, (code) => orderKeys({ order_ref: code }).some((k) => keys.has(k)), manual);
 }
 /** The trade purchase invoices that need an order number written in monday's "Zlecenie" column. */
 export async function tradeToCheck(tenantId: string) {
   const [orders, trade] = await Promise.all([page<any>('fin_orders', '*', tenantId), loadTrade(tenantId)]);
-  const r = tradeAllocation(orders.map(rowOut), trade);
-  return { toCheck: r.toCheck, invoices: trade.invoices.length, read: trade.invoices.filter((i) => i.pdf_status === 'ok').length };
+  const rows = orders.map(rowOut), r = tradeAllocation(rows, trade);
+  const linksBy = new Map<string, { order_id: string; code: string; net: number }[]>();
+  const byId = new Map(rows.map((o) => [o.id, o]));
+  for (const l of trade.links ?? []) { const o = byId.get(l.order_id); if (o) (linksBy.get(l.cost_id) ?? linksBy.set(l.cost_id, []).get(l.cost_id)!).push({ order_id: l.order_id, code: orderCode(o.job_ref) || orderCode(o.order_ref), net: l.net }); }
+  const cands = rows.map((o) => ({ ...o, code: orderCode(o.job_ref) || orderCode(o.order_ref) }));
+  const toCheck = r.toCheck.map((x) => ({ ...x, links: linksBy.get(x.invoice.id) ?? [], suggestions: suggestOrders(x.invoice, x.refs, x.unassigned, cands) }));
+  return { toCheck, invoices: trade.invoices.length, read: trade.invoices.filter((i) => i.pdf_status === 'ok').length, linksReady: await colReady('fin_cost_links', 'id') };
+}
+/** Remove one order's part of a linked invoice (the invoice's other links stay). */
+export async function removePurchaseLink(tenantId: string, costId: string, orderId: string): Promise<Result> {
+  if (!(await colReady('fin_cost_links', 'id'))) return fail(409, 'Linking invoices needs migration 0123 — run it in Supabase first.');
+  const { data, error } = await db().from('fin_cost_links').delete().eq('tenant_id', tenantId).eq('cost_id', costId).eq('order_id', orderId).select('id');
+  if (error) throw error; if (!data?.length) return fail(404, 'Link not found.');
+  return { ok: true };
+}
+/** Finance links a trade purchase invoice to order(s): `links` replaces the invoice's links (empty = back to the
+ *  automatic match). Each part has the invoice's sign; together they may not exceed the invoice. */
+export async function setPurchaseLinks(tenantId: string, by: string | null, b: any): Promise<Result<{ links: number }>> {
+  if (!(await colReady('fin_cost_links', 'id'))) return fail(409, 'Linking invoices needs migration 0123 — run it in Supabase first.');
+  const costId = String(b?.cost_id ?? '');
+  const { data: cost, error: e1 } = await db().from('fin_costs').select('id,net,subcategory,period_year,removed').eq('tenant_id', tenantId).eq('id', costId).maybeSingle();
+  if (e1) throw e1; if (!cost) return fail(404, 'Invoice not found.');
+  const total = Number(cost.net) || 0, sign = total < 0 ? -1 : 1;
+  const rows: { order_id: string; net: number }[] = [];
+  for (const l of Array.isArray(b?.links) ? b.links : []) {
+    const n = parseMoney(l?.net); const id = String(l?.order_id ?? '');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, 'Pick the order.');
+    if (n === null || n === 0) return fail(400, 'Enter the amount of the invoice that belongs to the order.');
+    if (rows.some((r) => r.order_id === id)) return fail(400, 'The same order is picked twice.');
+    rows.push({ order_id: id, net: round2(Math.abs(n) * sign) });
+  }
+  const sum = round2(rows.reduce((a, r) => a + r.net, 0));
+  if (Math.abs(sum) > Math.abs(total) + 0.01) return fail(400, `The parts (${sum.toFixed(2)}) are more than the invoice (${total.toFixed(2)}).`);
+  if (rows.length) {
+    const { data: ords, error: e2 } = await db().from('fin_orders').select('id').eq('tenant_id', tenantId).in('id', rows.map((r) => r.order_id));
+    if (e2) throw e2; if ((ords ?? []).length !== rows.length) return fail(404, 'Order not found.');
+  }
+  const del = await db().from('fin_cost_links').delete().eq('tenant_id', tenantId).eq('cost_id', costId); if (del.error) throw del.error;
+  if (rows.length) { const ins = await db().from('fin_cost_links').insert(rows.map((r) => ({ tenant_id: tenantId, cost_id: costId, order_id: r.order_id, net: r.net, created_by: by }))); if (ins.error) throw ins.error; }
+  return { ok: true, links: rows.length };
 }
 /** Company turnover, for information next to the yearly bonus: Acemark's sales invoices of the year (Sales tab) —
  *  without recharges of costs or commission (not sales) and without other sellers' invoices. */

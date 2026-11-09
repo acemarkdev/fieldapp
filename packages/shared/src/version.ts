@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.89.0';
+export const APP_VERSION = '1.90.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.90.0', date: '2026-11-09', changes: [
+    'Sales orders \u25b8 purchase invoices: finance and admin link a trade purchase invoice (499.V Handel) to its Acemark order in the app \u2014 from the \u201cPurchase invoices\u201d list (suggestions by supplier, amount against the budgeted purchase and the invoice\u2019s references) or from the order window. One invoice can be split over several orders; a link made in the app replaces the Zlecenie / PDF match for that invoice; \u00d7 removes it. WEM orders are left out. Needs migration 0123.',
+    'Filter \u201cAccepted, supplier invoice missing\u201d: the accepted Acemark orders bought from a supplier (not Acemark PL, not WEM) with no purchase invoice yet.',
+  ] },
   { version: '1.89.0', date: '2026-11-09', changes: [
     'Shipments: a sort choice above the list \u2014 Newest first (default: the shipment date, shipments without a date on top) or Oldest first; remembered on this computer.',
     'Production lead: Wysy\u0142ki on the phone too (mobile 0.77.3), with the same loading rights as the warehouse.',

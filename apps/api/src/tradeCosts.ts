@@ -77,7 +77,9 @@ export async function readTradePdfs(tenantId: string, fileOf: Map<string, string
 // ---- turning invoices into cost per order ---------------------------------------------------------
 export interface TradeInvoice { id: string; supplier: string | null; invoice_no: string | null; invoice_date: string | null; net: number | null; order_ref: string | null; pdf_type: string | null; pdf_status: string | null; pdf_total: number | null; monday_item_id: string }
 export interface TradeLine { cost_id: string; net: number; advance: boolean; order_code: string | null; ref: string | null; name: string | null }
-export interface OrderPurchase { order_key: string; order_code: string; invoice_no: string | null; supplier: string | null; invoice_date: string | null; net: number; from: 'lines' | 'zlecenie'; cost_id?: string }
+export interface OrderPurchase { order_key: string; order_code: string; invoice_no: string | null; supplier: string | null; invoice_date: string | null; net: number; from: 'lines' | 'zlecenie' | 'manual'; cost_id?: string; order_id?: string }
+/** A link made in the app (migration 0123): this much of the invoice belongs to this order. */
+export interface ManualLink { cost_id: string; order_id: string; code: string; net: number }
 export type TradeCheckReason = 'no_reference' | 'mismatch' | 'not_ksef' | 'no_pdf' | 'error' | 'unknown_order' | 'not_read';
 /** The order written in the board's "Zlecenie": an OK number, a Z number (an order produced in Orpiszew), or the text itself. */
 export function zlecenieCode(text: unknown): string | null {
@@ -88,7 +90,9 @@ export function zlecenieCode(text: unknown): string | null {
 export interface TradeCheck { invoice: TradeInvoice; reason: TradeCheckReason; unassigned: number; refs: string[] }
 /** Each invoice's cost per order, and the invoices that need the order written in "Zlecenie".
  *  `orderExists(code)` says whether a code names an order in the register. */
-export function allocatePurchases(invoices: TradeInvoice[], lines: TradeLine[], orderExists: (code: string) => boolean): { purchases: OrderPurchase[]; toCheck: TradeCheck[] } {
+export function allocatePurchases(invoices: TradeInvoice[], lines: TradeLine[], orderExists: (code: string) => boolean, manual: ManualLink[] = []): { purchases: OrderPurchase[]; toCheck: TradeCheck[] } {
+  const manualBy = new Map<string, ManualLink[]>();
+  for (const m of manual) (manualBy.get(m.cost_id) ?? manualBy.set(m.cost_id, []).get(m.cost_id)!).push(m);
   const linesBy = new Map<string, TradeLine[]>();
   for (const l of lines) (linesBy.get(l.cost_id) ?? linesBy.set(l.cost_id, []).get(l.cost_id)!).push(l);
   const purchases: OrderPurchase[] = [], toCheck: TradeCheck[] = [];
@@ -96,6 +100,14 @@ export function allocatePurchases(invoices: TradeInvoice[], lines: TradeLine[], 
     if (inv.pdf_type === 'advance') continue;                       // an advance is not a cost
     const zl = zlecenieCode(inv.order_ref);                           // the order written on the board, if any
     const add = (code: string, net: number, from: OrderPurchase['from']) => purchases.push({ order_key: alnum(code), order_code: code, invoice_no: inv.invoice_no, supplier: inv.supplier, invoice_date: inv.invoice_date, net: round2(net), from, cost_id: inv.id });
+    // linked in the app: those links are the invoice's orders; what is not linked waits on the list
+    const man = manualBy.get(inv.id);
+    if (man?.length) {
+      for (const m of man) purchases.push({ order_key: alnum(m.code), order_code: m.code, invoice_no: inv.invoice_no, supplier: inv.supplier, invoice_date: inv.invoice_date, net: round2(m.net), from: 'manual', cost_id: inv.id, order_id: m.order_id });
+      const rest = round2((inv.net ?? 0) - man.reduce((a, m) => a + m.net, 0));
+      if (Math.abs(rest) >= 0.005) toCheck.push({ invoice: inv, reason: 'no_reference', unassigned: rest, refs: [] });
+      continue;
+    }
     const own = linesBy.get(inv.id) ?? [];
     const readable = inv.pdf_status === 'ok' && own.length > 0;
     if (!readable) {
@@ -119,11 +131,11 @@ export function allocatePurchases(invoices: TradeInvoice[], lines: TradeLine[], 
   return { purchases, toCheck };
 }
 
-export async function loadTrade(tenantId: string): Promise<{ invoices: TradeInvoice[]; lines: TradeLine[] }> {
+export async function loadTrade(tenantId: string): Promise<{ invoices: TradeInvoice[]; lines: TradeLine[]; links: { cost_id: string; order_id: string; net: number }[] }> {
   const invoices: TradeInvoice[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db().from('fin_costs').select('id,monday_item_id,supplier,invoice_no,invoice_date,net,order_ref,subcategory,period_year,removed,pdf_type,pdf_status,pdf_total').eq('tenant_id', tenantId).order('id').range(from, from + 999);
-    if (error) { if (/pdf_/.test(error.message)) return { invoices: [], lines: [] }; throw error; }
+    if (error) { if (/pdf_/.test(error.message)) return { invoices: [], lines: [], links: [] }; throw error; }
     for (const r of data ?? []) if (isTradeInvoice(r)) invoices.push({ ...r, net: r.net === null ? null : Number(r.net), pdf_total: r.pdf_total === null ? null : Number(r.pdf_total) });
     if (!data || data.length < 1000) break;
   }
@@ -134,5 +146,41 @@ export async function loadTrade(tenantId: string): Promise<{ invoices: TradeInvo
     lines.push(...(data ?? []).map((l: any) => ({ ...l, net: Number(l.net) || 0 })));
     if (!data || data.length < 1000) break;
   }
-  return { invoices, lines };
+  const links: { cost_id: string; order_id: string; net: number }[] = [];
+  for (let from = 0; ; from += 1000) {   // the links made in the app (migration 0123)
+    const { data, error } = await db().from('fin_cost_links').select('cost_id,order_id,net').eq('tenant_id', tenantId).order('id').range(from, from + 999);
+    if (error) break;
+    links.push(...(data ?? []).map((l: any) => ({ cost_id: l.cost_id, order_id: l.order_id, net: Number(l.net) || 0 })));
+    if (!data || data.length < 1000) break;
+  }
+  return { invoices, lines, links };
+}
+
+// ---- suggestions: which orders an invoice probably belongs to -------------------------------------
+const lettersDigits = (s: unknown) => String(s ?? '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '');
+/** An Acemark order bought from a supplier (not made by Acemark PL, not WEM) — the ones a purchase invoice can belong to. */
+export function isTradeOrder(o: { company?: string | null; supplier?: string | null }): boolean {
+  return !/^wem$/i.test(String(o.company ?? '').trim()) && !/^wem$/i.test(String(o.supplier ?? '').trim()) && lettersDigits(o.supplier) !== 'ACEMARKPL';
+}
+export interface Suggestion { order_id: string; code: string; order_ref: string; customer: string | null; supplier: string | null; cost_purchase: number | null; score: number; why: string[] }
+/** The likely orders for an invoice: same supplier, the order's budgeted purchase close to the amount, offered before the
+ *  invoice, and words of the invoice's references in the order's name or customer. Best first, at most `max`. */
+export function suggestOrders(inv: { supplier: string | null; net: number | null; invoice_date: string | null }, refs: string[], amount: number,
+  orders: { id: string; code?: string; order_ref: string; customer: string | null; supplier: string | null; company: string | null; status: string; cost_purchase: number | null; offer_year: number | null; offer_month: number | null }[], max = 6): Suggestion[] {
+  const sup = lettersDigits(inv.supplier).slice(0, 4);
+  const words = [...new Set(refs.join(' ').split(/[^A-Za-zÀ-ž0-9]+/).map(lettersDigits).filter((w) => w.length >= 4))];
+  const out: Suggestion[] = [];
+  for (const o of orders) {
+    if (o.status === 'lost' || !isTradeOrder(o)) continue;
+    let score = 0; const why: string[] = [];
+    if (sup && lettersDigits(o.supplier).startsWith(sup)) { score += 3; why.push('supplier'); }
+    const want = Math.abs(amount || inv.net || 0), have = Number(o.cost_purchase) || 0;
+    if (want && have) { const close = 1 - Math.min(1, Math.abs(want - have) / Math.max(want, have)); if (close > 0.5) { score += 4 * close; why.push('amount'); } }
+    const name = lettersDigits(o.order_ref + ' ' + (o.customer ?? ''));
+    const hits = words.filter((w) => name.includes(w)); if (hits.length) { score += 3 * hits.length; why.push('reference'); }
+    if (o.offer_year && inv.invoice_date) { const offered = o.offer_year * 100 + (o.offer_month ?? 1), billed = +inv.invoice_date.slice(0, 4) * 100 + +inv.invoice_date.slice(5, 7); if (offered <= billed && billed - offered <= 100) score += 0.5; }
+    if (o.status === 'accepted') score += 0.5;
+    if (score >= 3) out.push({ order_id: o.id, code: o.code ?? o.order_ref, order_ref: o.order_ref, customer: o.customer, supplier: o.supplier, cost_purchase: o.cost_purchase, score: Math.round(score * 10) / 10, why });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, max);
 }
