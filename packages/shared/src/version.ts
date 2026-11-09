@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.87.1';
+export const APP_VERSION = '1.88.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.88.0', date: '2026-11-09', changes: [
+    'Sales orders \u25b8 quotes: \u201cedit\u201d on every quote \u2014 the price, scope, budget, comment and (optionally) a new file; the version number stays.',
+    'The price to the customer is entered in parts \u2014 products, installation for the customer, transport for the customer \u2014 and the quote amount is their sum (installation only with Deliver and install, transport not for Self pickup). Needs migration 0121 to keep the parts; before it the total is still right.',
+    'Several valid quotes per order are shown as such: every approved quote is marked \u201ccounts\u201d and the table shows their total, the order value.',
+  ] },
   { version: '1.87.1', date: '2026-11-09', changes: [
     'Sales orders \u25b8 quotes: several quotes can be approved (separate parts of one order). The order\u2019s net value and budget costs are then the sum of all approved quotes (installation only from quotes with installation, delivery not for self pickup); the order shows \u201csum of N approved quotes\u201d. With none approved the newest quote counts, as before.',
   ] },

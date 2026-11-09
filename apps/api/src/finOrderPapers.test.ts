@@ -36,7 +36,18 @@ const c = quoteFields({ amount: '12 500,50', scope: 'delivery', cost_purchase: '
 ok('new version: amount, scope, status', c.ok && c.fields.amount === 12500.5 && c.fields.scope === 'delivery' && c.fields.status === 'sent' && c.fields.cost_purchase === 7000, c);
 ok('new version needs an amount; status checked', !quoteFields({ amount: '' }, true).ok && !quoteFields({ amount: 1, status: 'maybe' }, true).ok && quoteFields({ amount: 1 }, true).ok);
 const u = quoteFields({ amount: 1, scope: 'delivery', status: 'approved' }, false);
-ok('a saved version: amount and scope stay, status changes', u.ok && !('amount' in u.fields) && !('scope' in u.fields) && u.fields.status === 'approved', u);
+ok('an edit may change the amount and scope too', u.ok && u.fields.amount === 1 && u.fields.scope === 'delivery' && u.fields.status === 'approved', u);
+const st = quoteFields({ status: 'approved' }, false);
+ok('a status change alone leaves the amount and scope', st.ok && !('amount' in st.fields) && !('scope' in st.fields), st);
+const parts = quoteFields({ amount_goods: '10 000', price_install: '2 000', price_delivery: '500', scope: 'install' }, true);
+ok('price in parts: products + installation + transport = the amount', parts.ok && parts.fields.amount === 12500 && parts.fields.price_install === 2000 && parts.fields.price_delivery === 500, parts);
+const dlv = quoteFields({ amount_goods: '10000', price_install: '2000', price_delivery: '500', scope: 'delivery' }, true);
+ok('delivery only: the installation price does not count', dlv.ok && dlv.fields.amount === 10500 && dlv.fields.price_install === null, dlv);
+const pick = quoteFields({ amount_goods: '10000', price_install: '2000', price_delivery: '500', scope: 'pickup' }, true);
+ok('self pickup: neither installation nor transport counts', pick.ok && pick.fields.amount === 10000 && pick.fields.price_delivery === null, pick);
+const ed = quoteFields({ amount_goods: '8000', price_install: '1000', price_delivery: '300' }, false, { scope: 'delivery' });
+ok('an edit without a scope uses the saved scope', ed.ok && ed.fields.amount === 8300 && !('scope' in ed.fields), ed);
+ok('a negative part is refused', !quoteFields({ amount_goods: '1000', price_delivery: '-5', scope: 'install' }, true).ok);
 ok('negative cost refused', !quoteFields({ cost_delivery: '-5' }, false).ok);
 
 // Files

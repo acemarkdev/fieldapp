@@ -25,6 +25,7 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 export interface QuoteRow {
   id: string; order_id: string; version: number; amount: number; scope: QuoteScope;
+  price_install?: number | null; price_delivery?: number | null;   // the customer's price for installation / transport (in amount)
   cost_purchase: number | null; cost_install: number | null; cost_delivery: number | null;
   status: QuoteStatus; comment: string | null; file_name: string | null; storage_path: string | null;
   content_type: string | null; size_bytes: number | null; status_at: string; status_by: string | null; created_by: string | null; created_at: string;
@@ -62,14 +63,28 @@ export function orderFromQuotes(quotes: QuoteRow[]): { net: number; cost_purchas
   return { net: q.amount, cost_purchase: q.cost_purchase, cost_install: q.scope === 'install' ? q.cost_install : 0, cost_delivery: q.scope === 'pickup' ? 0 : q.cost_delivery, status };
 }
 
-/** The form → a quote's fields. `creating`: amount and scope are set once (a change is a new version). */
-export function quoteFields(b: any, creating: boolean): Result<{ fields: Record<string, any> }> {
+/** The form → a quote's fields. The price to the customer comes in parts — products (`amount_goods`), installation
+ *  (`price_install`, only with "deliver and install") and transport (`price_delivery`, not for self pickup); `amount`
+ *  is their sum. A plain `amount` (older forms, imports) is taken as the whole price. An edit may change the price
+ *  and scope too (`cur` = the saved quote). */
+export function quoteFields(b: any, creating: boolean, cur?: { scope: QuoteScope } | null): Result<{ fields: Record<string, any> }> {
   const f: Record<string, any> = {};
-  if (creating) {
-    const amount = parseMoney(b?.amount);
-    if (amount === null || amount <= 0) return fail(400, 'Enter the quote amount.');
-    f.amount = amount;
-    f.scope = b?.scope === 'delivery' || b?.scope === 'pickup' ? b.scope : 'install';
+  const has = (k: string) => k in (b ?? {});
+  if (creating || has('scope')) f.scope = b?.scope === 'delivery' || b?.scope === 'pickup' ? b.scope : 'install';
+  if (creating || has('amount_goods') || has('amount')) {
+    const scope: QuoteScope = f.scope ?? cur?.scope ?? 'install';
+    if (has('amount_goods')) {
+      const goods = parseMoney(b.amount_goods), pi = parseMoney(b.price_install), pd = parseMoney(b.price_delivery);
+      if ([goods, pi, pd].some((x) => x !== null && x < 0)) return fail(400, 'Amounts cannot be negative.');
+      const inst = scope === 'install' ? pi : null, trans = scope === 'pickup' ? null : pd;
+      const amount = round2((goods ?? 0) + (inst ?? 0) + (trans ?? 0));
+      if (amount <= 0) return fail(400, 'Enter the quote amount.');
+      f.amount = amount; f.price_install = inst; f.price_delivery = trans;
+    } else {
+      const amount = parseMoney(b?.amount);
+      if (amount === null || amount <= 0) return fail(400, 'Enter the quote amount.');
+      f.amount = amount;
+    }
   }
   for (const k of ['cost_purchase', 'cost_install', 'cost_delivery']) {
     if (!(k in (b ?? {}))) continue;
@@ -123,7 +138,7 @@ async function removeFiles(paths: (string | null)[]): Promise<void> {
   if (ok.length) { try { await db().storage.from(ORDER_FILE_BUCKET).remove(ok); } catch { /* best effort */ } }
 }
 const num = (v: any) => (v === null || v === undefined ? null : Number(v));
-const quoteOut = (r: any): QuoteRow => ({ ...r, amount: Number(r.amount) || 0, cost_purchase: num(r.cost_purchase), cost_install: num(r.cost_install), cost_delivery: num(r.cost_delivery), size_bytes: num(r.size_bytes) });
+const quoteOut = (r: any): QuoteRow => ({ ...r, amount: Number(r.amount) || 0, price_install: num(r.price_install), price_delivery: num(r.price_delivery), cost_purchase: num(r.cost_purchase), cost_install: num(r.cost_install), cost_delivery: num(r.cost_delivery), size_bytes: num(r.size_bytes) });
 
 export async function listQuotes(tenantId: string, orderId: string): Promise<QuoteRow[]> {
   const { data, error } = await db().from('fin_order_quotes').select('*').eq('tenant_id', tenantId).eq('order_id', orderId).order('version');
@@ -211,6 +226,7 @@ export async function deleteDoc(tenantId: string, orderId: string, docId: string
 export async function addQuote(tenantId: string, orderId: string, by: string, b: any): Promise<Result<{ version: number }>> {
   if (!(await papersReady())) return fail(409, 'Quotes need migration 0112 first.');
   const f = quoteFields(b, true); if (!f.ok) return f;
+  if (!(await colReady('fin_order_quotes', 'price_install'))) { delete f.fields.price_install; delete f.fields.price_delivery; }   // before migration 0121
   const file = fileFrom(b?.file); if (!file.ok) return fail(400, 'Attach the quote sent to the customer.');
   const quotes = await listQuotes(tenantId, orderId);
   const version = quotes.reduce((m, q) => Math.max(m, q.version), 0) + 1;
@@ -223,11 +239,16 @@ export async function addQuote(tenantId: string, orderId: string, by: string, b:
 export async function updateQuote(tenantId: string, orderId: string, quoteId: string, by: string, b: any): Promise<Result> {
   const quotes = await listQuotes(tenantId, orderId), q = quotes.find((x) => x.id === quoteId);
   if (!q) return fail(404, 'Quote not found.');
-  const f = quoteFields(b, false); if (!f.ok) return f;
+  const f = quoteFields(b, false, q); if (!f.ok) return f;
+  if (!(await colReady('fin_order_quotes', 'price_install'))) { delete f.fields.price_install; delete f.fields.price_delivery; }   // before migration 0121
   const patch: Record<string, any> = { ...f.fields, updated_at: new Date().toISOString() };
   if (f.fields.status && f.fields.status !== q.status) { patch.status_at = patch.updated_at; patch.status_by = by; }
+  // a new file replaces the one attached (the edit keeps the version number)
+  let stored: Awaited<ReturnType<typeof store>> | null = null;
+  if (b?.file) { const file = fileFrom(b.file); if (!file.ok) return file; stored = await store(tenantId, orderId, file); Object.assign(patch, stored); }
   const { error } = await db().from('fin_order_quotes').update(patch).eq('tenant_id', tenantId).eq('id', quoteId);
-  if (error) throw error;
+  if (error) { if (stored) await removeFiles([stored.storage_path]); if (/scope_check/.test(String(error.message ?? ''))) return fail(409, 'Self pickup needs migration 0118 — run it in Supabase first.'); throw error; }
+  if (stored && q.storage_path) await removeFiles([q.storage_path]);
   await syncOrder(tenantId, orderId);
   return { ok: true };
 }
