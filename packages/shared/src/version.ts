@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.86.2';
+export const APP_VERSION = '1.87.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.87.0', date: '2026-11-09', changes: [
+    'Sales orders: a sort choice above the list \u2014 Newest first (default: the offer month, then when the order was added) or Oldest first; the choice is remembered on this computer.',
+    'Sales orders: \u201cSave, keep open\u201d saves what is typed and leaves the order open; closing an order with unsaved changes asks first.',
+    'Every window: selecting text in a field and letting go of the mouse outside the window no longer closes it (it closed and the typing was lost).',
+  ] },
   { version: '1.86.2', date: '2026-11-08', changes: [
     'Shipments on the phone for Production and Production manager too (mobile 0.77.2: Czas pracy \u00b7 Wysy\u0142ki). A new permission, \u201cLoad shipments (phone)\u201d (Admin \u25b8 Roles), gives the loading screen only \u2014 tick lines, weights, photos, CMR, status \u2014 without the office page or edits; the warehouse now has this one too.',
   ] },
