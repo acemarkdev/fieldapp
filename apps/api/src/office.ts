@@ -7236,15 +7236,15 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     var h='<div style="padding:4px 22px 10px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><div style="font-size:11px;font-weight:800;color:#9a97ad;letter-spacing:.5px">'+esc(TR('QUOTES TO THE CUSTOMER'))+'</div>'
       +'<span class="sub" style="margin:0">'+esc(TR('approved quotes add up to the order value and budget — while none is approved, the newest counts'))+'</span><span style="flex:1"></span><button class="pobtn" id="foq_new">'+esc(Q.length?T('+ Quote v{0}',newest.version+1):TR('+ Quote v1'))+'</button></div>';
     if(Q.length){
-      h+='<table class="fjl"><thead><tr><th>VER</th><th>STATUS</th><th style="text-align:right">QUOTE</th><th>SCOPE</th><th style="text-align:right;background:'+FO_BUD.head+'">PURCHASE</th><th style="text-align:right;background:'+FO_BUD.head+'">INSTALL</th><th style="text-align:right;background:'+FO_BUD.head+'">DELIVERY</th><th style="text-align:right;background:'+FO_BUD.head+'" title="'+av(TR('other sales reps’ fees at this quote’s amount'))+'">REP FEES</th><th style="text-align:right;background:'+FO_BUD.head+'">COST</th><th style="text-align:right">MARGIN</th><th>FILE</th><th></th></tr></thead><tbody>';
+      h+='<table class="fjl"><thead><tr><th>VER</th><th>STATUS</th><th style="text-align:right">QUOTE</th><th>SCOPE</th><th style="text-align:right;background:'+FO_BUD.head+'">PURCHASE</th><th style="text-align:right;background:'+FO_BUD.head+'">INSTALL</th><th style="text-align:right;background:'+FO_BUD.head+'">DELIVERY</th><th style="text-align:right;background:'+FO_BUD.head+'" title="'+av(TR('other sales reps’ fees at this quote’s amount'))+'">REP FEES</th><th style="text-align:right;background:'+FO_BUD.head+'">COST</th><th style="text-align:right">MARGIN</th><th>FILE</th></tr></thead><tbody>';
       Q.slice().reverse().forEach(function(q){
         var cur=counts(q), A=foAct(q.margin);
-        h+='<tr style="'+(cur?'font-weight:700;box-shadow:inset 3px 0 0 #15803d':'color:#6b6880')+'"><td>v'+q.version+(cur?' <span class="sub" style="margin:0;font-weight:700;color:#15803d">'+esc(TR(appr.length>1?'counts':'in force'))+'</span>':'')+'</td>'
+        h+='<tr style="'+(cur?'font-weight:700;box-shadow:inset 3px 0 0 #15803d':'color:#6b6880')+'"><td style="white-space:nowrap">v'+q.version+(cur?' <span class="sub" style="margin:0;font-weight:700;color:#15803d">'+esc(TR(appr.length>1?'counts':'in force'))+'</span>':'')+'<div style="margin-top:3px;font-weight:600"><a class="codelink" data-foqed="'+av(q.id)+'">'+esc(TR('edit'))+'</a>'+(q===newest&&q.status!=='approved'?' · <a class="codelink" style="color:#b42318" data-foqdel="'+av(q.id)+'">'+esc(TR('delete'))+'</a>':'')+'</div></td>'
           +'<td><select class="foq_rowst" data-id="'+av(q.id)+'" data-was="'+av(q.status)+'" style="font-weight:600">'+['sent','approved','rejected','rework'].map(function(s){ return '<option value="'+s+'"'+(q.status===s?' selected':'')+'>'+esc(TR(FO_QST[s]))+'</option>'; }).join('')+'</select><div class="sub" style="margin:2px 0 0">'+esc(foWhen(q.status_at))+(q.status_by?' · '+esc(q.status_by):'')+'</div></td>'
           +'<td class="r">'+fcMoney(q.amount)+'</td><td>'+esc(TR(q.scope==='delivery'?'Delivery only':q.scope==='pickup'?'Self pickup':'Deliver and install'))+'</td>'
           +'<td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(q.cost_purchase)+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+(q.scope!=='install'?'–':fjNum(q.cost_install))+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+(q.scope==='pickup'?'–':fjNum(q.cost_delivery))+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(q.fees)+'</td><td class="r" style="background:'+FO_BUD.bg+'">'+fjNum(q.cost)+'</td>'
           +'<td class="r" style="background:'+A.bg+';color:'+A.ink+'">'+(q.margin==null?'':fjPct(q.margin))+'</td><td>'+foFileLink(q)+(q.comment?'<div class="sub" style="margin:2px 0 0">'+esc(q.comment)+'</div>':'')+'</td>'
-          +'<td style="white-space:nowrap"><a class="codelink" data-foqed="'+av(q.id)+'">'+esc(TR('edit'))+'</a>'+(q===newest&&q.status!=='approved'?' · <a class="codelink" style="color:#b42318" data-foqdel="'+av(q.id)+'">'+esc(TR('delete'))+'</a>':'')+'</td></tr>';
+          +'</tr>';
       });
       h+='</tbody></table>';
       if(appr.length>1)h+='<div style="margin:6px 0 0;font-weight:700;color:#15803d">'+esc(T('{0} approved quotes: {1} zł net — the order value',appr.length,fcMoney(appr.reduce(function(s,q){ return s+(Number(q.amount)||0); },0))))+'</div>';
@@ -7417,7 +7417,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
     if(o&&o.monday)h='<div style="padding:10px 22px 0;text-align:right"><a class="codelink" href="'+av(o.monday)+'" target="_blank" rel="noopener">'+esc(TR('Open in monday (Acemark PL Enquiries)'))+' \u203a</a></div>'+h;
     openModal(o?T('Order {0}',esc(o.code||o.order_ref)):TR('New order'),h);
     if(o)costingLoad('order',o.id,'fo_costing');
-    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='820px';
+    var sh=document.querySelector('#modal .sheet'); if(sh)sh.style.width='min(1200px, 96vw)';
     foFormWire(o); foRepsWire(o);
     if(o&&FO.papersReady)foPapersLoad(o);
     if(o)fxWire(document.getElementById('modal'),function(){ foOpen(o.id); });
