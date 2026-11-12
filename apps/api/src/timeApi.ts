@@ -8,7 +8,7 @@ import { db } from './supabase';
 import { getConfig, setConfig } from './store';
 import { local, hoursBetween, prodCompanyOf, companyReady, type ProdCompany } from './prodTime';
 
-export interface ApiKey { id: string; name: string; hash: string; tenant_id: string; company: ProdCompany | null; created_by: string; created_at: string; last_used_at: string | null }
+export interface ApiKey { id: string; name: string; hash: string; tenant_id: string; company: ProdCompany | null; created_by: string; created_at: string; last_used_at: string | null; scope?: 'read' | 'import' }   // import = the Clockify import (POST); read = time entries (GET)
 const CFG = 'time_api_keys';
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -21,14 +21,14 @@ export async function listApiKeys(tenantId: string) {
   return (await readKeys()).filter((k) => k.tenant_id === tenantId).map(({ hash: _h, ...k }) => k);
 }
 /** A new key. Returns the key itself — shown once, never stored. */
-export async function createApiKey(tenantId: string, by: string, name: unknown, company: unknown): Promise<{ ok: true; key: string; id: string } | { ok: false; error: string }> {
+export async function createApiKey(tenantId: string, by: string, name: unknown, company: unknown, scope: unknown = 'read'): Promise<{ ok: true; key: string; id: string } | { ok: false; error: string }> {
   const n = clean(name).slice(0, 60);
   if (!n) return { ok: false, error: 'Give the key a name (the system that will use it).' };
   const keys = await readKeys();
   if (keys.filter((k) => k.tenant_id === tenantId).length >= 20) return { ok: false, error: 'At most 20 keys — revoke an old one first.' };
   const key = 'tak_' + randomBytes(24).toString('hex'), id = randomBytes(6).toString('hex');
   const co = company === 'acemark' || company === 'wem' ? company : null;
-  keys.push({ id, name: n, hash: sha(key), tenant_id: tenantId, company: co, created_by: by, created_at: new Date().toISOString(), last_used_at: null });
+  keys.push({ id, name: n, hash: sha(key), tenant_id: tenantId, company: co, created_by: by, created_at: new Date().toISOString(), last_used_at: null, scope: scope === 'import' ? 'import' : 'read' });
   await writeKeys(keys);
   return { ok: true, key, id };
 }

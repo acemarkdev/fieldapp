@@ -1,11 +1,15 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.90.1';
+export const APP_VERSION = '1.91.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.91.0', date: '2026-11-12', changes: [
+    'Production time \u25b8 Import Clockify (Excel): the day\u2019s export from Clockify (sheet \u201cWpisy\u201d) becomes Acemark time entries \u2014 the worker matched to an app user by name (their rate applies), the job from the Z number in the task (Z_439_\u2026 \u2192 Z.439), \u201cPoza planem\u201d kept without a job. The hours go to labour in Job costs. Importing a day again replaces it.',
+    'Production time \u25b8 API access: a key can have the scope \u201cImport Clockify\u201d \u2014 POST /api/v1/clockify-import with the rows of the Wpisy sheet, for the daily routine that reads the OneDrive folder \u201cClockify eksport\u201d.',
+  ] },
   { version: '1.90.1', date: '2026-11-09', changes: [
     'Shipments: the status \u201cSent without documents\u201d is now \u201cSent \u2014 papers to complete\u201d (Polish: \u201cWys\u0142ane \u2014 dokumenty do uzupe\u0142nienia\u201d): the CMR scan is still to be added to the app; it does not say the goods left without papers. Same in the phone app (0.77.4) and the manual.',
   ] },
