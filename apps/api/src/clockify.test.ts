@@ -1,5 +1,5 @@
 // Production time ▸ Clockify import: reading the "Wpisy" sheet, the job of a task, matching the workers, Polish time.
-import { parseClockify, jobOfTask, matchWorker, polishInstant, dayOf, timeOf, nameKey } from './clockify';
+import { splitOutsidePlan, parseClockify, jobOfTask, matchWorker, polishInstant, dayOf, timeOf, nameKey } from './clockify';
 
 let fail = 0;
 const ok = (name: string, cond: boolean, got?: unknown) => { if (cond) console.log('✓ ' + name); else { fail++; console.log('✗ ' + name, got === undefined ? '' : JSON.stringify(got)); } };
@@ -24,6 +24,15 @@ ok('Polish time: winter +1, summer +2', polishInstant('2026-11-12', '06:00') ===
 const users = [{ id: '1', name: 'Kamil Teodorczyk', email: 'kamil@x.pl' }, { id: '2', name: 'Grzegorz Kozłowski', email: null }, { id: '3', name: 'Robert Kozłowski', email: 'rkozlowski@x.pl' }, { id: '4', name: 'Łukasz Nowicki', email: null }];
 ok('workers: whole name, initial + surname, e-mail', matchWorker('Kamilteodorczyk', users)?.id === '1' && matchWorker('G.kozlowski', users)?.id === '2' && matchWorker('rkozlowski', users)?.id === '3' && matchWorker('lukasznowicki', users)?.id === '4');
 ok('an unknown worker is not guessed', matchWorker('Sebastianskorek', users) === null && nameKey('Łukasz Nowicki') === 'lukasznowicki');
+
+// "Poza planem" shared over the worker's jobs in proportion (3 h on A, 1 h on B → 75% / 25%), the team's when the worker had none
+const P = (who: string, job: string | null, s: string, e: string) => ({ day: '2026-11-12', who, job, job_ref: job, s: '2026-11-12T' + s + ':00.000Z', e: '2026-11-12T' + e + ':00.000Z' });
+const sp = splitOutsidePlan([P('a', 'A', '05:00', '08:00'), P('a', 'B', '08:00', '09:00'), P('a', null, '09:00', '10:00'), P('b', null, '10:00', '10:20')]);
+const aOut = sp.filter((x) => x.who === 'a' && x.share != null), bOut = sp.filter((x) => x.who === 'b');
+ok('outside the plan: the worker\'s own jobs, 75/25, back to back inside the row', aOut.length === 2 && aOut[0].job === 'A' && aOut[0].s.endsWith('09:00:00.000Z') && aOut[0].e.endsWith('09:45:00.000Z') && aOut[1].job === 'B' && aOut[1].e.endsWith('10:00:00.000Z'), aOut);
+ok('outside the plan: a worker with no job that day → the team\'s jobs', bOut.length === 2 && bOut[0].job === 'A' && bOut[0].e.endsWith('10:15:00.000Z') && bOut[1].e.endsWith('10:20:00.000Z'), bOut);
+const none = splitOutsidePlan([P('c', null, '05:00', '06:00')]);
+ok('outside the plan: nobody on a job → stays with no job', none.length === 1 && none[0].job === null && none[0].share === null);
 
 if (fail) { console.error(`\n${fail} FAIL`); process.exit(1); }
 console.log('All Clockify tests passed.');
