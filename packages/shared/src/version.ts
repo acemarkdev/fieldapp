@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.91.0';
+export const APP_VERSION = '1.91.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.91.1', date: '2026-11-23', changes: [
+    'Clockify import: \u201cPoza planem\u201d rows no longer take a job code from a task of that name on the task list \u2014 only a Z number in the task puts hours on a job.',
+  ] },
   { version: '1.91.0', date: '2026-11-12', changes: [
     'Production time \u25b8 Import Clockify (Excel): the day\u2019s export from Clockify (sheet \u201cWpisy\u201d) becomes Acemark time entries \u2014 the worker matched to an app user by name (their rate applies), the job from the Z number in the task (Z_439_\u2026 \u2192 Z.439), \u201cPoza planem\u201d kept without a job. The hours go to labour in Job costs. Importing a day again replaces it.',
     'Production time \u25b8 API access: a key can have the scope \u201cImport Clockify\u201d \u2014 POST /api/v1/clockify-import with the rows of the Wpisy sheet, for the daily routine that reads the OneDrive folder \u201cClockify eksport\u201d.',

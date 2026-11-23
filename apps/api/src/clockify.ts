@@ -94,7 +94,9 @@ export async function importClockify(tenantId: string, by: string, rows: unknown
     const h = (Date.parse(e) - Date.parse(s)) / 3600000; if (h > 16) continue;
     const u = matchWorker(r.person, users); if (!u) unmatched.add(r.person);
     const t = taskBy.get(nameKey(r.task));
-    const jobRef = r.job_ref ? jobRefOf(r.job_ref) : null, jobKey = t?.job_key ?? (jobRef ? referenceKey(jobRef) : null);
+    // the job comes only from a Z number in the task — a task without one ("Poza planem") never goes to a job,
+    // even when the task list has a task of that name with a job code of its own
+    const jobRef = r.job_ref ? jobRefOf(r.job_ref) : null, jobKey = jobRef ? (t?.job_key && t.job_key.startsWith(referenceKey(jobRef)) ? t.job_key : referenceKey(jobRef)) : null;
     if (jobKey) { withJob++; jobs.set(jobRef ?? jobKey, (jobs.get(jobRef ?? jobKey) ?? 0) + h); } else outsidePlan++;
     hours += h;
     ins.push({ tenant_id: tenantId, user_id: u?.id ?? null, user_name: u?.name ?? r.person, user_email: u?.email ?? null, task_id: t?.id ?? null, task_name: r.task, job_key: jobKey,
