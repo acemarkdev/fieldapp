@@ -1,11 +1,14 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.92.0';
+export const APP_VERSION = '1.92.1';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.92.1', date: '2026-11-23', changes: [
+    'Production time \u25b8 API: a key with the scope \u201cImport Clockify\u201d can also delete time entries by id (POST /api/v1/time-entries/delete) \u2014 used to remove the phone-app trial entries now that the Clockify history is loaded. Each deletion goes to the log of time changes.',
+  ] },
   { version: '1.92.0', date: '2026-11-23', changes: [
     'Clockify import: \u201cPoza planem\u201d hours are shared out over the jobs in proportion \u2014 each such row is cut into back-to-back pieces, one per job the worker did that day, by the worker\u2019s hours on those jobs (a worker with no job that day: the whole team\u2019s job hours that day). The note says the share (\u201cPoza planem \u2014 75% na Z.449\u201d). A row stays without a job only when nobody worked on a job that day.',
   ] },

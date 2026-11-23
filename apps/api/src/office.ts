@@ -431,6 +431,25 @@ const server = createServer(async (req, res) => {
       } catch (e: any) { console.error('clockify import', e?.message ?? e); send(res, 500, { error: 'Could not import: ' + (e?.message ?? String(e)) }); }
       return;
     }
+    // Delete time entries by id with an import key (e.g. removing a trial of the phone app before Clockify was
+    // loaded). Only the key's company (Acemark when the key is for all); each one goes to the log of time changes.
+    if (p === '/api/v1/time-entries/delete') {
+      if (req.method !== 'POST') { res.setHeader('allow', 'POST'); send(res, 405, { error: 'Only POST.' }); return; }
+      const key = await keyFromRequest(req.headers as any);
+      if (!key) { send(res, 401, { error: 'Missing or unknown API key. Send it in the X-API-Key header.' }); return; }
+      if (key.scope !== 'import') { send(res, 403, { error: 'This key may only read. Make a key with the scope “Import Clockify”.' }); return; }
+      if (rateLimited(key.id)) { res.setHeader('retry-after', '60'); send(res, 429, { error: 'Too many requests — at most 120 a minute.' }); return; }
+      const b = await readJson(req); const ids: string[] = Array.isArray(b.ids) ? b.ids.map(String) : [];
+      if (!ids.length || ids.length > 1000) { send(res, 400, { error: 'Send {"ids": ["…"]} — 1 to 1000 entry ids.' }); return; }
+      const company: ProdCompany = key.company ?? (b.company === 'wem' ? 'wem' : 'acemark');
+      try {
+        const who = 'API key: ' + key.name;
+        const n = await deleteTimeEntries(key.tenant_id, ids, { id: null as any, name: who, role: 'api' }, company);
+        try { await insertAuditLog({ tenant_id: key.tenant_id, actor_user_id: null, actor_name: who, actor_role: 'api', action: 'prod.entry.delete', entity: null, entity_id: null, summary: `Deleted ${n} production time entr${n === 1 ? 'y' : 'ies'} (${company === 'wem' ? 'WEM' : 'Acemark'}) by API`, details: null }); } catch { /* the log is a help */ }
+        send(res, 200, { ok: true, deleted: n });
+      } catch (e: any) { console.error('time api delete', e?.message ?? e); send(res, 500, { error: 'Could not delete: ' + (e?.message ?? String(e)) }); }
+      return;
+    }
     // Production time API for an external system (no user session): read-only, its own API key. See timeApi.ts.
     if (p === '/api/v1/time-entries') {
       if (req.method !== 'GET') { res.setHeader('allow', 'GET'); send(res, 405, { error: 'Only GET.' }); return; }
