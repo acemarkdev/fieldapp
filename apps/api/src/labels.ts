@@ -2,7 +2,7 @@
 // labels (each 103 × 72 mm, the block centred on the page), each piece's label repeated `copies` times.
 //   · WEM: an Archimede "WYDRUK PRODUKCYJNY" PDF, WEM company details (and logo);
 //   · Acemark: a CortizoCad "PRODUCTION LIST" (LP 0004/10/2026) PDF, Acemark company details
-//     (the layout of "WZÓR etykiet - druk Acemark").
+//     (the layout of "WZÓR etykiet - druk Acemark"), or a Logikal "Zlecenie warsztatowe" (Z-455) PDF, also Acemark.
 // Either can be printed anonymous (no company details).
 //
 // The Archimede printout is a real text PDF, so this is a deterministic parse (no AI): text items
@@ -25,7 +25,7 @@ export interface LabelPosition {
   note: string;
   refs: string[];          // window/door references at the start of the note, e.g. W02.1, W03.1
 }
-export interface LabelSpec { format: 'archimede' | 'cortizo'; order: string; date: string; job: string; client: string; positions: LabelPosition[]; warnings: string[]; }
+export interface LabelSpec { format: 'archimede' | 'cortizo' | 'logikal'; order: string; date: string; job: string; client: string; positions: LabelPosition[]; warnings: string[]; }
 
 // ---- PDF → text lines -------------------------------------------------------------------------
 export async function pdfLines(bytes: Uint8Array): Promise<string[]> {
@@ -125,17 +125,54 @@ export function parseCortizoList(lines: string[]): LabelSpec {
   return { format: 'cortizo', order: lp, date, job, client, positions, warnings };
 }
 
+// ---- Logikal "Zlecenie warsztatowe" (Acemark) ----------------------------------------------------
+// Every page starts "Data: 29.10.2026 / 16:27", "Zlecenie warsztatowe", "Obiekt: Z.455 - OK_PL203078_-_Lumio_…".
+// A position starts "Pozycja: 001", then "Liczba: 2 szt.   Skala: …", "Seria: Cortizo COR 70 …" and the outer size
+// "Wielkość: 3 400 x 2 287 mm" (sash sizes later in the position are on "Skrzydło: … Wielkość: …" lines).
+// Later pages of the same position say "Kontynuacja pozycji 001" and are skipped.
+export const isLogikalOrder = (lines: string[]) => lines.slice(0, 6).some((t) => /^Zlecenie warsztatowe\b/.test(t.trim()));
+export function parseLogikal(lines: string[]): LabelSpec {
+  const obiekt = (lines.find((t) => /^Obiekt:/.test(t)) ?? '').replace(/^Obiekt:\s*/, '');
+  const job = obiekt.replace(/_/g, ' ').replace(/\s+/g, ' ').replace(/[\s-]+$/, '').trim();
+  const order = ((lines.find((t) => /^Numer zlecenia:/.test(t)) ?? '').match(/Z[-.]\d+/)?.[0] ?? job.match(/^Z\.\d+/)?.[0] ?? '').replace('-', '.');
+  const date = (lines.find((t) => /^Data:/.test(t)) ?? '').match(/\d{2}\.\d{2}\.\d{4}/)?.[0] ?? '';
+  const positions: LabelPosition[] = [], warnings: string[] = [];
+  let cur: LabelPosition | null = null, head = 0;
+  for (const t of lines) {
+    const m = /^Pozycja:\s*(\d+)/.exec(t);
+    if (m) { cur = { poz: +m[1], qty: 1, config: '', w: null, h: null, note: '', refs: [] }; positions.push(cur); head = 8; continue; }
+    if (!cur || head <= 0) continue;
+    head--;   // the position's header block: the next few lines only
+    const q = /^Liczba:\s*(\d+)\s*szt/.exec(t); if (q) { cur.qty = +q[1]; continue; }
+    const se = /^Seria:\s*(.*)$/.exec(t); if (se) { cur.config = se[1].split(/\s{3,}/)[0].trim(); continue; }
+    const wh = /^Wielkość:\s*([\d ]+?)\s*x\s*([\d ]+?)\s*mm/.exec(t);
+    if (wh) { cur.w = +wh[1].replace(/\s/g, ''); cur.h = +wh[2].replace(/\s/g, ''); head = 0; }
+  }
+  for (const p of positions) if (p.w === null) warnings.push(`Pozycja ${String(p.poz).padStart(3, '0')}: size (Wielkość) not found — enter it by hand.`);
+  if (!positions.length) warnings.push('No positions ("Pozycja: …") found — is this a Logikal “Zlecenie warsztatowe” PDF (not a scan)?');
+  return { format: 'logikal', order, date, job, client: '', positions, warnings };
+}
+
 export async function parseLabelPdf(bytes: Uint8Array): Promise<LabelSpec> {
   const lines = await pdfLines(bytes);
-  return isCortizoList(lines) ? parseCortizoList(lines) : parseArchimede(lines);
+  return isLogikalOrder(lines) ? parseLogikal(lines) : isCortizoList(lines) ? parseCortizoList(lines) : parseArchimede(lines);
 }
 
 // ---- labels → A4 PDF --------------------------------------------------------------------------
-export interface LabelItem { w: number | string; h: number | string; ref: string; kind?: 'hardware'; }
+export interface LabelItem { w: number | string; h: number | string; ref: string; kind?: 'hardware'; copies?: number; }
 // Each label is printed `copies` times in a row (default 2: the label and its copy side by side, one sheet row
-// per piece). `skipRows` leaves already-used rows at the top of the sheet empty. `layout`: WEM or Acemark.
+// per piece); a label's own `copies` (1–8, chosen per line on the Labels page) wins over the sheet's. `customer`
+// is printed on its own line under the job line / reference. `skipRows` leaves already-used rows at the top of the sheet empty. `layout`: WEM or Acemark.
 export type LabelLayout = 'wem' | 'acemark';
-export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: boolean; company: boolean; skipRows?: number; phone?: string; copies?: number; layout?: LabelLayout; }
+export interface LabelSheetOptions { title: string; labels: LabelItem[]; logo: boolean; company: boolean; skipRows?: number; phone?: string; copies?: number; layout?: LabelLayout; customer?: string; }
+/** The customer names offered on the Labels page (config key label_customers: a JSON list), A–Z, no duplicates. */
+export const LABEL_CUSTOMERS_KEY = 'label_customers';
+export function labelCustomerList(raw: unknown): string[] {
+  let v: unknown = []; try { v = JSON.parse(String(raw ?? '[]')); } catch { v = []; }
+  const seen = new Set<string>(), out: string[] = [];
+  for (const c of Array.isArray(v) ? v : []) { const t = String(c ?? '').replace(/\s+/g, ' ').trim().slice(0, 80); if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); out.push(t); } }
+  return out.sort((a, b) => a.localeCompare(b, 'pl')).slice(0, 300);
+}
 export const labelCopies = (v: unknown) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 ? Math.min(8, n) : 2; };
 
 const MM = 72 / 25.4;
@@ -177,7 +214,7 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
     const copies = labelCopies(opts.copies);
 
     const skipRows = Math.max(0, Math.min(ROWS - 1, Math.floor(opts.skipRows ?? 0)));
-    const slots: (LabelItem | null)[] = [...Array(skipRows * COLS).fill(null), ...opts.labels.flatMap((l) => Array(copies).fill(l))];
+    const slots: (LabelItem | null)[] = [...Array(skipRows * COLS).fill(null), ...opts.labels.flatMap((l) => Array(l.copies == null ? copies : labelCopies(l.copies)).fill(l))];
     slots.forEach((lab, i) => {
       const k = i % (COLS * ROWS);
       if (k === 0) doc.addPage();
@@ -202,7 +239,7 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
       let y = y0 + (header ? 30 : 20) * MM;
       if (lab.kind === 'hardware') {
         doc.font('B').fontSize(28).fillColor('#000').text('HARDWARE', x, y + 2 * MM, { width: w, align: 'center', lineBreak: false });
-        jobLine(doc, (opts.title || '').trim(), '', x, y + 15.5 * MM, w, bottom);
+        customerLine(doc, opts.customer, x, jobLine(doc, (opts.title || '').trim(), '', x, y + 15.5 * MM, w, bottom), w, bottom);
         doc.restore();
         return;
       }
@@ -214,7 +251,7 @@ export function buildLabelsPdf(opts: LabelSheetOptions): Promise<Buffer> {
       while (sizePt > 10 && doc.fontSize(sizePt).widthOfString(sizeText) > w) sizePt -= 0.5;
       doc.fontSize(sizePt).text(sizeText, x, y, { width: w, align: 'center', lineBreak: false });
       y += 8.5 * MM;
-      jobLine(doc, (opts.title || '').trim(), String(lab.ref || '').trim(), x, y, w, bottom);
+      customerLine(doc, opts.customer, x, jobLine(doc, (opts.title || '').trim(), String(lab.ref || '').trim(), x, y, w, bottom), w, bottom);
       doc.restore();
     });
     if (!slots.length) doc.addPage();
@@ -236,7 +273,7 @@ function drawAcemark(doc: PDFKit.PDFDocument, lab: LabelItem, opts: LabelSheetOp
   } else y += 17 * MM;   // anonymous: the size and order line in the middle of the label
   if (lab.kind === 'hardware') {
     doc.font('SB').fontSize(26).fillColor('#000').text('HARDWARE', x, y + 3 * MM, { width: w, align: 'center', lineBreak: false });
-    jobLine(doc, (opts.title || '').trim(), '', x, y + 16 * MM, w, bottom, 'SR', 'SB');
+    customerLine(doc, opts.customer, x, jobLine(doc, (opts.title || '').trim(), '', x, y + 16 * MM, w, bottom, 'SR', 'SB'), w, bottom, 'SB');
     return;
   }
   doc.font('SR').fontSize(13).fillColor('#000').text('Wymiar okna:', x, y, { width: w, align: 'center', lineBreak: false });
@@ -246,12 +283,22 @@ function drawAcemark(doc: PDFKit.PDFDocument, lab: LabelItem, opts: LabelSheetOp
   while (sizePt > 10 && doc.fontSize(sizePt).widthOfString(sizeText) > w) sizePt -= 0.5;
   doc.fontSize(sizePt).text(sizeText, x, y, { width: w, align: 'center', lineBreak: false });
   y += 9.5 * MM;
-  jobLine(doc, (opts.title || '').trim(), String(lab.ref || '').trim(), x, y, w, bottom, 'SR', 'SB');
+  customerLine(doc, opts.customer, x, jobLine(doc, (opts.title || '').trim(), String(lab.ref || '').trim(), x, y, w, bottom, 'SR', 'SB'), w, bottom, 'SB');
+}
+
+// The customer's name, centred in bold on one line under the job line (shrunk to fit the label's width).
+function customerLine(doc: PDFKit.PDFDocument, customer: string | undefined, x: number, y: number, w: number, maxY: number, B = 'B'): void {
+  const t = String(customer ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return;
+  let pt = 12.5; doc.font(B);
+  while (pt > 8 && doc.fontSize(pt).widthOfString(t) > w) pt -= 0.5;
+  if (y + pt * 1.1 > maxY) return;
+  doc.fontSize(pt).fillColor('#000').text(t, x, y + 0.5 * MM, { width: w, align: 'center', lineBreak: false, ellipsis: true });
 }
 
 // "<title> – <REF>" centred and word-wrapped, with the reference in bold and never split.
-// (pdfkit's own `continued` + center mis-positions mixed-font runs, so lay it out by hand.)
-function jobLine(doc: PDFKit.PDFDocument, title: string, ref: string, x: number, y: number, w: number, maxY: number, R = 'R', B = 'B'): void {
+// (pdfkit's own `continued` + center mis-positions mixed-font runs, so lay it out by hand.) Returns the y under it.
+function jobLine(doc: PDFKit.PDFDocument, title: string, ref: string, x: number, y: number, w: number, maxY: number, R = 'R', B = 'B'): number {
   const SIZE = 12.5, LH = 5 * MM;
   const toks = [
     ...title.split(/\s+/).filter(Boolean).map((t) => ({ t, f: R })),
@@ -279,4 +326,5 @@ function jobLine(doc: PDFKit.PDFDocument, title: string, ref: string, x: number,
     });
     y += LH;
   }
+  return y;
 }

@@ -1,11 +1,16 @@
 // Single source of truth for the app version, shared by web (and later mobile).
 // Bump APP_VERSION and add a CHANGELOG entry whenever we ship a change.
 //   MAJOR.MINOR.PATCH — MINOR for new features, PATCH for fixes/tweaks.
-export const APP_VERSION = '1.92.1';
+export const APP_VERSION = '1.93.0';
 
 export interface ChangelogEntry { version: string; date: string; changes: string[]; }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { version: '1.93.0', date: '2026-11-24', changes: [
+    'Labels: Acemark labels from a Logikal “Zlecenie warsztatowe” PDF (Z-455, Z-460 …) — each Pozycja’s outer size (Wielkość) and quantity (Liczba) is read, and the job line is the Obiekt (Z.455 - OK PL203078 - …). There are no references in this printout: type them in if needed.',
+    'Labels: copies per line — a new Copies column sets how many labels each line prints (1–8, 2 by default), e.g. 3 for some items and 1 for others. “Copies (all lines)” still sets every line at once; the button shows the real total of labels and sheets.',
+    'Labels: Customer — the customer’s name is printed in bold under the reference. Pick it from the list or type a new one; a new name is saved to the list (shared by everyone) when the PDF is downloaded, and “Remove from list” takes one off.',
+  ] },
   { version: '1.92.1', date: '2026-11-23', changes: [
     'Production time \u25b8 API: a key with the scope \u201cImport Clockify\u201d can also delete time entries by id (POST /api/v1/time-entries/delete) \u2014 used to remove the phone-app trial entries now that the Clockify history is loaded. Each deletion goes to the log of time changes.',
   ] },
